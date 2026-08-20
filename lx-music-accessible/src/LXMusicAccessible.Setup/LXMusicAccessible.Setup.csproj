@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- 安装包应用负载：payload.zip 内嵌进 setup.exe（自包含应用） -->
+    <EmbeddedResource Include="payload.zip" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>LXMusicAccessible.Setup</AssemblyName>
+    <RootNamespace>LXMusicAccessible.Setup</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>2.0.0</Version>
+    <Product>落雪音乐无障碍版 安装程序</Product>
+  </PropertyGroup>
+</Project>

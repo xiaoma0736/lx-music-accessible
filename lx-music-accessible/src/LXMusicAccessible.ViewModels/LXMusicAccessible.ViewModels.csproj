@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>LXMusicAccessible.ViewModels</RootNamespace>
+    <AssemblyName>LXMusicAccessible.ViewModels</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LXMusicAccessible.Models\LXMusicAccessible.Models.csproj" />
+    <ProjectReference Include="..\LXMusicAccessible.Services\LXMusicAccessible.Services.csproj" />
+    <ProjectReference Include="..\LXMusicAccessible.Data\LXMusicAccessible.Data.csproj" />
+    <ProjectReference Include="..\LXMusicAccessible.Audio\LXMusicAccessible.Audio.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,150 @@
+﻿using LXMusicAccessible.Models;
+
+namespace LXMusicAccessible.Data;
+
+/// <summary>
+/// 数据服务接口
+/// </summary>
+public interface IDataService
+{
+    /// <summary>
+    /// 保存播放列表
+    /// </summary>
+    Task SavePlaylistAsync(Playlist playlist);
+
+    /// <summary>
+    /// 获取播放列表
+    /// </summary>
+    Task<List<Playlist>> GetPlaylistsAsync();
+
+    /// <summary>
+    /// 删除播放列表
+    /// </summary>
+    Task DeletePlaylistAsync(string playlistId);
+
+    /// <summary>
+    /// 保存设置
+    /// </summary>
+    Task SaveSettingsAsync(UserSettings settings);
+
+    /// <summary>
+    /// 获取设置
+    /// </summary>
+    Task<UserSettings?> GetSettingsAsync();
+
+    /// <summary>
+    /// 保存音源
+    /// </summary>
+    Task SaveMusicSourcesAsync(List<MusicSource> sources);
+
+    /// <summary>
+    /// 获取音源
+    /// </summary>
+    Task<List<MusicSource>> GetMusicSourcesAsync();
+
+    /// <summary>
+    /// 删除指定音源
+    /// </summary>
+    Task DeleteMusicSourcesAsync(List<string> ids);
+
+    /// <summary>
+    /// 保存播放历史
+    /// </summary>
+    Task SavePlayHistoryAsync(MusicInfo music);
+
+    /// <summary>
+    /// 获取播放历史
+    /// </summary>
+    Task<List<MusicInfo>> GetPlayHistoryAsync(int count = 50);
+    
+    /// <summary>
+    /// 保存播放列表项目
+    /// </summary>
+    Task SavePlaylistItemAsync(string playlistId, MusicInfo music, int orderNum);
+    
+    /// <summary>
+    /// 获取播放列表项目
+    /// </summary>
+    Task<List<MusicInfo>> GetPlaylistItemsAsync(string playlistId);
+    
+    /// <summary>
+    /// 删除播放列表项目
+    /// </summary>
+    Task DeletePlaylistItemAsync(string itemId);
+    
+    /// <summary>
+    /// 清空播放列表项目
+    /// </summary>
+    Task ClearPlaylistItemsAsync(string playlistId);
+
+    /// <summary>
+    /// 批量添加歌曲到本地收藏（网络歌曲；按 歌曲Id+音源 去重，已存在则跳过）
+    /// </summary>
+    Task AddFavoriteSongsAsync(IEnumerable<MusicInfo> songs);
+
+    /// <summary>
+    /// 获取本地收藏的网络歌曲列表（按添加时间倒序）
+    /// </summary>
+    Task<List<MusicInfo>> GetFavoriteSongsAsync();
+
+    /// <summary>
+    /// 从本地收藏移除指定歌曲
+    /// </summary>
+    Task RemoveFavoriteSongAsync(MusicInfo music);
+
+    /// <summary>
+    /// 清空本地收藏
+    /// </summary>
+    Task ClearFavoriteSongsAsync();
+
+    /// <summary>
+    /// 获取收藏歌单（local=true 本地收藏，false 在线收藏）
+    /// </summary>
+    Task<List<Playlist>> GetFavoritePlaylistsAsync(bool local);
+
+    /// <summary>
+    /// 获取（不存在则创建）默认歌单：本地“我的本地歌曲” / 在线“默认收藏”
+    /// </summary>
+    Task<Playlist?> GetOrCreateDefaultPlaylistAsync(bool local);
+
+    /// <summary>
+    /// 批量添加歌曲到指定歌单（按 歌曲Id+音源 去重）
+    /// </summary>
+    Task AddSongsToPlaylistAsync(string playlistId, IEnumerable<MusicInfo> songs);
+
+    /// <summary>
+    /// 从指定歌单移除歌曲
+    /// </summary>
+    Task RemoveSongFromPlaylistAsync(string playlistId, MusicInfo music);
+
+
+    /// <summary>
+    /// 重命名歌单
+    /// </summary>
+    Task RenamePlaylistAsync(string playlistId, string newName);
+
+    /// <summary>
+    /// 保存平台账号登录态（凭据 DPAPI 加密后落盘）
+    /// </summary>
+    Task SaveAccountAsync(AccountInfo account);
+
+    /// <summary>
+    /// 获取平台账号登录态（自动解密凭据到 AuthData）
+    /// </summary>
+    Task<AccountInfo?> GetAccountAsync(string platform);
+
+    /// <summary>
+    /// 删除平台账号登录态
+    /// </summary>
+    Task DeleteAccountAsync(string platform);
+
+    /// <summary>
+    /// 读取 Settings 表任意键的原始值（通用设置存储用；无则返回 null）
+    /// </summary>
+    Task<string?> GetSettingValueAsync(string key);
+
+    /// <summary>
+    /// 写入 Settings 表任意键的原始值；value 为 null 时删除该键
+    /// </summary>
+    Task SetSettingValueAsync(string key, string? value);
+}

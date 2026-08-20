@@ -1,0 +1,50 @@
+﻿<Window x:Class="LXMusicAccessible.App.LyricsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="歌词"
+        Width="720" Height="700"
+        WindowStartupLocation="CenterScreen"
+        AutomationProperties.Name="歌词窗口"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        Closing="Window_Closing">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="TitleText" Text="歌词" FontSize="20" FontWeight="Bold" Margin="12,10,12,6"
+                   AutomationProperties.Name="歌词标题"/>
+        <ListBox x:Name="LyricsList" Grid.Row="1" Focusable="True" Margin="12,0,12,6"
+                 AutomationProperties.Name="歌词文本"
+                 AutomationProperties.HelpText="上下方向键逐句浏览；播放局部热键在此窗口内仍然生效；按 ESC 关闭歌词窗口"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 HorizontalContentAlignment="Stretch"
+                 IsTabStop="False">
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="AutomationProperties.Name" Value="{Binding Text}"/>
+                    <Setter Property="Padding" Value="4,2"/>
+                    <Setter Property="FontSize" Value="16"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                            <Setter Property="Background" Value="#FFFFF3A0"/>
+                            <Setter Property="FontSize" Value="22"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap"/>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock Grid.Row="2" Text="播放局部热键（F5 播放/暂停、F6 停止、F3/F4 上下首、F7/F8 快退快进、F9/F10 音量、F11/F12 切换设备、Shift+F7/F8 歌词延后提前、F1 播放模式、F2 下载）在本窗口内仍生效。按 ESC 关闭歌词窗口。"
+                   TextWrapping="Wrap" Margin="12,6,12,10" AutomationProperties.Name="歌词窗口提示"/>
+        <!-- 无障碍实时区域：歌词窗口聚焦时读屏播报用 -->
+        <TextBlock x:Name="LiveRegion" Grid.Row="1" Width="1" Height="1" Opacity="0" IsHitTestVisible="False"
+                   AutomationProperties.LiveSetting="Polite"
+                   AutomationProperties.Name="歌词播报" VerticalAlignment="Bottom" HorizontalAlignment="Left"/>
+    </Grid>
+</Window>

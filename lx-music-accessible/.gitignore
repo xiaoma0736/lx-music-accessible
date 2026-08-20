@@ -1,0 +1,52 @@
+﻿# Build outputs
+**/bin/
+**/obj/
+**/[Bb]in/
+**/[Oo]bj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]uild/
+bld/
+[Bb]in/
+[Oo]bj/
+
+# NuGet Packages
+*.nupkg
+**/packages/*
+
+# Temporary directories
+_staging_*/
+_script_inspect/
+发布/
+发布*/
+
+# Test output
+*_out.txt
+*_test*.txt
+
+# Backup files
+*.zip
+*.bak
+*.backup
+
+# IDE files
+.idea/
+*.swp
+*.swo
+*~
+
+# Windows
+Thumbs.db
+desktop.ini
+.BIN/

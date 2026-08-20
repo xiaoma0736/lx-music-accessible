@@ -1,0 +1,790 @@
+<Window x:Class="LXMusicAccessible.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:LXMusicAccessible.App"
+        mc:Ignorable="d"
+        Title="落雪音乐 无障碍版" Height="800" Width="1200"
+        WindowStartupLocation="CenterScreen"
+        AutomationProperties.Name="落雪音乐无障碍版主窗口"
+        KeyboardNavigation.TabNavigation="Continue"
+        KeyboardNavigation.DirectionalNavigation="None"
+        PreviewKeyDown="Window_PreviewKeyDown" KeyDown="Window_KeyDown" KeyUp="Window_KeyUp">
+
+    <Window.Resources>
+        <!-- 音源列表右键菜单 -->
+        <ContextMenu x:Key="SourceContextMenu" AutomationProperties.Name="音源操作菜单">
+            <MenuItem Header="设为默认" AutomationProperties.Name="设为默认" Click="SourceMenu_SetDefault_Click"/>
+            <MenuItem Header="启用" AutomationProperties.Name="启用" Click="SourceMenu_Enable_Click"/>
+            <MenuItem Header="禁用" AutomationProperties.Name="禁用" Click="SourceMenu_Disable_Click"/>
+            <Separator/>
+            <MenuItem Header="检测有效性" AutomationProperties.Name="检测有效性" Click="SourceMenu_Test_Click"/>
+            <MenuItem Header="编辑" AutomationProperties.Name="编辑" Click="SourceMenu_Edit_Click"/>
+            <MenuItem Header="删除" AutomationProperties.Name="删除" Click="SourceMenu_Delete_Click"/>
+        </ContextMenu>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ===== 菜单栏（仅 Alt 访问，不参与 Tab 导航） ===== -->
+        <Menu Grid.Row="0" AutomationProperties.Name="主菜单" x:Name="MainMenu"
+              KeyboardNavigation.TabNavigation="None">
+            <MenuItem Header="文件(_F)" AutomationProperties.Name="文件菜单">
+                <MenuItem Header="隐藏/显示窗口(_H)" AutomationProperties.Name="隐藏显示窗口" Click="HideShowWindowMenu_Click"/>
+                <Separator/>
+                <MenuItem Header="退出(_X)" AutomationProperties.Name="退出" Click="Exit_Click"/>
+            </MenuItem>
+            <MenuItem Header="播放(_P)" AutomationProperties.Name="播放菜单">
+                <MenuItem x:Name="MenuPlayPauseItem" Header="播放/暂停（F5）" AutomationProperties.Name="播放暂停" Click="PlayPauseButton_Click"/>
+                <MenuItem Header="停止（F6）" AutomationProperties.Name="停止" Click="StopButton_Click"/>
+                <MenuItem Header="上一首" AutomationProperties.Name="上一首" Click="PreviousButton_Click"/>
+                <MenuItem Header="下一首" AutomationProperties.Name="下一首" Click="NextButton_Click"/>
+                <Separator/>
+                <MenuItem Header="快退十秒（F7）" AutomationProperties.Name="快退十秒" Click="RewindMenu_Click"/>
+                <MenuItem Header="快进十秒（F8）" AutomationProperties.Name="快进十秒" Click="ForwardMenu_Click"/>
+                <Separator/>
+                <MenuItem Header="音量减（F9）" AutomationProperties.Name="音量减" Click="VolumeDownMenu_Click"/>
+                <MenuItem Header="音量加（F10）" AutomationProperties.Name="音量加" Click="VolumeUpMenu_Click"/>
+                <MenuItem Header="上一个播放设备（F11）" AutomationProperties.Name="上一个播放设备" Click="PrevDeviceMenu_Click"/>
+                <MenuItem Header="下一个播放设备（F12）" AutomationProperties.Name="下一个播放设备" Click="NextDeviceMenu_Click"/>
+                <Separator/>
+                <MenuItem Header="歌词延后（Shift+F7）" AutomationProperties.Name="歌词延后" Click="LyricDelayMenu_Click"/>
+                <MenuItem Header="歌词提前（Shift+F8）" AutomationProperties.Name="歌词提前" Click="LyricAdvanceMenu_Click"/>
+                <Separator/>
+                <MenuItem x:Name="MenuPlayModeItem" Header="播放模式（F1）" AutomationProperties.Name="播放模式" Click="PlayModeButton_Click"/>
+                <MenuItem Header="下载（F2）" AutomationProperties.Name="下载" Click="DownloadMenu_Click"/>
+            </MenuItem>
+            <MenuItem Header="浏览(_B)" AutomationProperties.Name="浏览菜单">
+                <MenuItem Header="搜索(_S)" AutomationProperties.Name="搜索" Click="MenuNavigateToSearch"/>
+                <MenuItem Header="播放列表(_L)" AutomationProperties.Name="播放列表" Click="MenuNavigateToPlaylist"/>
+                <MenuItem Header="导入个人歌单(_I)" AutomationProperties.Name="导入个人歌单" Click="MenuNavigateToImport"/>
+                <MenuItem Header="分类歌单(_C)" AutomationProperties.Name="分类歌单" Click="MenuNavigateToCategory"/>
+                <MenuItem Header="排行榜(_R)" AutomationProperties.Name="排行榜" Click="MenuNavigateToRanking"/>
+                <MenuItem Header="歌词(_G)" AutomationProperties.Name="歌词" Click="MenuNavigateToLyrics"/>
+                <MenuItem Header="下载管理(_D)" AutomationProperties.Name="下载管理" Click="MenuNavigateToDownload"/>
+            </MenuItem>
+            <MenuItem Header="设置(_T)" AutomationProperties.Name="设置菜单">
+                <MenuItem Header="设置(_S)" AutomationProperties.Name="设置" Click="MenuNavigateToSettings"/>
+                <MenuItem Header="音源管理(_I)" AutomationProperties.Name="音源管理" Click="MenuNavigateToSources"/>
+            </MenuItem>
+            <MenuItem Header="帮助(_H)" AutomationProperties.Name="帮助菜单">
+                <MenuItem Header="使用说明(_U)" AutomationProperties.Name="使用说明" Click="UserGuide_Click"/>
+                <MenuItem Header="赞助(_S)" AutomationProperties.Name="赞助" Click="Sponsor_Click"/>
+                <MenuItem Header="关于(_A)" AutomationProperties.Name="关于" Click="About_Click"/>
+            </MenuItem>
+        </Menu>
+
+        <!-- ===== 主内容区 ===== -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="250"/>
+            </Grid.ColumnDefinitions>
+
+            <TabControl Grid.Column="0" x:Name="MainTabControl"
+                        AutomationProperties.Name="主标签页"
+                        KeyboardNavigation.TabNavigation="Local"
+                        KeyboardNavigation.DirectionalNavigation="Contained"
+                        SelectionChanged="MainTabControl_SelectionChanged"
+                        Margin="5">
+                <!-- ===== 标签1：搜索 ===== -->
+                <TabItem Header="搜索" AutomationProperties.Name="搜索标签页"
+                         KeyboardNavigation.TabNavigation="Cycle"
+                         KeyboardNavigation.DirectionalNavigation="None">
+                    <local:SafeScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False" IsTabStop="False">
+                        <StackPanel Margin="15">
+                            <TextBlock Text="搜索音乐" FontSize="22" FontWeight="Bold" Margin="0,0,0,15"
+                                       AutomationProperties.Name="搜索标题"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <Label Content="音源：" Target="{Binding ElementName=SearchSourceCombo}"
+                                       VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                <ComboBox x:Name="SearchSourceCombo" Width="140" Height="28" Margin="0,0,15,0" KeyboardNavigation.TabIndex="10"
+                                          AutomationProperties.Name="搜索音源" IsTabStop="True">
+                                    <ComboBoxItem Content="全部音源" Tag="all" IsSelected="True"/>
+                                    <ComboBoxItem Content="网易云音乐" Tag="netease"/>
+                                    <ComboBoxItem Content="QQ音乐" Tag="qq"/>
+                                    <ComboBoxItem Content="酷狗音乐" Tag="kg"/>
+                                    <ComboBoxItem Content="酷我音乐" Tag="kw"/>
+                                    <ComboBoxItem Content="咪咕音乐" Tag="migu"/>
+                                </ComboBox>
+
+                                <Label Content="类型：" Target="{Binding ElementName=SearchTypeComboBox}"
+                                       VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                <ComboBox x:Name="SearchTypeComboBox" Width="100" Height="28" KeyboardNavigation.TabIndex="11"
+                                          AutomationProperties.Name="搜索类型" IsTabStop="True">
+                                    <ComboBoxItem Content="歌曲" Tag="song" IsSelected="True"/>
+                                    <ComboBoxItem Content="歌手" Tag="artist"/>
+                                    <ComboBoxItem Content="专辑" Tag="album"/>
+                                </ComboBox>
+                            </StackPanel>
+
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="SearchBox" Grid.Column="0" Height="30" Margin="0,0,10,0" KeyboardNavigation.TabIndex="12"
+                                         AutomationProperties.Name="搜索输入框"
+                                         AutomationProperties.HelpText="输入搜索关键词，按回车搜索；上下光标查看搜索历史"
+                                         KeyDown="SearchBox_KeyDown" IsTabStop="True"/>
+                                <Button x:Name="SearchButton" Grid.Column="1" Content="搜索" Width="80" Height="30" KeyboardNavigation.TabIndex="13"
+                                        AutomationProperties.Name="搜索按钮" Click="SearchButton_Click" IsTabStop="True"/>
+                                <Button x:Name="SearchClearButton" Grid.Column="2" Content="清空" Width="80" Height="30" KeyboardNavigation.TabIndex="14"
+                                        AutomationProperties.Name="清空搜索" Click="SearchClearButton_Click" IsTabStop="True"/>
+                            </Grid>
+
+                            <GroupBox Header="搜索结果" AutomationProperties.Name="搜索结果区域">
+                                <Grid>
+                                    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                    <local:SingleReadListBox x:Name="SearchResultsList" Grid.Row="0" MinHeight="350" KeyboardNavigation.TabIndex="15"
+                                            
+                                             ContextMenuOpening="SongList_ContextMenuOpening"
+                                             PreviewMouseRightButtonDown="SongList_PreviewMouseRightButtonDown"
+                                             AutomationProperties.Name="搜索结果列表"
+                                             AutomationProperties.HelpText="上下方向键浏览，回车或空格播放"
+                                             MouseDoubleClick="SearchResultsList_MouseDoubleClick"
+                                             KeyDown="SearchResultsList_KeyDown" IsTabStop="False">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}"/>
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Title}" Width="280" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Artist}" Width="180" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Album}" Width="180" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Duration}" Width="70"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </local:SingleReadListBox>
+                                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                                        <local:InvisibleToScreenReaderButton x:Name="SearchPrevPageBtn" Content="上一页" Width="80" Height="28" KeyboardNavigation.TabIndex="16"
+                                                AutomationProperties.Name="搜索上一页" Click="SearchPrevPageBtn_Click" IsTabStop="False"/>
+                                        <local:InvisibleToScreenReaderTextBlock x:Name="SearchPageInfo" Text="第 1 页" VerticalAlignment="Center" Margin="10,0"/>
+                                        <local:InvisibleToScreenReaderButton x:Name="SearchNextPageBtn" Content="下一页" Width="80" Height="28" KeyboardNavigation.TabIndex="17"
+                                                AutomationProperties.Name="搜索下一页" Click="SearchNextPageBtn_Click" IsTabStop="False"/>
+                                    </StackPanel>
+                                </Grid>
+                            </GroupBox>
+                        </StackPanel>
+                    </local:SafeScrollViewer>
+                </TabItem>
+                                <!-- ===== 标签2：播放列表（本地收藏/在线收藏） ===== -->
+                                <TabItem Header="播放列表" AutomationProperties.Name="播放列表标签页"
+                         KeyboardNavigation.TabNavigation="Cycle"
+                         KeyboardNavigation.DirectionalNavigation="None">
+                    <local:SafeScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False" IsTabStop="False">
+                        <StackPanel Margin="15">
+                            <TextBlock Text="音乐收藏" FontSize="22" FontWeight="Bold" Margin="0,0,0,12"
+                                       AutomationProperties.Name="播放列表标题"/>
+
+                            <StackPanel Margin="0,10,0,0">
+                                <TextBlock Text="在线音乐收藏：可收藏单曲或整个歌单，支持新建歌单分组管理。"
+                                           TextWrapping="Wrap" Margin="0,0,0,8" AutomationProperties.Name="在线收藏说明"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <Button x:Name="NewOnlinePlaylistBtn" Content="新建歌单" Width="90" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="29"
+                                            AutomationProperties.Name="新建在线歌单" Click="NewOnlinePlaylistBtn_Click" IsTabStop="True"/>
+                                    <Button x:Name="RenameOnlinePlaylistBtn" Content="重命名歌单" Width="100" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="30"
+                                            AutomationProperties.Name="重命名在线歌单" Click="RenameOnlinePlaylistBtn_Click" IsTabStop="True"/>
+                                    <Button x:Name="DeleteOnlinePlaylistBtn" Content="删除歌单" Width="90" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="31"
+                                            AutomationProperties.Name="删除在线歌单" Click="DeleteOnlinePlaylistBtn_Click" IsTabStop="True"/>
+                                    <Button x:Name="FavRefreshBtn" Content="刷新" Width="70" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="32"
+                                            AutomationProperties.Name="刷新在线收藏" Click="FavRefreshBtn_Click" IsTabStop="True"/>
+                                    <Button x:Name="FavRemoveBtn" Content="从歌单移除" Width="100" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="33"
+                                            AutomationProperties.Name="从歌单移除选中歌曲" Click="FavRemoveBtn_Click" IsTabStop="True"/>
+                                    <Button x:Name="FavClearBtn" Content="清空歌单" Width="90" Height="28" KeyboardNavigation.TabIndex="34"
+                                            AutomationProperties.Name="清空当前在线歌单" Click="FavClearBtn_Click" IsTabStop="True"/>
+                                    <TextBlock x:Name="FavoriteCountText" Text="共 0 首" VerticalAlignment="Center" Margin="10,0,0,0"
+                                               AutomationProperties.Name="在线歌单歌曲数量"/>
+                                </StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="250"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <GroupBox Grid.Column="0" Header="在线歌单" AutomationProperties.Name="在线歌单列表区域" Margin="0,0,8,0">
+                                        <ListBox x:Name="OnlinePlaylistList" MinHeight="300" DisplayMemberPath="Name" KeyboardNavigation.TabIndex="35"
+                                                 AutomationProperties.Name="在线歌单列表"
+                                                 AutomationProperties.HelpText="上下方向键选择歌单，回车查看歌曲，Delete删除歌单"
+                                                 SelectionChanged="OnlinePlaylistList_SelectionChanged"
+                                                 KeyDown="OnlinePlaylistList_KeyDown" IsTabStop="False">
+                                            <ListBox.ItemContainerStyle>
+                                                <Style TargetType="ListBoxItem">
+                                                    <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>
+                                                </Style>
+                                            </ListBox.ItemContainerStyle>
+                                        </ListBox>
+                                    </GroupBox>
+                                    <GroupBox Grid.Column="1" Header="在线歌曲" AutomationProperties.Name="在线歌曲区域">
+                                        <local:SingleReadListBox x:Name="FavoriteSongsList" MinHeight="300" KeyboardNavigation.TabIndex="36"
+                                            ContextMenuOpening="SongList_ContextMenuOpening"
+                                            PreviewMouseRightButtonDown="SongList_PreviewMouseRightButtonDown"
+                                            AutomationProperties.Name="在线歌曲列表"
+                                            AutomationProperties.HelpText="上下方向键浏览，回车或空格播放，Delete从歌单移除"
+                                            MouseDoubleClick="FavoriteSongsList_MouseDoubleClick"
+                                            KeyDown="FavoriteSongsList_KeyDown" IsTabStop="False">
+                                            <ListBox.ItemContainerStyle>
+                                                <Style TargetType="ListBoxItem">
+                                                    <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}"/>
+                                                </Style>
+                                            </ListBox.ItemContainerStyle>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Title}" Width="280" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Artist}" Width="180" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Album}" Width="180" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Duration}" Width="70"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </local:SingleReadListBox>
+                                    </GroupBox>
+                                </Grid>
+                            </StackPanel>
+                        </StackPanel>
+                    </local:SafeScrollViewer>
+                </TabItem>
+
+                <!-- ===== 标签：导入个人歌单（并入主界面） ===== -->
+                <TabItem Header="导入个人歌单" AutomationProperties.Name="导入个人歌单标签页"
+                         KeyboardNavigation.TabNavigation="Cycle"
+                         KeyboardNavigation.DirectionalNavigation="None">
+                    <local:PlaylistImportView x:Name="PlaylistImportPanel"/>
+                </TabItem>
+
+<!-- ===== 标签3：分类歌单 ===== -->
+                <TabItem Header="分类歌单" AutomationProperties.Name="分类歌单标签页"
+                         KeyboardNavigation.TabNavigation="Cycle"
+                         KeyboardNavigation.DirectionalNavigation="None">
+                    <local:SafeScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False" IsTabStop="False">
+                        <StackPanel Margin="15">
+                            <TextBlock Text="分类歌单" FontSize="22" FontWeight="Bold" Margin="0,0,0,15"
+                                       AutomationProperties.Name="分类歌单标题"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <Label Content="音源：" Target="{Binding ElementName=CategorySourceCombo}"
+                                       VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                <ComboBox x:Name="CategorySourceCombo" Width="140" Height="28" Margin="0,0,10,0" KeyboardNavigation.TabIndex="31"
+                                          AutomationProperties.Name="歌单音源" SelectionChanged="CategorySourceCombo_SelectionChanged" IsTabStop="True">
+                                    <ComboBoxItem Content="网易云音乐" Tag="netease" IsSelected="True"/>
+                                    <ComboBoxItem Content="QQ音乐" Tag="qq"/>
+                                    <ComboBoxItem Content="酷狗音乐" Tag="kg"/>
+                                    <ComboBoxItem Content="酷我音乐" Tag="kw"/>
+                                    <ComboBoxItem Content="咪咕音乐" Tag="migu"/>
+                                </ComboBox>
+                                <Button x:Name="CategoryRefreshBtn" Content="刷新" Width="70" Height="28" KeyboardNavigation.TabIndex="32"
+                                        AutomationProperties.Name="刷新分类歌单" Click="CategoryRefreshBtn_Click" IsTabStop="True"/>
+                            </StackPanel>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180"/>
+                                    <ColumnDefinition Width="260"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <GroupBox Grid.Column="0" Header="分类" AutomationProperties.Name="分类列表区域">
+                                    <ListBox x:Name="CategoryList" KeyboardNavigation.TabIndex="33"
+                                             DisplayMemberPath="Name"
+                                             AutomationProperties.Name="分类列表"
+                                             AutomationProperties.HelpText="上下方向键选择分类"
+                                             SelectionChanged="CategoryList_SelectionChanged"
+                                             KeyDown="CategoryList_KeyDown" IsTabStop="False">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                    </ListBox>
+                                </GroupBox>
+                                <GroupBox Grid.Column="1" Header="歌单" Margin="10,0,0,0"
+                                          AutomationProperties.Name="歌单列表区域">
+                                    <ListBox x:Name="CategoryPlaylistsListBox" KeyboardNavigation.TabIndex="34"
+                                             DisplayMemberPath="Name"
+                                             AutomationProperties.Name="歌单列表"
+                                             AutomationProperties.HelpText="上下方向键选择歌单，回车查看歌曲"
+                                             SelectionChanged="CategoryPlaylistsListBox_SelectionChanged"
+                                             KeyDown="CategoryPlaylistsListBox_KeyDown"
+                                             ContextMenuOpening="PlaylistList_ContextMenuOpening" IsTabStop="False">
+                                        <ListBox.ContextMenu>
+                                            <ContextMenu AutomationProperties.Name="歌单操作菜单" PreviewKeyUp="ContextMenu_PreviewKeyUp">
+                                                <MenuItem Header="收藏整个歌单到在线收藏" AutomationProperties.Name="收藏整个歌单到在线收藏" Click="CategoryPlaylist_Favorite_Click"/>
+                                            </ContextMenu>
+                                        </ListBox.ContextMenu>
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                    </ListBox>
+                                </GroupBox>
+                                <GroupBox Grid.Column="2" Header="歌曲" Margin="10,0,0,0"
+                                          AutomationProperties.Name="歌单歌曲区域">
+                                    <Grid>
+                                        <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                        <local:SingleReadListBox x:Name="CategorySongsList" Grid.Row="0" KeyboardNavigation.TabIndex="35"
+                                                
+                                                 ContextMenuOpening="SongList_ContextMenuOpening"
+                                                 PreviewMouseRightButtonDown="SongList_PreviewMouseRightButtonDown"
+                                                 AutomationProperties.Name="歌单歌曲列表"
+                                                 AutomationProperties.HelpText="上下方向键浏览，回车或空格播放"
+                                             MouseDoubleClick="CategorySongsList_MouseDoubleClick"
+                                                 KeyDown="CategorySongsList_KeyDown" IsTabStop="False">
+                                            <ListBox.ItemContainerStyle>
+                                                <Style TargetType="ListBoxItem">
+                                                    <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}"/>
+                                                </Style>
+                                            </ListBox.ItemContainerStyle>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Title}" Width="220" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Artist}" Width="150" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Album}" Width="140" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Duration}" Width="60"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </local:SingleReadListBox>
+                                        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                                            <local:InvisibleToScreenReaderButton x:Name="CategoryPrevPageBtn" Content="上一页" Width="80" Height="28" KeyboardNavigation.TabIndex="36"
+                                                    AutomationProperties.Name="歌单上一页" Click="CategoryPrevPageBtn_Click" IsTabStop="False"/>
+                                            <local:InvisibleToScreenReaderTextBlock x:Name="CategoryPageInfo" Text="第 1 页" VerticalAlignment="Center" Margin="10,0"/>
+                                            <local:InvisibleToScreenReaderButton x:Name="CategoryNextPageBtn" Content="下一页" Width="80" Height="28" KeyboardNavigation.TabIndex="36"
+                                                    AutomationProperties.Name="歌单下一页" Click="CategoryNextPageBtn_Click" IsTabStop="False"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </GroupBox>
+                            </Grid>
+                        </StackPanel>
+                    </local:SafeScrollViewer>
+                </TabItem>
+                <!-- ===== 标签4：排行榜 ===== -->
+                <TabItem Header="排行榜" AutomationProperties.Name="排行榜标签页"
+                         KeyboardNavigation.TabNavigation="Cycle"
+                         KeyboardNavigation.DirectionalNavigation="None">
+                    <local:SafeScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False" IsTabStop="False">
+                        <StackPanel Margin="15">
+                            <TextBlock Text="音乐排行榜" FontSize="22" FontWeight="Bold" Margin="0,0,0,15"
+                                       AutomationProperties.Name="排行榜标题"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <Label Content="音源：" Target="{Binding ElementName=RankingSourceCombo}"
+                                       VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                <ComboBox x:Name="RankingSourceCombo" Width="140" Height="28" Margin="0,0,10,0" KeyboardNavigation.TabIndex="40"
+                                          AutomationProperties.Name="排行榜音源" SelectionChanged="RankingSourceCombo_SelectionChanged" IsTabStop="True">
+                                    <ComboBoxItem Content="网易云音乐" Tag="netease" IsSelected="True"/>
+                                    <ComboBoxItem Content="QQ音乐" Tag="qq"/>
+                                    <ComboBoxItem Content="酷狗音乐" Tag="kg"/>
+                                    <ComboBoxItem Content="酷我音乐" Tag="kw"/>
+                                    <ComboBoxItem Content="咪咕音乐" Tag="migu"/>
+                                </ComboBox>
+                                <Button x:Name="RefreshRankingButton" Content="刷新" Width="70" Height="28" KeyboardNavigation.TabIndex="41"
+                                        AutomationProperties.Name="刷新排行榜" Click="RefreshRankingButton_Click" IsTabStop="True"/>
+                            </StackPanel>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="300"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <GroupBox Grid.Column="0" Header="排行榜列表" AutomationProperties.Name="排行榜列表区域">
+                                    <ListBox x:Name="RankingList" KeyboardNavigation.TabIndex="42"
+                                             DisplayMemberPath="Name"
+                                             AutomationProperties.Name="排行榜列表"
+                                             AutomationProperties.HelpText="上下方向键选择排行榜"
+                                             SelectionChanged="RankingList_SelectionChanged"
+                                             KeyDown="RankingList_KeyDown"
+                                             ContextMenuOpening="PlaylistList_ContextMenuOpening" IsTabStop="False">
+                                        <ListBox.ContextMenu>
+                                            <ContextMenu AutomationProperties.Name="排行榜操作菜单" PreviewKeyUp="ContextMenu_PreviewKeyUp">
+                                                <MenuItem Header="收藏整个榜单到在线收藏" AutomationProperties.Name="收藏整个榜单到在线收藏" Click="Ranking_Favorite_Click"/>
+                                            </ContextMenu>
+                                        </ListBox.ContextMenu>
+                                    </ListBox>
+                                </GroupBox>
+                                <GroupBox Grid.Column="1" Header="榜单歌曲" Margin="10,0,0,0"
+                                          AutomationProperties.Name="榜单歌曲区域">
+                                    <Grid>
+                                        <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                        <local:SingleReadListBox x:Name="RankingSongsList" Grid.Row="0" KeyboardNavigation.TabIndex="43"
+                                                
+                                                 ContextMenuOpening="SongList_ContextMenuOpening"
+                                                 PreviewMouseRightButtonDown="SongList_PreviewMouseRightButtonDown"
+                                                 AutomationProperties.Name="榜单歌曲列表"
+                                                 AutomationProperties.HelpText="上下方向键浏览，回车或空格播放"
+                                             MouseDoubleClick="RankingSongsList_MouseDoubleClick"
+                                                 KeyDown="RankingSongsList_KeyDown" IsTabStop="False">
+                                            <ListBox.ItemContainerStyle>
+                                                <Style TargetType="ListBoxItem">
+                                                    <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}"/>
+                                                </Style>
+                                            </ListBox.ItemContainerStyle>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Title}" Width="220" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Artist}" Width="150" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Album}" Width="140" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Duration}" Width="60"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </local:SingleReadListBox>
+                                        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                                            <local:InvisibleToScreenReaderButton x:Name="RankingPrevPageBtn" Content="上一页" Width="80" Height="28" KeyboardNavigation.TabIndex="44"
+                                                    AutomationProperties.Name="排行榜上一页" Click="RankingPrevPageBtn_Click" IsTabStop="False"/>
+                                            <local:InvisibleToScreenReaderTextBlock x:Name="RankingPageInfo" Text="第 1 页" VerticalAlignment="Center" Margin="10,0"/>
+                                            <local:InvisibleToScreenReaderButton x:Name="RankingNextPageBtn" Content="下一页" Width="80" Height="28" KeyboardNavigation.TabIndex="45"
+                                                    AutomationProperties.Name="排行榜下一页" Click="RankingNextPageBtn_Click" IsTabStop="False"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </GroupBox>
+                            </Grid>
+                        </StackPanel>
+                    </local:SafeScrollViewer>
+                </TabItem>
+
+                <!-- ===== 标签5：设置 ===== -->
+                <TabItem Header="设置" AutomationProperties.Name="设置标签页"
+                         KeyboardNavigation.TabNavigation="Cycle"
+                         KeyboardNavigation.DirectionalNavigation="None">
+                    <local:SafeScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False" IsTabStop="False">
+                        <StackPanel Margin="15">
+                            <TextBlock Text="设置" FontSize="22" FontWeight="Bold" Margin="0,0,0,15"
+                                       AutomationProperties.Name="设置标题"/>
+
+                            <GroupBox Header="播放设置" AutomationProperties.Name="播放设置" Margin="0,0,0,15">
+                                <StackPanel Margin="10">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                        <Label Content="默认播放音质：" Target="{Binding ElementName=DefaultQualityCombo}"
+                                               VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                        <ComboBox x:Name="DefaultQualityCombo" Width="150" Height="28" KeyboardNavigation.TabIndex="60"
+                                                  AutomationProperties.Name="默认播放音质" SelectionChanged="DefaultQualityCombo_SelectionChanged" IsTabStop="True">
+                                            <ComboBoxItem Content="128k 标准" Tag="128k" IsSelected="True"/>
+                                            <ComboBoxItem Content="192k" Tag="192k"/>
+                                            <ComboBoxItem Content="320k 高品质" Tag="320k"/>
+                                            <ComboBoxItem Content="FLAC 无损" Tag="flac"/>
+                                            <ComboBoxItem Content="FLAC 24bit 高解析" Tag="flac24bit"/>
+                                            <ComboBoxItem Content="Hi-Res 高解析" Tag="hires"/>
+                                            <ComboBoxItem Content="杜比全景声" Tag="atmos"/>
+                                            <ComboBoxItem Content="杜比全景声增强" Tag="atmos_plus"/>
+                                            <ComboBoxItem Content="母带级" Tag="master"/>
+                                            <ComboBoxItem Content="至臻音效" Tag="jyeffect"/>
+                                            <ComboBoxItem Content="至臻全景声" Tag="sky"/>
+                                            <ComboBoxItem Content="杜比音效" Tag="dolby"/>
+                                            <ComboBoxItem Content="至臻母带" Tag="jymaster"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <CheckBox x:Name="AutoPlayCheckBox" Content="自动播放" IsChecked="True" Margin="0,0,0,10" KeyboardNavigation.TabIndex="61"
+                                              AutomationProperties.Name="自动播放" IsTabStop="True"/>
+                                    <CheckBox x:Name="ShufflePlayCheckBox" Content="随机播放" IsChecked="False" Margin="0,0,0,10" KeyboardNavigation.TabIndex="62"
+                                              AutomationProperties.Name="随机播放" Checked="ShufflePlayCheckBox_Changed" Unchecked="ShufflePlayCheckBox_Changed" IsTabStop="True"/>
+                                    <CheckBox x:Name="RepeatPlayCheckBox" Content="循环播放" IsChecked="False" Margin="0,0,0,10" KeyboardNavigation.TabIndex="63"
+                                              AutomationProperties.Name="循环播放" Checked="RepeatPlayCheckBox_Changed" Unchecked="RepeatPlayCheckBox_Changed" IsTabStop="True"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10" KeyboardNavigation.TabIndex="63">
+                                        <Label Content="按 Alt+F4 时：" VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                        <ComboBox x:Name="CloseBehaviorCombo" Width="180" Height="28" KeyboardNavigation.TabIndex="64"
+                                                  AutomationProperties.Name="Alt加F4行为" AutomationProperties.HelpText="选择关闭应用或隐藏到系统托盘"
+                                                  SelectionChanged="CloseBehaviorCombo_SelectionChanged" IsTabStop="True">
+                                            <ComboBoxItem Content="关闭应用" Tag="close" IsSelected="True"/>
+                                            <ComboBoxItem Content="隐藏到系统托盘" Tag="hide"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <TextBlock Text="提示：按 ESC 键可随时隐藏窗口到系统托盘，音乐继续播放；双击托盘图标恢复窗口。" 
+                                               TextWrapping="Wrap" Margin="0,0,0,10" AutomationProperties.Name="托盘隐藏提示"/>
+                                </StackPanel>
+                            </GroupBox>
+
+                            <GroupBox Header="第三方播放器" AutomationProperties.Name="第三方播放器" Margin="0,0,0,15">
+                                <StackPanel Margin="10">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                        <Label Content="播放器路径：" Target="{Binding ElementName=ThirdPartyPlayerPathBox}" VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                        <TextBox x:Name="ThirdPartyPlayerPathBox" Width="280" Height="28" Margin="0,0,8,0" KeyboardNavigation.TabIndex="65" AutomationProperties.Name="第三方播放器路径" AutomationProperties.HelpText="用于右键菜单用第三方播放器播放，选择播放器exe文件" IsTabStop="True"/>
+                                        <Button x:Name="BrowseThirdPartyPlayerBtn" Content="浏览..." Width="80" Height="28" KeyboardNavigation.TabIndex="66" AutomationProperties.Name="浏览第三方播放器" Click="BrowseThirdPartyPlayerBtn_Click" IsTabStop="True"/>
+                                    </StackPanel>
+                                    <TextBlock Text="用于歌曲右键菜单“用第三方播放器播放”；在线歌曲将解析播放链接后交由该播放器播放。" TextWrapping="Wrap" AutomationProperties.Name="第三方播放器说明"/>
+                                </StackPanel>
+                            </GroupBox>
+
+                            <GroupBox Header="歌词设置" AutomationProperties.Name="歌词设置" Margin="0,0,0,15">
+                                <StackPanel Margin="10">
+                                    <CheckBox x:Name="LyricAnnounceCheckBox" Content="自动朗读当前歌词" IsChecked="True" Margin="0,0,0,10" KeyboardNavigation.TabIndex="67"
+                                              AutomationProperties.Name="自动朗读当前歌词" Checked="LyricAnnounceCheckBox_Changed" Unchecked="LyricAnnounceCheckBox_Changed" IsTabStop="True"/>
+                                    <CheckBox x:Name="LyricScrollCheckBox" Content="歌词自动滚动到当前句" IsChecked="True" Margin="0,0,0,10" KeyboardNavigation.TabIndex="68"
+                                              AutomationProperties.Name="歌词自动滚动到当前句" Checked="LyricScrollCheckBox_Changed" Unchecked="LyricScrollCheckBox_Changed" IsTabStop="True"/>
+                                </StackPanel>
+                            </GroupBox>
+
+                            <GroupBox Header="下载设置" AutomationProperties.Name="下载设置" Margin="0,0,0,15">
+                                <StackPanel Margin="10">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Label Content="下载目录：" Target="{Binding ElementName=DownloadPathBox}"
+                                               VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                        <TextBox x:Name="DownloadPathBox" Width="320" Height="28" Margin="0,0,8,0" KeyboardNavigation.TabIndex="69"
+                                                 AutomationProperties.Name="下载目录" AutomationProperties.HelpText="歌曲下载保存的位置" IsTabStop="True"/>
+                                        <Button x:Name="BrowseDownloadPathBtn" Content="浏览..." Width="80" Height="28" KeyboardNavigation.TabIndex="70"
+                                                AutomationProperties.Name="浏览下载目录" Click="BrowseDownloadPathBtn_Click" IsTabStop="True"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                        <Label Content="默认下载音质：" Target="{Binding ElementName=DownloadQualityCombo}"
+                                               VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                        <ComboBox x:Name="DownloadQualityCombo" Width="180" Height="28" KeyboardNavigation.TabIndex="71"
+                                                  AutomationProperties.Name="默认下载音质" AutomationProperties.HelpText="批量下载与下载专辑时使用的音质；下载不了该音质时自动回退到最高可用音质"
+                                                  SelectionChanged="DownloadQualityCombo_SelectionChanged" IsTabStop="True">
+                                            <ComboBoxItem Content="128k 标准" Tag="128k" IsSelected="True"/>
+                                            <ComboBoxItem Content="192k" Tag="192k"/>
+                                            <ComboBoxItem Content="320k 高品质" Tag="320k"/>
+                                            <ComboBoxItem Content="FLAC 无损" Tag="flac"/>
+                                            <ComboBoxItem Content="Hi-Res 高解析" Tag="hires"/>
+                                            <ComboBoxItem Content="杜比全景声" Tag="atmos"/>
+                                            <ComboBoxItem Content="杜比全景声增强" Tag="atmos_plus"/>
+                                            <ComboBoxItem Content="母带级" Tag="master"/>
+                                            <ComboBoxItem Content="至臻音效" Tag="jyeffect"/>
+                                            <ComboBoxItem Content="至臻全景声" Tag="sky"/>
+                                            <ComboBoxItem Content="杜比音效" Tag="dolby"/>
+                                            <ComboBoxItem Content="至臻母带" Tag="jymaster"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                        <CheckBox x:Name="DownloadLyricCheckBox" Content="下载时同时下载歌词" VerticalAlignment="Center" Margin="0,0,20,0" FontWeight="SemiBold" KeyboardNavigation.TabIndex="72"
+                                                  AutomationProperties.Name="下载时同时下载歌词" AutomationProperties.HelpText="下载歌曲时同步下载对应歌词文件"
+                                                  Checked="DownloadSetting_Changed" Unchecked="DownloadSetting_Changed" IsTabStop="True"/>
+                                        <CheckBox x:Name="DownloadNameQualityCheckBox" Content="文件名包含音质（如[mp3]）" VerticalAlignment="Center" KeyboardNavigation.TabIndex="73"
+                                                  AutomationProperties.Name="文件名包含音质标签" AutomationProperties.HelpText="关闭后文件名将去掉方括号中的音质标记"
+                                                  Checked="DownloadSetting_Changed" Unchecked="DownloadSetting_Changed" IsTabStop="True"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                        <Label Content="命名顺序：" Target="{Binding ElementName=DownloadNameOrderCombo}"
+                                               VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                        <ComboBox x:Name="DownloadNameOrderCombo" Width="180" Height="28" KeyboardNavigation.TabIndex="74"
+                                                  AutomationProperties.Name="歌曲命名顺序" AutomationProperties.HelpText="选择下载文件名的排列顺序"
+                                                  SelectionChanged="DownloadNameOrderCombo_SelectionChanged" IsTabStop="True">
+                                            <ComboBoxItem Content="艺术家 - 歌名" Tag="ArtistTitle"/>
+                                            <ComboBoxItem Content="歌名 - 艺术家" Tag="TitleArtist"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                </StackPanel>
+                            </GroupBox>
+                            <GroupBox Header="数据目录" AutomationProperties.Name="数据目录" Margin="0,0,0,15">
+                                <StackPanel Margin="10">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Label Content="数据目录：" Target="{Binding ElementName=DataDirBox}"
+                                               VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                        <TextBox x:Name="DataDirBox" Width="320" Height="28" Margin="0,0,8,0" KeyboardNavigation.TabIndex="75"
+                                                 AutomationProperties.Name="数据目录" AutomationProperties.HelpText="当前数据目录（数据库与日志）" IsReadOnly="True" IsTabStop="True"/>
+                                        <Button x:Name="BrowseDataDirBtn" Content="浏览..." Width="80" Height="28" KeyboardNavigation.TabIndex="76"
+                                                AutomationProperties.Name="浏览数据目录" Click="BrowseDataDirBtn_Click" IsTabStop="True"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </GroupBox>
+
+                            <GroupBox Header="缓存管理" AutomationProperties.Name="缓存管理" Margin="0,0,0,15">
+                                <StackPanel Margin="10">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                        <Button x:Name="ClearCacheBtn" Content="清理缓存" Width="110" Height="28" KeyboardNavigation.TabIndex="77"
+                                                AutomationProperties.Name="清理缓存" AutomationProperties.HelpText="清除歌曲播放临时缓存与第三方播放器临时文件" Click="ClearCacheBtn_Click" IsTabStop="True"/>
+                                    </StackPanel>
+                                    <TextBlock Text="清理歌曲播放时的临时缓存文件（%TEMP% 下的 lxmusic 缓存）与第三方播放器临时文件；正在播放中的文件不会被删除。"
+                                               TextWrapping="Wrap" AutomationProperties.Name="清理缓存说明"/>
+                                </StackPanel>
+                            </GroupBox>
+                            <GroupBox Header="无障碍设置" AutomationProperties.Name="无障碍设置">
+                                <StackPanel Margin="10">
+                                    <CheckBox x:Name="EnableScreenReaderCheckBox" Content="启用屏幕阅读器支持" IsChecked="True" Margin="0,0,0,10" KeyboardNavigation.TabIndex="78"
+                                              AutomationProperties.Name="启用屏幕阅读器支持" IsTabStop="True"/>
+                                    <CheckBox x:Name="EnableVoiceAnnouncementCheckBox" Content="启用语音朗读提示" IsChecked="True" Margin="0,0,0,10" KeyboardNavigation.TabIndex="79"
+                                              AutomationProperties.Name="启用语音朗读提示" Checked="VoiceAnnouncementCheckBox_Changed" Unchecked="VoiceAnnouncementCheckBox_Changed" IsTabStop="True"/>
+                                    <TextBlock x:Name="SpeechBackendText" Text="朗读后端：自动检测" TextWrapping="Wrap" Margin="0,0,0,8"
+                                           AutomationProperties.Name="当前朗读后端"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                        <Label Content="朗读语音：" Target="{Binding ElementName=VoiceCombo}"
+                                               VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                        <ComboBox x:Name="VoiceCombo" Width="220" Height="28" KeyboardNavigation.TabIndex="80"
+                                                  AutomationProperties.Name="朗读语音" SelectionChanged="VoiceCombo_SelectionChanged" IsTabStop="True"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                        <Label Content="朗读语速：" Target="{Binding ElementName=SpeechRateCombo}"
+                                               VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
+                                        <ComboBox x:Name="SpeechRateCombo" Width="150" Height="28" KeyboardNavigation.TabIndex="81"
+                                                  AutomationProperties.Name="朗读语速" SelectionChanged="SpeechRateCombo_SelectionChanged" IsTabStop="True">
+                                            <ComboBoxItem Content="慢" Tag="0.75"/>
+                                            <ComboBoxItem Content="标准" Tag="1" IsSelected="True"/>
+                                            <ComboBoxItem Content="快" Tag="1.25"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                </StackPanel>
+                            </GroupBox>
+
+                            <GroupBox Header="快捷键设置" AutomationProperties.Name="快捷键设置" Margin="0,15,0,0">
+                                <StackPanel Margin="10">
+                                    <TextBlock Text="快捷键为全局快捷键，程序在后台也能使用。选中下方列表项后按回车修改快捷键，按 Delete 清除，Esc 取消修改。"
+                                               TextWrapping="Wrap" Margin="0,0,0,10" AutomationProperties.Name="快捷键设置说明"/>
+                                    <local:SingleReadListBox x:Name="HotkeyListBox" Height="260" KeyboardNavigation.TabIndex="82"
+                                             AutomationProperties.Name="快捷键列表"
+                                             AutomationProperties.HelpText="上下方向键选择，回车修改快捷键，Delete清除，Esc取消"
+                                             KeyDown="HotkeyListBox_KeyDown" IsTabStop="False" HorizontalContentAlignment="Stretch">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <!-- 显式设置单一读屏名称，避免读屏把名称与内部多个文本块重复朗读两次 -->
+                                                <Setter Property="AutomationProperties.Name" Value="{Binding ToString}"/>
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding ActionName}" Width="100" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="：" />
+                                                    <TextBlock Text="{Binding ShortcutText}"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </local:SingleReadListBox>
+                                    <Button x:Name="ResetHotkeysBtn" Content="恢复默认快捷键" KeyboardNavigation.TabIndex="83" Margin="0,8,0,0" HorizontalAlignment="Left"
+                                            AutomationProperties.Name="恢复默认快捷键" Click="ResetHotkeysBtn_Click" IsTabStop="True"/>
+                                </StackPanel>
+                            </GroupBox>
+                        </StackPanel>
+                    </local:SafeScrollViewer>
+                </TabItem>
+
+                <!-- ===== 标签6：下载管理 ===== -->
+                <TabItem Header="下载管理" AutomationProperties.Name="下载管理标签页"
+                         KeyboardNavigation.TabNavigation="Cycle"
+                         KeyboardNavigation.DirectionalNavigation="None">
+                    <local:SafeScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False" IsTabStop="False">
+                        <StackPanel Margin="15">
+                            <TextBlock Text="下载管理" FontSize="22" FontWeight="Bold" Margin="0,0,0,15"
+                                       AutomationProperties.Name="下载管理标题"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <Button x:Name="DownloadCancelBtn" Content="取消选中" Width="90" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="70"
+                                        AutomationProperties.Name="取消选中下载任务" Click="DownloadCancelBtn_Click" IsTabStop="True"/>
+                                <Button x:Name="DownloadRetryBtn" Content="重试" Width="70" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="72"
+                                        AutomationProperties.Name="重试下载" Click="DownloadRetryBtn_Click" IsTabStop="True"/>
+                                <Button x:Name="DownloadOpenFolderBtn" Content="打开下载文件夹" Width="120" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="73"
+                                        AutomationProperties.Name="打开下载文件夹" Click="DownloadOpenFolderBtn_Click" IsTabStop="True"/>
+                                <Button x:Name="DownloadClearDoneBtn" Content="清空已完成" Width="100" Height="28" KeyboardNavigation.TabIndex="74"
+                                        AutomationProperties.Name="清空已完成任务" Click="DownloadClearDoneBtn_Click" IsTabStop="True"/>
+                            </StackPanel>
+
+                            <GroupBox Header="下载任务" AutomationProperties.Name="下载任务区域">
+                                <local:SingleReadListBox x:Name="DownloadTaskList" MinHeight="420" KeyboardNavigation.TabIndex="75"
+                                         AutomationProperties.Name="下载任务列表"
+                                         AutomationProperties.HelpText="上下方向键浏览下载任务，可在歌曲列表右键菜单中发起下载"
+                                         IsTabStop="False">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}"/>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding DisplayName}" Width="380" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding ProgressText}" Width="70"/>
+                                                <TextBlock Text="{Binding StatusText}" Width="70"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </local:SingleReadListBox>
+                            </GroupBox>
+                        </StackPanel>
+                    </local:SafeScrollViewer>
+                </TabItem>
+
+                <!-- ===== 标签7：音源管理 ===== -->
+                <TabItem Header="音源管理" AutomationProperties.Name="音源管理标签页"
+                         KeyboardNavigation.TabNavigation="Cycle"
+                         KeyboardNavigation.DirectionalNavigation="None">
+                    <local:SafeScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False" IsTabStop="False">
+                        <StackPanel Margin="15">
+                            <TextBlock Text="音源接口管理" FontSize="22" FontWeight="Bold" Margin="0,0,0,15"
+                                       AutomationProperties.Name="音源管理标题"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <Button x:Name="ImportLocalSourceBtn" Content="从本地导入" Width="100" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="76"
+                                        AutomationProperties.Name="从本地导入音源" Click="ImportLocalSourceBtn_Click" IsTabStop="True"/>
+                                <Button x:Name="ImportNetworkSourceBtn" Content="从网络导入" Width="100" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="77"
+                                        AutomationProperties.Name="从网络导入音源" Click="ImportNetworkSourceBtn_Click" IsTabStop="True"/>
+                                <Button x:Name="RefreshSourcesBtn" Content="刷新" Width="70" Height="28" KeyboardNavigation.TabIndex="78"
+                                        AutomationProperties.Name="刷新音源列表" Click="RefreshSourcesBtn_Click" IsTabStop="True"/>
+                            </StackPanel>
+
+                            <GroupBox Header="音源接口列表" AutomationProperties.Name="音源接口列表区域">
+                                <local:SingleReadListBox x:Name="SourceList" MinHeight="420" KeyboardNavigation.TabIndex="79"
+                                         AutomationProperties.Name="音源接口列表"
+                                         AutomationProperties.HelpText="上下方向键浏览，右键或应用键打开操作菜单，回车查看详情，删除键删除"
+                                         ContextMenu="{StaticResource SourceContextMenu}"
+                                         KeyDown="SourceList_KeyDown"
+                                         IsTabStop="False">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Name}" Width="220" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding Version}" Width="70" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding TypeText}" Width="70"/>
+                                                <TextBlock Text="{Binding StatusText}" Width="90"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}"/>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                </local:SingleReadListBox>
+                            </GroupBox>
+                        </StackPanel>
+                    </local:SafeScrollViewer>
+                </TabItem>
+            </TabControl>
+
+            <!-- ===== 右侧信息面板 ===== -->
+            <StackPanel Grid.Column="1" Margin="10" AutomationProperties.Name="信息面板" x:Name="RightPanel">
+                <GroupBox Header="正在播放" AutomationProperties.Name="正在播放信息">
+                    <StackPanel>
+                        <TextBlock x:Name="CurrentTitle" Text="未播放"
+                                   AutomationProperties.Name="当前歌曲标题" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                        <TextBlock x:Name="CurrentArtist" Text=""
+                                   AutomationProperties.Name="当前歌手" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                        <TextBlock x:Name="CurrentAlbum" Text=""
+                                   AutomationProperties.Name="当前专辑" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="CurrentPlayModeText" Text="播放模式：顺序播放"
+                                   AutomationProperties.Name="当前播放模式" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                        <TextBlock x:Name="PositionText" Text="00:00 / 00:00"
+                                   AutomationProperties.Name="播放时间" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </GroupBox>
+            </StackPanel>
+        </Grid>
+
+        <!-- ===== 底部状态栏 ===== -->
+        <StatusBar Grid.Row="2" AutomationProperties.Name="状态栏">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="就绪" AutomationProperties.Name="状态信息"/>
+            </StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right">
+                <TextBlock x:Name="TimeText" Text="" AutomationProperties.Name="当前时间"/>
+            </StatusBarItem>
+        </StatusBar>
+
+        <!-- 无障碍实时区域：NVDA/讲述人/JAWS 播报用 -->
+        <TextBlock x:Name="LiveRegion" Width="1" Height="1" Opacity="0" IsHitTestVisible="False"
+                   AutomationProperties.LiveSetting="Polite"
+                   AutomationProperties.Name="状态播报" VerticalAlignment="Bottom" HorizontalAlignment="Left"/>
+    </Grid>
+</Window>
+
+

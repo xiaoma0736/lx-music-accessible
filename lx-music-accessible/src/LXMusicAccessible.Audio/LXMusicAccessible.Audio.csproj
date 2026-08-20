@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>LXMusicAccessible.Audio</RootNamespace>
+    <AssemblyName>LXMusicAccessible.Audio</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ManagedBass" Version="4.0.2" />
+    <PackageReference Include="ManagedBass.Ape" Version="4.0.2" />
+    <PackageReference Include="ManagedBass.Flac" Version="4.0.2" />
+    <PackageReference Include="ManagedBass.Opus" Version="4.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LXMusicAccessible.Models\LXMusicAccessible.Models.csproj" />
+  </ItemGroup>
+
+</Project>

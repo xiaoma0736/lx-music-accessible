@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>false</UseWPF>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LXMusicAccessible.Services\LXMusicAccessible.Services.csproj" />
+    <ProjectReference Include="..\LXMusicAccessible.Models\LXMusicAccessible.Models.csproj" />
+    <ProjectReference Include="..\LXMusicAccessible.Audio\LXMusicAccessible.Audio.csproj" />
+    <ProjectReference Include="..\LXMusicAccessible.Data\LXMusicAccessible.Data.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Prism 原生库（冒烟测试用，链接自 App 工程 Native 目录） -->
+    <Content Include="..\LXMusicAccessible.App\Native\prism.dll" Link="prism.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\LXMusicAccessible.App\Native\tolk.dll" Link="tolk.dll" CopyToOutputDirectory="PreserveNewest" />
+    <!-- BASS 原生库（播放器冒烟测试用） -->
+    <Content Include="..\LXMusicAccessible.App\Native\Bass\bass.dll" Link="bass.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\LXMusicAccessible.App\Native\Bass\bassflac.dll" Link="bassflac.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\LXMusicAccessible.App\Native\Bass\bassape.dll" Link="bassape.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\LXMusicAccessible.App\Native\Bass\bassopus.dll" Link="bassopus.dll" CopyToOutputDirectory="PreserveNewest" />
+    <!-- 打包脚本（与 App 工程同步，供离线双保险测试） -->
+    <Content Include="..\LXMusicAccessible.App\scripts\*.js" Link="scripts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
