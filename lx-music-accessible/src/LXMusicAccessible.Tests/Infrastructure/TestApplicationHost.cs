@@ -45,7 +45,8 @@ internal sealed class TestApplicationHost : IAsyncDisposable
     public RecordingProcessLauncher ProcessLauncher { get; }
     public RecordingAudioPlayer AudioPlayer { get; }
 
-    public static async Task<TestApplicationHost> StartAsync()
+    public static async Task<TestApplicationHost> StartAsync(
+        Action<IServiceCollection>? configureServices = null)
     {
         var dataDirectory = Directory.CreateTempSubdirectory(TestDirectoryPrefix).FullName;
 
@@ -78,6 +79,7 @@ internal sealed class TestApplicationHost : IAsyncDisposable
                     services.Replace(ServiceDescriptor.Singleton<IAudioPlayer>(audioPlayer));
                     services.Replace(ServiceDescriptor.Singleton<IDataStorageService>(
                         new LocalFileDataStorageService(Path.Combine(dataDirectory, "file-storage"))));
+                    configureServices?.Invoke(services);
                 })
                 .Build();
 

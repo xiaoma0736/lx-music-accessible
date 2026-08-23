@@ -4,7 +4,6 @@ using System.Windows.Input;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
-using Microsoft.Extensions.Logging;
 
 namespace LXMusicAccessible.App;
 
@@ -17,28 +16,22 @@ public partial class PlaylistImportView : UserControl
 {
     private readonly IPlaylistImportService _service;
     private readonly IAccessibilityService _announce;
-    private readonly MusicHttpClient _httpClient;
-    private readonly ILogger<KugouQrLoginService> _kugouLogger;
-    private readonly ILogger<WebLoginWindow> _webLoginLogger;
+    private readonly IPlaylistLoginWindowFactory _loginWindows;
     private string _platform = "netease";
     private bool _loggedIn;
     private List<RemotePlaylist> _playlists = new();
     private bool _selectAllState;
     private bool _songListAttached;
 
-    public PlaylistImportView(
+    internal PlaylistImportView(
         IPlaylistImportService service,
         IAccessibilityService announce,
-        MusicHttpClient httpClient,
-        ILogger<KugouQrLoginService> kugouLogger,
-        ILogger<WebLoginWindow> webLoginLogger)
+        IPlaylistLoginWindowFactory loginWindows)
     {
         InitializeComponent();
         _service = service;
         _announce = announce;
-        _httpClient = httpClient;
-        _kugouLogger = kugouLogger;
-        _webLoginLogger = webLoginLogger;
+        _loginWindows = loginWindows;
         Loaded += OnLoaded;
     }
 
@@ -157,39 +150,44 @@ public partial class PlaylistImportView : UserControl
     private async void KugouQrLoginBtn_Click(object sender, RoutedEventArgs e)
     {
         CookieArea.Visibility = Visibility.Collapsed;
-        var dialog = new KugouQrLoginWindow(_service, _announce, _httpClient, _kugouLogger)
+        if (await LoginWithKugouQrDialogAsync())
         {
-            Owner = HostWindow
-        };
-        if (dialog.ShowDialog() == true)
-        {
-            await RefreshAccountUiAsync();
             var acc = _service.GetAccount("kg");
             var msg = acc == null ? "酷狗扫码登录成功。" : $"酷狗扫码登录成功：{acc.DisplayName}。";
             Announce(msg);
             MessageBox.Show(HostWindow, msg, "登录成功", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
+
+    internal async Task<bool> LoginWithKugouQrDialogAsync()
+    {
+        if (!_loginWindows.ShowKugouQrLogin(HostWindow)) return false;
+        await RefreshAccountUiAsync();
+        return true;
+    }
     // ============ 网页登录（内嵌浏览器，四个平台通用） ============
 
     private async void WebLoginBtn_Click(object sender, RoutedEventArgs e)
     {
         CookieArea.Visibility = Visibility.Collapsed;
-        var dialog = new WebLoginWindow(_platform, _service, _announce, _webLoginLogger)
+        var result = await LoginWithWebDialogAsync();
+        if (result.Succeeded)
         {
-            Owner = HostWindow
-        };
-        if (dialog.ShowDialog() == true)
-        {
-            await RefreshAccountUiAsync();
             var acc = _service.GetAccount(_platform);
-            var accountName = dialog.LastAccountName ?? acc?.DisplayName ?? "";
+            var accountName = result.AccountName ?? acc?.DisplayName ?? "";
             var msg = string.IsNullOrEmpty(accountName)
                 ? "Cookie获取成功，登录成功。"
                 : $"Cookie获取成功，登录成功：{accountName}。";
             Announce(msg);
             MessageBox.Show(HostWindow, msg, "登录成功", MessageBoxButton.OK, MessageBoxImage.Information);
         }
+    }
+
+    internal async Task<PlaylistLoginDialogResult> LoginWithWebDialogAsync()
+    {
+        var result = _loginWindows.ShowWebLogin(_platform, HostWindow);
+        if (result.Succeeded) await RefreshAccountUiAsync();
+        return result;
     }
 
     // ============ 粘贴 Cookie 登录 ============

@@ -4,7 +4,6 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Services;
-using Microsoft.Extensions.Logging;
 
 namespace LXMusicAccessible.App;
 
@@ -25,13 +24,12 @@ public partial class KugouQrLoginWindow : Window
     public KugouQrLoginWindow(
         IPlaylistImportService service,
         IAccessibilityService announce,
-        MusicHttpClient httpClient,
-        ILogger<KugouQrLoginService> logger)
+        KugouQrLoginService qr)
     {
         InitializeComponent();
         _service = service;
         _announce = announce;
-        _qr = new KugouQrLoginService(httpClient, logger);
+        _qr = qr;
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _timer.Tick += async (_, _) => await PollOnceAsync();

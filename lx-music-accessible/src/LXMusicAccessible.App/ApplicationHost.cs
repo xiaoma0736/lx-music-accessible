@@ -77,8 +77,13 @@ public static class ApplicationHost
                 services.AddSingleton<IPlaylistImportProvider, QqPlaylistProvider>();
                 services.AddSingleton<IPlaylistImportProvider, KugouPlaylistProvider>();
                 services.AddSingleton<IPlaylistImportProvider, KuwoPlaylistProvider>();
+                services.AddSingleton<KugouQrLoginService>();
+                services.AddSingleton<IPlaylistLoginWindowFactory, PlaylistLoginWindowFactory>();
 
-                services.AddSingleton<PlaylistImportView>();
+                services.AddSingleton(sp => new PlaylistImportView(
+                    sp.GetRequiredService<IPlaylistImportService>(),
+                    sp.GetRequiredService<IAccessibilityService>(),
+                    sp.GetRequiredService<IPlaylistLoginWindowFactory>()));
                 services.AddSingleton<MainWindow>();
                 services.AddSingleton<IApplicationShell, WpfApplicationShell>();
 
