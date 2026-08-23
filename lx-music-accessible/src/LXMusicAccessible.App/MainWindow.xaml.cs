@@ -34,11 +34,9 @@ public partial class MainWindow : Window
     private readonly IProcessLauncher _processLauncher;
     private readonly PlaylistImportView _playlistImportPanel;
     private readonly ApplicationWindowFactory _windowFactory;
-    private readonly IApplicationShutdown _applicationShutdown;
+    private readonly DesktopLifecycleWorkflow _desktopLifecycle;
     private readonly MusicBrowseWorkflow _browseWorkflow;
     private SettingsEditState _settingsState;
-    private Task? _closeAfterShutdown;
-    private bool _shutdownCloseAllowed;
     private bool _shutdownBlocked;
     private string _defaultQuality = "128k";
     private string _defaultDownloadQuality = "128k";
@@ -47,7 +45,6 @@ public partial class MainWindow : Window
     private bool _settingsLoaded = false;
     private bool _suppressPlaybackSettingChanges;
     private bool _hideToTrayOnAltF4 = false;
-    private System.Windows.Forms.NotifyIcon? _trayIcon;
     private ObservableCollection<HotkeySettingItem> _hotkeySettingItems = new();
     private HotkeySettingItem? _recordingHotkeyItem;
     private bool _hotkeyConflictDialogOpen;
@@ -134,7 +131,7 @@ public partial class MainWindow : Window
         IProcessLauncher processLauncher,
         PlaylistImportView playlistImportPanel,
         ApplicationWindowFactory windowFactory,
-        IApplicationShutdown applicationShutdown,
+        DesktopLifecycleWorkflow desktopLifecycle,
         MusicBrowseWorkflow browseWorkflow)
     {
         _accessibilityService = accessibilityService;
@@ -151,10 +148,11 @@ public partial class MainWindow : Window
         _processLauncher = processLauncher;
         _playlistImportPanel = playlistImportPanel;
         _windowFactory = windowFactory;
-        _applicationShutdown = applicationShutdown;
+        _desktopLifecycle = desktopLifecycle;
         _browseWorkflow = browseWorkflow;
 
         InitializeComponent();
+        _desktopLifecycle.Attach(this);
         if (_accessibilityService is WpfAccessibleAnnouncer wpfAnnouncer)
             wpfAnnouncer.Attach(LiveRegion);
         _accessibilityService.SpeechEnabled = _voiceAnnouncementEnabled;
@@ -326,10 +324,7 @@ public partial class MainWindow : Window
         if ((e.Key == Key.F4 || e.SystemKey == Key.F4) && (Keyboard.Modifiers & ModifierKeys.Alt) != 0)
         {
             e.Handled = true;
-            if (_hideToTrayOnAltF4)
-                HideToTray();
-            else
-                Close();
+            _ = _desktopLifecycle.ExecuteAsync(DesktopCommand.AltF4, _hideToTrayOnAltF4);
             return;
         }
 
@@ -531,7 +526,7 @@ public partial class MainWindow : Window
         // ESC：隐藏窗口到系统托盘
         if (e.Key == Key.Escape)
         {
-            HideToTray();
+            _ = _desktopLifecycle.ExecuteAsync(DesktopCommand.Escape);
             e.Handled = true;
         }
     }
@@ -1134,7 +1129,7 @@ public partial class MainWindow : Window
         _musicSourceService.SourcesChanged -= MusicSourceService_SourcesChanged;
         _musicSourceService.ScriptUpdateAlert -= MusicSourceService_ScriptUpdateAlert;
         _playback.QueueCompleted -= PlayerService_QueueCompleted;
-        DisposeTrayIcon();
+        _desktopLifecycle.PrepareForShutdown();
 
         return new ApplicationShutdownSnapshot(_settingsState, sources);
     }
@@ -3184,7 +3179,8 @@ public partial class MainWindow : Window
             Announce($"已选择文件夹：{Path.GetFileName(folderDialog.SelectedPath)}");
     }
 
-    private void Exit_Click(object sender, RoutedEventArgs e) => Close();
+    private void Exit_Click(object sender, RoutedEventArgs e) =>
+        _ = _desktopLifecycle.ExecuteAsync(DesktopCommand.Exit);
 
     private void UserGuide_Click(object sender, RoutedEventArgs e)
     {
@@ -3231,152 +3227,6 @@ public partial class MainWindow : Window
             "搜索框内 Delete：清空搜索\n" +
             "删除键：从播放列表移除/删除音源",
             "关于", MessageBoxButton.OK, MessageBoxImage.Information);
-    }
-
-    // ==================== 系统托盘 ====================
-
-    /// <summary>初始化系统托盘图标（含右键菜单），供隐藏窗口到托盘后操作</summary>
-    private void InitializeTrayIcon()
-    {
-        if (_trayIcon != null) return;
-        try
-        {
-            var menu = new System.Windows.Forms.ContextMenuStrip();
-
-            var showItem = new System.Windows.Forms.ToolStripMenuItem("显示主窗口");
-            showItem.Click += (s, e) => ShowFromTray();
-            menu.Items.Add(showItem);
-
-            var playItem = new System.Windows.Forms.ToolStripMenuItem("播放/暂停");
-            // 直接走按钮逻辑（绕开快捷键的文本框输入保护，保证托盘播放/暂停始终生效）
-            playItem.Click += (s, e) => PlayPauseButton_Click(this, new RoutedEventArgs());
-            menu.Items.Add(playItem);
-
-            var prevItem = new System.Windows.Forms.ToolStripMenuItem("上一首");
-            prevItem.Click += (s, e) => PreviousButton_Click(this, new RoutedEventArgs());
-            menu.Items.Add(prevItem);
-
-            var nextItem = new System.Windows.Forms.ToolStripMenuItem("下一首");
-            nextItem.Click += (s, e) => NextButton_Click(this, new RoutedEventArgs());
-            menu.Items.Add(nextItem);
-
-            menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
-
-            var quitItem = new System.Windows.Forms.ToolStripMenuItem("退出");
-            quitItem.Click += (s, e) => QuitApplication();
-            menu.Items.Add(quitItem);
-
-            _trayIcon = new System.Windows.Forms.NotifyIcon
-            {
-                Icon = CreateAppIcon(),
-                Text = "落雪音乐 无障碍版",
-                Visible = true,
-                ContextMenuStrip = menu
-            };
-            _trayIcon.DoubleClick += (s, e) => ShowFromTray();
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"初始化托盘图标失败: {ex.Message}");
-            _trayIcon = null;
-        }
-    }
-
-    /// <summary>生成托盘图标：蓝色圆底 + 白色音符</summary>
-    private static System.Drawing.Icon CreateAppIcon()
-    {
-        try
-        {
-            using var bmp = new System.Drawing.Bitmap(32, 32);
-            using (var g = System.Drawing.Graphics.FromImage(bmp))
-            {
-                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                g.Clear(System.Drawing.Color.Transparent);
-                using var bg = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(0, 120, 215));
-                g.FillEllipse(bg, 2, 2, 28, 28);
-                using var white = new System.Drawing.SolidBrush(System.Drawing.Color.White);
-                using var pen = new System.Drawing.Pen(System.Drawing.Color.White, 2.5f);
-                // 简易音符：两个实心圆 + 两条竖线
-                g.FillEllipse(white, 9, 16, 6, 6);
-                g.FillEllipse(white, 20, 12, 6, 6);
-                g.DrawLine(pen, 12, 17, 12, 7);
-                g.DrawLine(pen, 23, 13, 23, 5);
-            }
-            var hicon = bmp.GetHicon();
-            try
-            {
-                using var tmp = System.Drawing.Icon.FromHandle(hicon);
-                return (System.Drawing.Icon)tmp.Clone();
-            }
-            finally
-            {
-                DestroyIcon(hicon);
-            }
-        }
-        catch
-        {
-            return System.Drawing.SystemIcons.Application;
-        }
-    }
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool DestroyIcon(IntPtr handle);
-
-    /// <summary>隐藏主窗口到系统托盘，音乐继续播放</summary>
-    private void HideToTray()
-    {
-        InitializeTrayIcon();
-        if (_trayIcon == null) return;
-        Hide();
-        try
-        {
-            _trayIcon.ShowBalloonTip(1500, "落雪音乐 无障碍版",
-                "已隐藏到系统托盘，音乐继续播放。双击托盘图标可恢复窗口。",
-                System.Windows.Forms.ToolTipIcon.Info);
-        }
-        catch { }
-        Announce("已隐藏到系统托盘，音乐继续播放");
-    }
-
-    /// <summary>从托盘恢复显示主窗口</summary>
-    private void ShowFromTray()
-    {
-        Show();
-        if (WindowState == WindowState.Minimized)
-            WindowState = WindowState.Normal;
-        Activate();
-        Topmost = true;
-        Topmost = false;
-        Focus();
-    }
-
-    /// <summary>Activated when a second instance of the app is launched: restore the
-    /// window (from tray-hide or minimized) and bring it to the foreground.</summary>
-    public void RestoreFromSecondInstance()
-    {
-        if (!IsVisible)
-            Show();
-        if (WindowState == WindowState.Minimized)
-            WindowState = WindowState.Normal;
-        Activate();
-        Topmost = true;
-        Topmost = false;
-        Focus();
-        Announce("\u5df2\u6062\u590d\u4e3b\u7a97\u53e3");
-    }
-
-    /// <summary>从托盘退出应用：释放托盘图标后关闭窗口</summary>
-    private void QuitApplication()
-    {
-        Close();
-    }
-
-    private void DisposeTrayIcon()
-    {
-        if (_trayIcon == null) return;
-        _trayIcon.Visible = false;
-        _trayIcon.Dispose();
-        _trayIcon = null;
     }
 
     // ==================== 辅助 ====================
@@ -3766,13 +3616,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>切换主窗口可见性：可见→隐藏到托盘；隐藏→恢复窗口</summary>
-    private void ToggleWindowVisibility()
-    {
-        if (IsVisible && WindowState != System.Windows.WindowState.Minimized)
-            HideToTray();
-        else
-            ShowFromTray();
-    }
+    private void ToggleWindowVisibility() =>
+        _ = _desktopLifecycle.ExecuteAsync(DesktopCommand.ToggleVisibility);
 
     /// <summary>播放设备切换专用播报：排队朗读，期间暂停歌词自动朗读，避免设备播报被歌词打断</summary>
     private async void AnnounceDevice(string message)
@@ -4011,40 +3856,17 @@ public partial class MainWindow : Window
         return null;
     }
 
-    protected override async void OnClosing(CancelEventArgs e)
+    protected override void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
-        if (_shutdownCloseAllowed) return;
+        if (_desktopLifecycle.AllowWindowClose) return;
 
         e.Cancel = true;
-        await CloseAfterShutdownAsync();
-    }
-
-    private Task CloseAfterShutdownAsync() =>
-        _closeAfterShutdown ??= CompleteShutdownAndCloseAsync();
-
-    private async Task CompleteShutdownAndCloseAsync()
-    {
-        try
-        {
-            await _applicationShutdown.RequestAsync();
-        }
-        catch (Exception exception)
-        {
-            System.Diagnostics.Debug.WriteLine(
-                $"Shutdown coordination failed: {exception.GetType().Name}");
-        }
-        finally
-        {
-            _shutdownCloseAllowed = true;
-            Close();
-        }
+        _ = _desktopLifecycle.ExecuteAsync(DesktopCommand.Exit);
     }
 
     protected override void OnClosed(EventArgs e)
     {
-        // 释放托盘图标，避免退出后图标残留
-        DisposeTrayIcon();
         if (_musicSourceService != null)
             _musicSourceService.SourcesChanged -= MusicSourceService_SourcesChanged;
         _settingsWorkflow.UnregisterAllGlobal();

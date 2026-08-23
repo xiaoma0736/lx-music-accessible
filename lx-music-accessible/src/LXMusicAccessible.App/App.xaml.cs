@@ -12,7 +12,7 @@ namespace LXMusicAccessible.App;
 public partial class App : Application
 {
     private ApplicationRuntime? _runtime;
-    private MainWindow? _mainWindow;
+    private DesktopLifecycleWorkflow? _desktopLifecycle;
 
     // Single-instance support: a named mutex guards exclusivity; a named event lets
     // a later launch signal this instance to restore and foreground its window.
@@ -75,11 +75,12 @@ public partial class App : Application
                     break;
                 }
                 if (_exiting) break;
-                if (signaled && _mainWindow != null)
+                if (signaled && _desktopLifecycle != null)
                 {
                     try
                     {
-                        Dispatcher.Invoke(() => _mainWindow.RestoreFromSecondInstance());
+                        Dispatcher.Invoke(() =>
+                            _ = _desktopLifecycle.ExecuteAsync(DesktopCommand.Restore));
                     }
                     catch { }
                 }
@@ -129,7 +130,8 @@ public partial class App : Application
             return;
         }
 
-        _mainWindow = (MainWindow)MainWindow;
+        _desktopLifecycle = _runtime.Services?.GetService(typeof(DesktopLifecycleWorkflow))
+            as DesktopLifecycleWorkflow;
     }
 
     /// <summary>卸载流程：确认 → 数据删除询问 → 清理快捷方式/注册表/用户数据 → 延迟删除安装目录</summary>

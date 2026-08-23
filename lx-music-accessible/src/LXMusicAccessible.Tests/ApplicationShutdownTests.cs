@@ -191,12 +191,18 @@ public sealed class ApplicationShutdownTests
             "src",
             "LXMusicAccessible.App",
             "App.xaml.cs"));
+        var desktop = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "LXMusicAccessible.App",
+            "DesktopLifecycleWorkflow.cs"));
 
-        Assert.Contains("private void Exit_Click(object sender, RoutedEventArgs e) => Close();", window);
-        Assert.Contains("private void QuitApplication()", window);
-        Assert.Contains("if (_hideToTrayOnAltF4)\n                HideToTray();\n            else\n                Close();", window.Replace("\r\n", "\n"));
-        Assert.Contains("protected override async void OnClosing(CancelEventArgs e)", window);
-        Assert.Contains("await CloseAfterShutdownAsync();", window);
+        Assert.Contains("DesktopCommand.Exit", window);
+        Assert.Contains("DesktopCommand.AltF4", window);
+        Assert.Contains("protected override void OnClosing(CancelEventArgs e)", window);
+        Assert.DoesNotContain("_applicationShutdown", window);
+        Assert.Contains("await _shutdown.RequestAsync();", desktop);
+        Assert.Contains("_desktop.CompleteExit();", desktop);
         Assert.DoesNotContain("SaveSettingsOnExit", window);
         Assert.Contains("protected override void OnExit(ExitEventArgs e)", app);
         Assert.DoesNotContain("protected override async void OnExit", app);

@@ -117,6 +117,12 @@ public static class ApplicationHost
                 services.AddSingleton<ApplicationShutdownRequest>();
                 services.AddSingleton<IApplicationShutdown>(sp =>
                     sp.GetRequiredService<ApplicationShutdownRequest>());
+                services.AddSingleton<IDesktopIntegration, WpfDesktopIntegration>();
+                services.AddSingleton(sp => new DesktopLifecycleWorkflow(
+                    sp.GetRequiredService<IDesktopIntegration>(),
+                    sp.GetRequiredService<IApplicationShutdown>(),
+                    sp.GetRequiredService<IPlaybackCoordinator>(),
+                    sp.GetRequiredService<IAccessibleAnnouncer>()));
                 services.AddSingleton<IApplicationShutdownParticipant, MainWindowShutdownParticipant>();
                 services.AddSingleton<IShutdownFeedback, WpfShutdownFeedback>();
                 services.AddSingleton<MainWindow>();
