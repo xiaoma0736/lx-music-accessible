@@ -22,14 +22,16 @@ public partial class KugouQrLoginWindow : Window
     private bool _succeeded;
     private int _failCount;
 
-    public KugouQrLoginWindow()
+    public KugouQrLoginWindow(
+        IPlaylistImportService service,
+        IAccessibilityService announce,
+        MusicHttpClient httpClient,
+        ILogger<KugouQrLoginService> logger)
     {
         InitializeComponent();
-        _service = ServiceProvider.GetRequiredService<IPlaylistImportService>();
-        _announce = ServiceProvider.GetRequiredService<IAccessibilityService>();
-        _qr = new KugouQrLoginService(
-            ServiceProvider.GetRequiredService<MusicHttpClient>(),
-            ServiceProvider.GetRequiredService<ILogger<KugouQrLoginService>>());
+        _service = service;
+        _announce = announce;
+        _qr = new KugouQrLoginService(httpClient, logger);
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _timer.Tick += async (_, _) => await PollOnceAsync();

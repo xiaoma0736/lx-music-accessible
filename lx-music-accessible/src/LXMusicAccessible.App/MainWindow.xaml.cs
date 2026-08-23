@@ -1,6 +1,5 @@
 ﻿// Compiled: 2026-08-01 - 全链路打通 + 无障碍键盘导航 + 简体中文界面
 using System.Collections.Generic;
-using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Threading.Tasks;
 using System.Windows;
@@ -20,19 +19,19 @@ namespace LXMusicAccessible.App;
 
 public partial class MainWindow : Window
 {
-    private IServiceProvider? _services;
-    private IAccessibilityService? _accessibilityService;
-    private IMusicPlayerService? _playerService;
+    private readonly IAccessibilityService _accessibilityService;
+    private readonly IMusicPlayerService _playerService;
     private ListBox? _playbackSourceList;
     private bool _autoPaging;
-    private IDataService? _dataService;
-    private IHotkeyManager? _hotkeyManager;
-    private ITtsService? _ttsService;
-    private IMusicSourceService? _musicSourceService;
-    private ILyricService? _lyricService;
-    private IDownloadService? _downloadService;
-    private IDataStorageService? _dataStorageService;
-    private IProcessLauncher? _processLauncher;
+    private readonly IDataService _dataService;
+    private readonly IHotkeyManager _hotkeyManager;
+    private readonly ITtsService _ttsService;
+    private readonly IMusicSourceService _musicSourceService;
+    private readonly ILyricService _lyricService;
+    private readonly IDownloadService _downloadService;
+    private readonly IDataStorageService _dataStorageService;
+    private readonly IProcessLauncher _processLauncher;
+    private readonly PlaylistImportView _playlistImportPanel;
     private string _defaultQuality = "128k";
     private string _defaultDownloadQuality = "128k";
     private string _currentPlayingQuality = "128k"; // 最近一次播放使用的音质（查看歌曲详情用）
@@ -143,9 +142,33 @@ public partial class MainWindow : Window
         new() { Interval = TimeSpan.FromSeconds(1) };
 
 
-    public MainWindow()
+    public MainWindow(
+        IAccessibilityService accessibilityService,
+        IMusicPlayerService playerService,
+        IDataService dataService,
+        IHotkeyManager hotkeyManager,
+        ITtsService ttsService,
+        IMusicSourceService musicSourceService,
+        ILyricService lyricService,
+        IDownloadService downloadService,
+        IDataStorageService dataStorageService,
+        IProcessLauncher processLauncher,
+        PlaylistImportView playlistImportPanel)
     {
+        _accessibilityService = accessibilityService;
+        _playerService = playerService;
+        _dataService = dataService;
+        _hotkeyManager = hotkeyManager;
+        _ttsService = ttsService;
+        _musicSourceService = musicSourceService;
+        _lyricService = lyricService;
+        _downloadService = downloadService;
+        _dataStorageService = dataStorageService;
+        _processLauncher = processLauncher;
+        _playlistImportPanel = playlistImportPanel;
+
         InitializeComponent();
+        PlaylistImportHost.Content = _playlistImportPanel;
         SetLyricsText("暂无歌词");
         StatusText.Text = "正在初始化...";
         InitializePlayMode();
@@ -155,6 +178,29 @@ public partial class MainWindow : Window
         AssignSongContextMenus();
         _sourceContextMenu = (ContextMenu)FindResource("SourceContextMenu");
         _sourceContextMenu.PreviewKeyUp += ContextMenu_PreviewKeyUp;
+        _playerService.QueueCompleted += PlayerService_QueueCompleted;
+        _hotkeyManager.HotkeyPressed += HotkeyManager_HotkeyPressed;
+        _hotkeyManager.HotkeysRegistrationFailed += HotkeyManager_HotkeysRegistrationFailed;
+        _musicSourceService.SourcesChanged += MusicSourceService_SourcesChanged;
+        _musicSourceService.ScriptUpdateAlert += MusicSourceService_ScriptUpdateAlert;
+        DownloadTaskList.ItemsSource = _downloadService.Tasks;
+        _downloadService.TaskCompleted += DownloadService_TaskCompleted;
+
+        SetupEventHandlers();
+        InstallNumpadHook();
+
+        StatusText.Text = "就绪";
+        TimeText.Text = DateTime.Now.ToString("HH:mm:ss");
+        SendWelcomeMessage();
+
+        _positionTimer.Start();
+        _clockTimer.Start();
+
+        _ = LoadSettingsAsync();
+        _ = LoadCategoriesAsync(GetComboTag(CategorySourceCombo, "netease"));
+        _ = LoadRankingsAsync(GetComboTag(RankingSourceCombo, "netease"));
+        _ = LoadSearchHistoryAsync();
+        RefreshSourceList();
     }
 
     private void InitializePlayMode()
@@ -162,59 +208,11 @@ public partial class MainWindow : Window
         UpdatePlayModeDisplay();
     }
 
-    // ==================== 服务初始化 ====================
-
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
         if (PresentationSource.FromVisual(this) is HwndSource source)
             source.AddHook(WndProc);
-    }
-
-    public void InitializeServices(IServiceProvider services)
-    {
-        try
-        {
-            _services = services;
-            _accessibilityService = services.GetRequiredService<IAccessibilityService>();
-            _playerService = services.GetRequiredService<IMusicPlayerService>();
-            _playerService.QueueCompleted += PlayerService_QueueCompleted;
-            _dataService = services.GetRequiredService<IDataService>();
-            _hotkeyManager = services.GetRequiredService<IHotkeyManager>();
-            _hotkeyManager.HotkeyPressed += HotkeyManager_HotkeyPressed;
-            _hotkeyManager.HotkeysRegistrationFailed += HotkeyManager_HotkeysRegistrationFailed;
-            _ttsService = services.GetRequiredService<ITtsService>();
-            _musicSourceService = services.GetRequiredService<IMusicSourceService>();
-            _musicSourceService.SourcesChanged += MusicSourceService_SourcesChanged;
-            _musicSourceService.ScriptUpdateAlert += MusicSourceService_ScriptUpdateAlert;
-            _lyricService = services.GetRequiredService<ILyricService>();
-            _downloadService = services.GetRequiredService<IDownloadService>();
-            DownloadTaskList.ItemsSource = _downloadService.Tasks;
-            _downloadService.TaskCompleted += DownloadService_TaskCompleted;
-            _dataStorageService = services.GetRequiredService<IDataStorageService>();
-            _processLauncher = services.GetRequiredService<IProcessLauncher>();
-
-            SetupEventHandlers();
-            InstallNumpadHook();
-
-            StatusText.Text = "就绪";
-            TimeText.Text = DateTime.Now.ToString("HH:mm:ss");
-            SendWelcomeMessage();
-
-            _positionTimer.Start();
-            _clockTimer.Start();
-
-            _ = LoadSettingsAsync();
-            _ = LoadCategoriesAsync(GetComboTag(CategorySourceCombo, "netease"));
-            _ = LoadRankingsAsync(GetComboTag(RankingSourceCombo, "netease"));
-            _ = LoadSearchHistoryAsync();
-            RefreshSourceList();
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"初始化失败：{ex.Message}";
-            MessageBox.Show($"服务初始化失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
     }
 
     private void SendWelcomeMessage()
@@ -460,7 +458,7 @@ public partial class MainWindow : Window
         {
             case 0: FocusControl(SearchBox); break;
             case 1: FocusListContent(FavoriteSongsList); break;
-            case 2: FocusControl(PlaylistImportPanel?.FirstFocusable ?? SearchBox); break;
+            case 2: FocusControl(_playlistImportPanel.FirstFocusable); break;
             case 3: FocusListContent(CategoryList); break;
             case 4: FocusListContent(RankingList); break;
             case 5: FocusControl(AutoPlayCheckBox); break;
@@ -684,7 +682,7 @@ public partial class MainWindow : Window
             return;
         }
         // ESC：导入个人歌单页在歌曲预览态先返回歌单列表
-        if (e.Key == Key.Escape && MainTabControl.SelectedIndex == 2 && PlaylistImportPanel?.TryHandleEscape() == true)
+        if (e.Key == Key.Escape && MainTabControl.SelectedIndex == 2 && _playlistImportPanel.TryHandleEscape())
         {
             e.Handled = true;
             return;
@@ -818,7 +816,7 @@ public partial class MainWindow : Window
         {
             case 0: FocusListContent(SearchResultsList); break;
             case 1: FocusListContent(FavoriteSongsList); break;
-            case 2: FocusListContent(PlaylistImportPanel?.SongList ?? SearchResultsList); break;
+            case 2: FocusListContent(_playlistImportPanel.SongList); break;
             case 3: FocusListContent(CategorySongsList); break;
             case 4: FocusListContent(RankingSongsList); break;
         }
@@ -1987,7 +1985,7 @@ public partial class MainWindow : Window
 
     private async Task PlayMusicAsync(MusicInfo music, string? quality = null, ListBox? sourceList = null)
     {
-        if (music == null || _playerService == null) return;
+        if (music == null) return;
         var q = string.IsNullOrEmpty(quality) ? _defaultQuality : quality;
         _currentPlayingQuality = q; // 记录本次播放音质，供"查看歌曲详情"展示
         Announce($"正在播放：{music.Title}，{music.Artist}");
@@ -2012,6 +2010,12 @@ public partial class MainWindow : Window
                     return;
                 }
                 music.PlayUrl = playUrl;
+            }
+
+            if (string.IsNullOrWhiteSpace(music.PlayUrl))
+            {
+                Announce("无法播放：歌曲地址为空");
+                return;
             }
 
             await _playerService.PlayAsync(music.PlayUrl, music);
@@ -3846,7 +3850,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var guide = new UserGuideWindow { Owner = this };
+            var guide = new UserGuideWindow(_accessibilityService) { Owner = this };
             guide.ShowDialog();
         }
         catch (Exception ex)
@@ -3859,7 +3863,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var window = new SponsorQrWindow { Owner = this };
+            var window = new SponsorQrWindow(_accessibilityService) { Owner = this };
             window.ShowDialog();
         }
         catch (Exception ex)
@@ -4610,7 +4614,7 @@ public partial class MainWindow : Window
         if (fe == null) return null;
         var list = FindAncestor<ListBox>(fe);
         if (list == null) return null;
-        var songLists = new ListBox?[] { SearchResultsList, CategorySongsList, RankingSongsList, FavoriteSongsList, PlaylistImportPanel?.SongList };
+        var songLists = new ListBox?[] { SearchResultsList, CategorySongsList, RankingSongsList, FavoriteSongsList, _playlistImportPanel.SongList };
         if (!songLists.Contains(list)) return null;
         return list.SelectedItem as MusicInfo;
     }
@@ -4625,7 +4629,7 @@ public partial class MainWindow : Window
         {
             0 => SearchResultsList,
             1 => FavoriteSongsList,
-            2 => PlaylistImportPanel?.LastFocusable ?? SearchResultsList,
+            2 => _playlistImportPanel.LastFocusable,
             3 => CategorySongsList,
             4 => RankingSongsList,
             5 => ResetHotkeysBtn,
@@ -4642,7 +4646,7 @@ public partial class MainWindow : Window
         {
             0 => SearchSourceCombo,
             1 => NewOnlinePlaylistBtn,
-            2 => PlaylistImportPanel?.FirstFocusable ?? SearchSourceCombo,
+            2 => _playlistImportPanel.FirstFocusable,
             3 => CategorySourceCombo,
             4 => RankingSourceCombo,
             5 => DefaultQualityCombo,

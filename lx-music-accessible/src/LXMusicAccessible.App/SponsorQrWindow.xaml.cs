@@ -11,10 +11,10 @@ public partial class SponsorQrWindow : Window
 {
     private readonly IAccessibilityService _announce;
 
-    public SponsorQrWindow()
+    public SponsorQrWindow(IAccessibilityService announce)
     {
+        _announce = announce;
         InitializeComponent();
-        _announce = ServiceProvider.GetRequiredService<IAccessibilityService>();
         Loaded += OnLoaded;
     }
 

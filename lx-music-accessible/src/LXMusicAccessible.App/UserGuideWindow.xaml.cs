@@ -20,10 +20,12 @@ public partial class UserGuideWindow : Window
 {
     /// <summary>章节：标题 + 在展示文本中的起始字符偏移（用于跳转）</summary>
     private readonly List<(string Title, int Offset)> _chapters = new();
+    private readonly IAccessibilityService _accessibilityService;
     private bool _suppressJump;
 
-    public UserGuideWindow()
+    public UserGuideWindow(IAccessibilityService accessibilityService)
     {
+        _accessibilityService = accessibilityService;
         InitializeComponent();
     }
 
@@ -110,7 +112,7 @@ public partial class UserGuideWindow : Window
         var title = _chapters[idx].Title;
         try
         {
-            ServiceProvider.GetRequiredService<IAccessibilityService>().Announce($"已跳转到章节：{title}");
+            _accessibilityService.Announce($"已跳转到章节：{title}");
         }
         catch { /* 播报失败不阻塞 */ }
     }

@@ -9,13 +9,35 @@ using Microsoft.Extensions.Logging;
 
 namespace LXMusicAccessible.App;
 
-/// <summary>
-/// Builds the service graph used by the desktop application.
-/// Tests use this same builder and replace only external adapters.
-/// </summary>
+/// <summary>The single composition root for the desktop process.</summary>
 public static class ApplicationHost
 {
-    public static IHostBuilder CreateBuilder(string dataDirectory)
+    public static ApplicationRuntime Create()
+    {
+        var dataDirectory = AppDataPaths.ResolveDataDir();
+        return CreateRuntime(
+            dataDirectory,
+            new ProductionStartupInitializer(dataDirectory),
+            new WpfStartupFailurePresenter());
+    }
+
+    internal static ApplicationRuntime CreateForTesting(
+        string dataDirectory,
+        IStartupInitializer initializer,
+        IStartupFailurePresenter failurePresenter,
+        Action<IServiceCollection>? replaceAdapters = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(dataDirectory);
+        return CreateRuntime(
+            Path.GetFullPath(dataDirectory),
+            initializer,
+            failurePresenter,
+            replaceAdapters);
+    }
+
+    internal static IHostBuilder CreateBuilder(
+        string dataDirectory,
+        Action<IServiceCollection>? replaceAdapters = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dataDirectory);
         var dataDir = Path.GetFullPath(dataDirectory);
@@ -45,9 +67,38 @@ public static class ApplicationHost
                 services.AddSingleton<ILyricService, LyricService>();
                 services.AddSingleton<LxScriptEngine>();
                 services.AddSingleton<ITtsService, RoutingTtsService>();
-                services.AddSingleton<IDataStorageService, LocalFileDataStorageService>();
+                services.AddSingleton<IDataStorageService>(_ =>
+                    new LocalFileDataStorageService(Path.Combine(dataDir, "file-storage")));
                 services.AddSingleton<IHotkeyManager, HotkeyManagerService>();
                 services.AddSingleton<IProcessLauncher, SystemProcessLauncher>();
+
+                services.AddSingleton<IPlaylistImportService, PlaylistImportService>();
+                services.AddSingleton<IPlaylistImportProvider, NeteasePlaylistProvider>();
+                services.AddSingleton<IPlaylistImportProvider, QqPlaylistProvider>();
+                services.AddSingleton<IPlaylistImportProvider, KugouPlaylistProvider>();
+                services.AddSingleton<IPlaylistImportProvider, KuwoPlaylistProvider>();
+
+                services.AddSingleton<PlaylistImportView>();
+                services.AddSingleton<MainWindow>();
+                services.AddSingleton<IApplicationShell, WpfApplicationShell>();
+
+                replaceAdapters?.Invoke(services);
             });
     }
+
+    private static ApplicationRuntime CreateRuntime(
+        string dataDirectory,
+        IStartupInitializer initializer,
+        IStartupFailurePresenter failurePresenter,
+        Action<IServiceCollection>? replaceAdapters = null) =>
+        new(
+            () => CreateBuilder(dataDirectory, replaceAdapters)
+                .UseDefaultServiceProvider((_, options) =>
+                {
+                    options.ValidateOnBuild = true;
+                    options.ValidateScopes = true;
+                })
+                .Build(),
+            initializer,
+            failurePresenter);
 }

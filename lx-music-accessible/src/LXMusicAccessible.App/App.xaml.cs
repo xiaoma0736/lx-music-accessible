@@ -2,11 +2,8 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Serilog;
 using System.Windows;
-using LXMusicAccessible.Services;
 using LXMusicAccessible.Data;
 using LXMusicAccessible.Core;
 
@@ -14,7 +11,7 @@ namespace LXMusicAccessible.App;
 
 public partial class App : Application
 {
-    private IHost? _host;
+    private ApplicationRuntime? _runtime;
     private MainWindow? _mainWindow;
 
     // Single-instance support: a named mutex guards exclusivity; a named event lets
@@ -122,66 +119,17 @@ public partial class App : Application
             System.Diagnostics.Debug.WriteLine($"Single-instance setup failed: {ex.Message}");
         }
 
-        try
+        _runtime = ApplicationHost.Create();
+        var outcome = await _runtime.StartAsync();
+        if (outcome == ApplicationStartOutcome.ExitRequested)
         {
-            // 先创建主窗口，让用户能看到界面
-            // Resolve the effective data directory before creating the window,
-            // configuring logging, or opening the database.
-            var dataDir = AppDataPaths.PrepareDataDir();
-            Directory.CreateDirectory(Path.Combine(dataDir, "logs"));
-
-            _mainWindow = new MainWindow();
-            _mainWindow.Show();
-
-            // 配置日志
-            Log.Logger = new LoggerConfiguration()
-                .MinimumLevel.Debug()
-                .WriteTo.Console()
-                .WriteTo.File(Path.Combine(dataDir, "logs", "lxmusic-.txt"), rollingInterval: RollingInterval.Day)
-                .CreateLogger();
-
-            Log.Information("应用程序启动");
-
-            // Use the same service graph as the automated Host fixture.
-            _host = ApplicationHost.CreateBuilder(dataDir).Build();
-
-            await _host.StartAsync();
-            Log.Information("服务已启动");
-
-            // 初始化数据库
-            var dbInitializer = _host.Services.GetRequiredService<DatabaseInitializer>();
-            await dbInitializer.InitializeAsync();
-            Log.Information("数据库初始化完成");
-
-            // 后台恢复已验证脚本并校验随版本资源；此路径不下载脚本。
-            var musicSrcSvc = _host.Services.GetRequiredService<IMusicSourceService>();
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await ((MusicSourceService)musicSrcSvc).InitializeScriptSourcesAsync();
-                    Log.Information("脚本源初始化完成");
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning(ex, "脚本源初始化失败（不影响主功能）");
-                }
-            });
-
-            // 初始化主窗口服务
-            _mainWindow.InitializeServices(_host.Services);
-            
-            Log.Information("应用程序启动完成");
-        }
-        catch (Exception ex)
-        {
-            Log.Fatal(ex, "应用程序启动失败");
-            MessageBox.Show($"应用程序启动失败: {ex.Message}", "错误", 
-                MessageBoxButton.OK, MessageBoxImage.Error);
-            
-            Log.CloseAndFlush();
+            await _runtime.DisposeAsync();
+            _runtime = null;
             Shutdown();
+            return;
         }
+
+        _mainWindow = (MainWindow)MainWindow;
     }
 
     /// <summary>卸载流程：确认 → 数据删除询问 → 清理快捷方式/注册表/用户数据 → 延迟删除安装目录</summary>
@@ -383,11 +331,8 @@ public partial class App : Application
 
         Log.Information("应用程序正在关闭");
 
-        if (_host != null)
-        {
-            await _host.StopAsync();
-            _host.Dispose();
-        }
+        if (_runtime != null)
+            await _runtime.DisposeAsync();
 
         Log.CloseAndFlush();
     }

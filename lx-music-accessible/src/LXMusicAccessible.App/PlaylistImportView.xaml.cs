@@ -4,6 +4,7 @@ using System.Windows.Input;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
+using Microsoft.Extensions.Logging;
 
 namespace LXMusicAccessible.App;
 
@@ -16,17 +17,28 @@ public partial class PlaylistImportView : UserControl
 {
     private readonly IPlaylistImportService _service;
     private readonly IAccessibilityService _announce;
+    private readonly MusicHttpClient _httpClient;
+    private readonly ILogger<KugouQrLoginService> _kugouLogger;
+    private readonly ILogger<WebLoginWindow> _webLoginLogger;
     private string _platform = "netease";
     private bool _loggedIn;
     private List<RemotePlaylist> _playlists = new();
     private bool _selectAllState;
     private bool _songListAttached;
 
-    public PlaylistImportView()
+    public PlaylistImportView(
+        IPlaylistImportService service,
+        IAccessibilityService announce,
+        MusicHttpClient httpClient,
+        ILogger<KugouQrLoginService> kugouLogger,
+        ILogger<WebLoginWindow> webLoginLogger)
     {
         InitializeComponent();
-        _service = ServiceProvider.GetRequiredService<IPlaylistImportService>();
-        _announce = ServiceProvider.GetRequiredService<IAccessibilityService>();
+        _service = service;
+        _announce = announce;
+        _httpClient = httpClient;
+        _kugouLogger = kugouLogger;
+        _webLoginLogger = webLoginLogger;
         Loaded += OnLoaded;
     }
 
@@ -145,7 +157,10 @@ public partial class PlaylistImportView : UserControl
     private async void KugouQrLoginBtn_Click(object sender, RoutedEventArgs e)
     {
         CookieArea.Visibility = Visibility.Collapsed;
-        var dialog = new KugouQrLoginWindow { Owner = HostWindow };
+        var dialog = new KugouQrLoginWindow(_service, _announce, _httpClient, _kugouLogger)
+        {
+            Owner = HostWindow
+        };
         if (dialog.ShowDialog() == true)
         {
             await RefreshAccountUiAsync();
@@ -160,7 +175,10 @@ public partial class PlaylistImportView : UserControl
     private async void WebLoginBtn_Click(object sender, RoutedEventArgs e)
     {
         CookieArea.Visibility = Visibility.Collapsed;
-        var dialog = new WebLoginWindow(_platform) { Owner = HostWindow };
+        var dialog = new WebLoginWindow(_platform, _service, _announce, _webLoginLogger)
+        {
+            Owner = HostWindow
+        };
         if (dialog.ShowDialog() == true)
         {
             await RefreshAccountUiAsync();

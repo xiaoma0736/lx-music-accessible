@@ -32,14 +32,18 @@ public partial class WebLoginWindow : Window
     /// <summary>登录成功后的账号昵称（供父窗口弹窗提示）</summary>
     public string? LastAccountName { get; private set; }
 
-    public WebLoginWindow(string platform)
+    public WebLoginWindow(
+        string platform,
+        IPlaylistImportService service,
+        IAccessibilityService announce,
+        ILogger<WebLoginWindow> logger)
     {
         InitializeComponent();
         _platform = platform;
         PlatformNameText.Text = GetPlatformName(platform);
-        _service = ServiceProvider.GetRequiredService<IPlaylistImportService>();
-        _announce = ServiceProvider.GetRequiredService<IAccessibilityService>();
-        _logger = ServiceProvider.GetRequiredService<ILogger<WebLoginWindow>>();
+        _service = service;
+        _announce = announce;
+        _logger = logger;
         Loaded += OnLoaded;
         Closed += OnClosed;
     }

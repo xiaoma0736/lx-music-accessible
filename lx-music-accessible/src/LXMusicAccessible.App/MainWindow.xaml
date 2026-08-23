@@ -261,7 +261,7 @@
                 <TabItem Header="导入个人歌单" AutomationProperties.Name="导入个人歌单标签页"
                          KeyboardNavigation.TabNavigation="Cycle"
                          KeyboardNavigation.DirectionalNavigation="None">
-                    <local:PlaylistImportView x:Name="PlaylistImportPanel"/>
+                    <ContentControl x:Name="PlaylistImportHost"/>
                 </TabItem>
 
 <!-- ===== 标签3：分类歌单 ===== -->
