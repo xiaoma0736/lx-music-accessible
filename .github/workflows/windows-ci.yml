@@ -15,6 +15,9 @@ jobs:
   build-and-test:
     runs-on: windows-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: lx-music-accessible
 
     steps:
       - name: Check out repository
