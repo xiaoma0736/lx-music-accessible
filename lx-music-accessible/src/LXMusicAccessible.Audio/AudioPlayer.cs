@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using ManagedBass;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LXMusicAccessible.Audio;
 
@@ -19,7 +21,9 @@ public class AudioPlayer : IAudioPlayer
 {
     private const int DefaultOutputRate = 44100;
 
-    private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
+    private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
+    private readonly ILogger<AudioPlayer> _logger;
 
     private int _stream;                       // BASS 流句柄（0 = 无）
     private int _endSync;                      // BASS 播完同步句柄
@@ -31,6 +35,7 @@ public class AudioPlayer : IAudioPlayer
     private bool _manualStop;
     private bool _bassReady;
     private bool _pluginsLoaded;
+    private int _disposed;
 
     // 输出设备：app 空间索引 -1 = 系统默认；具体设备 0..n
     // BASS Windows 设备布局：索引 0 = 无声、1 = 默认、2+ = 具体设备
@@ -120,7 +125,11 @@ public class AudioPlayer : IAudioPlayer
                     return null;
             }
         }
-        catch { return null; }
+        catch (Exception exception)
+        {
+            LogNativeFallback("quality", exception);
+            return null;
+        }
     }
 
     /// <summary>读取当前流的平均码率（kbps）；不可用返回 null</summary>
@@ -132,7 +141,7 @@ public class AudioPlayer : IAudioPlayer
             if (Bass.ChannelGetAttribute(_stream, ChannelAttribute.Bitrate, out float bitrate) && bitrate > 0)
                 return bitrate;
         }
-        catch { }
+        catch (Exception exception) { LogNativeFallback("bitrate", exception); }
         return null;
     }
 
@@ -180,12 +189,43 @@ public class AudioPlayer : IAudioPlayer
     public int CurrentOutputDeviceIndex => _outputDeviceIndex;
 
     public AudioPlayer()
+        : this(
+            new HttpClient { Timeout = Timeout.InfiniteTimeSpan },
+            NullLogger<AudioPlayer>.Instance,
+            ownsHttpClient: true)
     {
+    }
+
+    public AudioPlayer(HttpClient httpClient, ILogger<AudioPlayer> logger)
+        : this(httpClient, logger, ownsHttpClient: false)
+    {
+    }
+
+    private AudioPlayer(
+        HttpClient httpClient,
+        ILogger<AudioPlayer> logger,
+        bool ownsHttpClient)
+    {
+        _httpClient = httpClient;
+        _logger = logger;
+        _ownsHttpClient = ownsHttpClient;
         // 第一次触碰 Bass 静态成员时 ManagedBass 会自动从程序目录加载 bass.dll；
         // 这里主动读取一次版本以便尽早暴露"缺 bass.dll"问题。
-        try { _ = Bass.Version; } catch (Exception ex) { Debug.WriteLine($"BASS 加载失败: {ex.Message}"); }
+        try { _ = Bass.Version; }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "BASS library load failed: {ErrorType}",
+                exception.GetType().Name);
+        }
         // 启动即初始化 BASS（插件/配置/默认设备），让第一首歌播放时不再付出初始化耗时
-        try { EnsureBassReady(); } catch (Exception ex) { Debug.WriteLine($"BASS 启动初始化失败: {ex.Message}"); }
+        try { EnsureBassReady(); }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "BASS startup initialization failed: {ErrorType}",
+                exception.GetType().Name);
+        }
     }
 
     // ============ BASS 初始化 / 设备管理 ============
@@ -207,7 +247,7 @@ public class AudioPlayer : IAudioPlayer
                 if (info.IsDefault) return i;
             }
         }
-        catch { }
+        catch (Exception exception) { LogNativeFallback("default-device", exception); }
         return 1;
     }
 
@@ -227,13 +267,15 @@ public class AudioPlayer : IAudioPlayer
                 _pluginsLoaded = true;
             }
             // 高质量配置：32 位浮点 DSP + 高质量重采样（0~5），减少过载/爆音
-            try { Bass.FloatingPointDSP = true; } catch { }
-            try { Bass.Configure(Configuration.SRCQuality, 5); } catch { }
+            TryConfigureBass(() => Bass.FloatingPointDSP = true, "floating-point-dsp");
+            TryConfigureBass(() => Bass.Configure(Configuration.SRCQuality, 5), "sample-rate-quality");
             // 流式网络配置：浏览器 UA 降低被 CDN 拒绝风险；预缓冲/缓冲/超时调优
-            try { Bass.NetAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"; } catch { }
-            try { Bass.NetPreBuffer = 40; } catch { }             // 预缓冲 0.4s（首曲更快出声）
-            try { Bass.NetBufferLength = 262144; } catch { }       // 缓冲 256KB
-            try { Bass.NetTimeOut = 15000; } catch { }             // 连接/读超时 15s
+            TryConfigureBass(
+                () => Bass.NetAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+                "network-agent");
+            TryConfigureBass(() => Bass.NetPreBuffer = 40, "network-prebuffer");
+            TryConfigureBass(() => Bass.NetBufferLength = 262144, "network-buffer");
+            TryConfigureBass(() => Bass.NetTimeOut = 15000, "network-timeout");
             _bassReady = true;
         }
 
@@ -263,7 +305,13 @@ public class AudioPlayer : IAudioPlayer
             }
             Bass.PluginLoad(path);
         }
-        catch (Exception ex) { Debug.WriteLine($"BASS 插件加载失败 {dll}: {ex.Message}"); }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "BASS plugin load failed ({Plugin}): {ErrorType}",
+                Path.GetFileName(dll),
+                exception.GetType().Name);
+        }
     }
 
     public IReadOnlyList<OutputDeviceInfo> GetOutputDevices()
@@ -346,10 +394,11 @@ public class AudioPlayer : IAudioPlayer
 
     // ============ 加载 / 播放控制 ============
 
-    public async Task LoadAsync(string url)
+    public async Task LoadAsync(string url, CancellationToken cancellationToken = default)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             ReleaseStream();
             _manualStop = false;
             _position = TimeSpan.Zero;
@@ -364,8 +413,9 @@ public class AudioPlayer : IAudioPlayer
                 {
                     // URL 建流失败（个别 CDN/HTTPS 兼容问题）：回退为先下载到临时文件再播放
                     Debug.WriteLine($"URL 流式建流失败({Bass.LastError})，回退下载后播放");
-                    await DownloadToTempAsync(url);
-                    _loadedSource = _tempFilePath;
+                    await DownloadToTempAsync(url, cancellationToken);
+                    _loadedSource = _tempFilePath
+                        ?? throw new InvalidOperationException("Audio temporary file was not created.");
                     _stream = CreateStreamCore(_loadedSource);
                 }
             }
@@ -375,6 +425,7 @@ public class AudioPlayer : IAudioPlayer
                 _loadedSource = url;
                 _stream = CreateStreamCore(_loadedSource);
             }
+            cancellationToken.ThrowIfCancellationRequested();
             if (_stream == 0)
             {
                 State = AudioPlayerState.Error;
@@ -387,6 +438,12 @@ public class AudioPlayer : IAudioPlayer
             State = AudioPlayerState.Stopped;
             await Task.CompletedTask;
         }
+        catch (OperationCanceledException)
+        {
+            ReleaseStream();
+            DeleteTempFile();
+            throw;
+        }
         catch (Exception ex)
         {
             State = AudioPlayerState.Error;
@@ -395,15 +452,26 @@ public class AudioPlayer : IAudioPlayer
     }
 
     /// <summary>把在线 URL 完整下载到临时文件（回退/第三方播放共用）</summary>
-    private async Task DownloadToTempAsync(string url)
+    private async Task DownloadToTempAsync(string url, CancellationToken cancellationToken)
     {
-        if (_tempFilePath != null) { try { File.Delete(_tempFilePath); } catch { } }
+        DeleteTempFile();
         _tempFilePath = Path.Combine(Path.GetTempPath(), $"lxmusic_{Guid.NewGuid():N}.tmp");
-        using (var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(60));
+        try
         {
+            using var response = await _httpClient.GetAsync(
+                url,
+                HttpCompletionOption.ResponseHeadersRead,
+                timeout.Token);
             response.EnsureSuccessStatusCode();
-            using var fs = File.Create(_tempFilePath);
-            await response.Content.CopyToAsync(fs);
+            await using var fs = File.Create(_tempFilePath);
+            await response.Content.CopyToAsync(fs, timeout.Token);
+        }
+        catch
+        {
+            DeleteTempFile();
+            throw;
         }
     }
 
@@ -515,11 +583,43 @@ public class AudioPlayer : IAudioPlayer
     {
         if (_stream != 0)
         {
-            if (_endSync != 0) { try { Bass.ChannelRemoveSync(_stream, _endSync); } catch { } _endSync = 0; }
-            try { Bass.StreamFree(_stream); } catch { }
+            if (_endSync != 0)
+            {
+                try { Bass.ChannelRemoveSync(_stream, _endSync); }
+                catch (Exception exception) { LogReleaseFailure("sync", exception); }
+                _endSync = 0;
+            }
+            try { Bass.StreamFree(_stream); }
+            catch (Exception exception) { LogReleaseFailure("stream", exception); }
             _stream = 0;
         }
     }
+
+    private void DeleteTempFile()
+    {
+        var path = Interlocked.Exchange(ref _tempFilePath, null);
+        if (path is null) return;
+        try { File.Delete(path); }
+        catch (Exception exception) { LogReleaseFailure("temporary-file", exception); }
+    }
+
+    private void LogReleaseFailure(string resource, Exception exception) =>
+        _logger.LogWarning(
+            "Audio resource release failed for {Resource}: {ErrorType}",
+            resource,
+            exception.GetType().Name);
+
+    private void TryConfigureBass(Action configure, string setting)
+    {
+        try { configure(); }
+        catch (Exception exception) { LogNativeFallback(setting, exception); }
+    }
+
+    private void LogNativeFallback(string operation, Exception exception) =>
+        _logger.LogDebug(
+            "Audio native fallback used for {Operation}: {ErrorType}",
+            operation,
+            exception.GetType().Name);
 
     private static bool IsHttpUrl(string url) =>
         url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
@@ -527,9 +627,10 @@ public class AudioPlayer : IAudioPlayer
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         ReleaseStream();
-        if (_tempFilePath != null) { try { File.Delete(_tempFilePath); } catch { } _tempFilePath = null; }
-        _httpClient.Dispose();
+        DeleteTempFile();
+        if (_ownsHttpClient) _httpClient.Dispose();
         GC.SuppressFinalize(this);
     }
 }

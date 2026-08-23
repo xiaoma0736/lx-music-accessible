@@ -20,7 +20,10 @@ public interface IMusicApi
     Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50);
 
     /// <summary>获取播放 URL（支持音质等级）</summary>
-    Task<string?> GetPlayUrlAsync(string musicId, string quality = "128k");
+    Task<string?> GetPlayUrlAsync(
+        string musicId,
+        string quality = "128k",
+        CancellationToken cancellationToken = default);
 
     /// <summary>该音源支持的音质列表（如 128k/192k/320k/flac/flac24bit）</summary>
     List<string> GetSupportedQualities();

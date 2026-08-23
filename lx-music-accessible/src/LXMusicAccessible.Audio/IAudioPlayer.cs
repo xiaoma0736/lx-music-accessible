@@ -32,9 +32,9 @@ public class OutputDeviceInfo
 /// <summary>
 /// 音频播放器接口
 /// </summary>
-public interface IAudioPlayer
+public interface IAudioPlayer : IDisposable
 {
-    Task LoadAsync(string url);
+    Task LoadAsync(string url, CancellationToken cancellationToken = default);
     Task PlayAsync();
     void Pause();
     void Stop();
@@ -65,5 +65,4 @@ public interface IAudioPlayer
     /// </summary>
     void SeekTo(TimeSpan position);
 
-    void Dispose();
 }

@@ -222,7 +222,9 @@ public interface ILyricService
     /// <summary>
     /// 获取歌词：同平台优先，缺失时按 netease→qq→kg→kw→migu 顺序跨平台搜索
     /// </summary>
-    Task<LyricResult?> GetLyricAsync(MusicInfo music);
+    Task<LyricResult?> GetLyricAsync(
+        MusicInfo music,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取当前歌词行
@@ -423,12 +425,16 @@ public interface IMusicSourceService
     /// <summary>
     /// 通过脚本源的 lyric 动作解析歌词（失败/无歌词返回 null）
     /// </summary>
-    Task<LxLyricRaw?> GetLyricFromScriptsAsync(MusicInfo music);
+    Task<LxLyricRaw?> GetLyricFromScriptsAsync(
+        MusicInfo music,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 通过脚本源的 pic 动作解析封面 URL（失败返回 null）
     /// </summary>
-    Task<string?> GetPicFromScriptAsync(MusicInfo music);
+    Task<string?> GetPicFromScriptAsync(
+        MusicInfo music,
+        CancellationToken cancellationToken = default);
     /// <summary>
     /// 搜索音乐
     /// </summary>
@@ -442,12 +448,20 @@ public interface IMusicSourceService
     /// <summary>
     /// 获取播放 URL
     /// </summary>
-    Task<string?> GetPlayUrlAsync(string musicId, string source, string quality = "128k");
+    Task<string?> GetPlayUrlAsync(
+        string musicId,
+        string source,
+        string quality = "128k",
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 使用完整歌曲信息获取播放 URL，供脚本源通过 Jint 执行
     /// </summary>
-    Task<string?> GetPlayUrlAsync(MusicInfo music, string source, string quality = "128k");
+    Task<string?> GetPlayUrlAsync(
+        MusicInfo music,
+        string source,
+        string quality = "128k",
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取播放列表或分类歌单
@@ -548,7 +562,7 @@ public interface IMusicSourceService
     /// <summary>
     /// 持久化全部音源
     /// </summary>
-    Task PersistSourcesAsync();
+    Task PersistSourcesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取已启用的音源

@@ -238,7 +238,10 @@ public class KuwoMusicService : IMusicApi
     public List<string> GetSupportedQualities() => new() { "128k" };
 
     /// <summary>获取播放 URL</summary>
-    public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128k")
+    public async Task<string?> GetPlayUrlAsync(
+        string musicId,
+        string quality = "128k",
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -252,7 +255,10 @@ public class KuwoMusicService : IMusicApi
                 ["httpsStatus"] = "1"
             };
 
-            var response = await _httpClient.GetAsync(url, parameters);
+            var response = await _httpClient.GetAsync(
+                url,
+                parameters,
+                cancellationToken: cancellationToken);
             var result = JsonSerializer.Deserialize<KuwoPlayUrlResponse>(response);
 
             if (result?.Code == 200 && result.Data?.Url != null)
@@ -260,9 +266,14 @@ public class KuwoMusicService : IMusicApi
 
             return null;
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception)
         {
-            _logger.LogError(ex, "获取酷我音乐播放URL失败: {MusicId}", musicId);
+            _logger.LogError(
+                "Play URL lookup failed ({SourceId}, {MusicId}): {ErrorType}",
+                SourceId,
+                musicId,
+                exception.GetType().Name);
             return null;
         }
     }

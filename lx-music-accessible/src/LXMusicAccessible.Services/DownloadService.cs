@@ -1,8 +1,8 @@
 ﻿using Microsoft.Extensions.Logging;
 using LXMusicAccessible.Models;
-using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Text;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LXMusicAccessible.Services;
 
@@ -45,13 +45,15 @@ public interface IDownloadService
 /// <summary>
 /// 下载服务 - 负责歌曲下载到本地目录
 /// </summary>
-public class DownloadService : IDownloadService
+public class DownloadService : IDownloadService, IAsyncDisposable
 {
     private readonly ILogger<DownloadService> _logger;
     private readonly IMusicSourceService _musicSourceService;
     private readonly ILyricService _lyricService;
     private readonly HttpClient _httpClient;
-    private readonly ConcurrentDictionary<string, CancellationTokenSource> _cts = new();
+    private readonly BackgroundWorkHost _backgroundWork;
+    private readonly bool _ownsHttpClient;
+    private readonly bool _ownsBackgroundWork;
 
     private static readonly HashSet<string> KnownAudioExt = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -67,13 +69,21 @@ public class DownloadService : IDownloadService
     public ObservableCollection<DownloadTask> Tasks { get; } = new();
     public event EventHandler<DownloadTask>? TaskCompleted;
 
-    public DownloadService(ILogger<DownloadService> logger, IMusicSourceService musicSourceService, ILyricService lyricService)
+    public DownloadService(
+        ILogger<DownloadService> logger,
+        IMusicSourceService musicSourceService,
+        ILyricService lyricService,
+        BackgroundWorkHost? backgroundWork = null,
+        HttpClient? httpClient = null)
     {
         _logger = logger;
         _musicSourceService = musicSourceService;
         _lyricService = lyricService;
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("lx-music-accessible/1.2");
+        _backgroundWork = backgroundWork
+            ?? new BackgroundWorkHost(NullLogger<BackgroundWorkHost>.Instance);
+        _httpClient = httpClient ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        _ownsBackgroundWork = backgroundWork is null;
+        _ownsHttpClient = httpClient is null;
     }
 
     /// <summary>下载时是否同时下载歌词（.lrc 文件）</summary>
@@ -99,9 +109,9 @@ public class DownloadService : IDownloadService
         Tasks.Add(task);
         var dir = string.IsNullOrEmpty(downloadDir) ? GetDefaultDownloadDir() : downloadDir;
         var prefs = new DownloadPrefs(DownloadLyric, NameOrder, IncludeQualityTag);
-        var cts = new CancellationTokenSource();
-        _cts[task.Id] = cts;
-        _ = RunTaskAsync(task, dir, prefs, cts.Token);
+        _backgroundWork.StartLatest(
+            DownloadSlot(task),
+            context => RunTaskAsync(task, dir, prefs, context.CancellationToken));
         return Task.FromResult(task);
     }
 
@@ -116,17 +126,16 @@ public class DownloadService : IDownloadService
         task.ErrorMessage = null;
         var dir = string.IsNullOrEmpty(downloadDir) ? GetDefaultDownloadDir() : downloadDir;
         var prefs = new DownloadPrefs(DownloadLyric, NameOrder, IncludeQualityTag);
-        var cts = new CancellationTokenSource();
-        _cts[task.Id] = cts;
-        await RunTaskAsync(task, dir, prefs, cts.Token);
+        await _backgroundWork.RunLatestAsync(
+            DownloadSlot(task),
+            context => RunTaskAsync(task, dir, prefs, context.CancellationToken));
         return true;
     }
 
     public void Cancel(DownloadTask task)
     {
         if (task == null) return;
-        if (_cts.TryGetValue(task.Id, out var cts))
-            cts.Cancel();
+        _backgroundWork.Cancel(DownloadSlot(task));
     }
 
     public void ClearCompleted()
@@ -134,7 +143,6 @@ public class DownloadService : IDownloadService
         var done = Tasks.Where(t => t.Status is DownloadTaskStatus.Completed or DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled).ToList();
         foreach (var t in done)
         {
-            _cts.TryRemove(t.Id, out _);
             Tasks.Remove(t);
         }
     }
@@ -249,9 +257,12 @@ public class DownloadService : IDownloadService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "下载失败: {Title}", task.Music.Title);
+            _logger.LogError(
+                "下载失败 ({TaskId}): {ErrorType}",
+                task.Id,
+                ex.GetType().Name);
             task.Status = DownloadTaskStatus.Failed;
-            task.ErrorMessage = ex.Message;
+            task.ErrorMessage = "下载失败，请查看日志";
         }
         finally
         {
@@ -260,8 +271,14 @@ public class DownloadService : IDownloadService
                 lock (_batchLock) _lastBatchFinish = DateTime.Now;
                 _batchGate.Release();
             }
-            _cts.TryRemove(task.Id, out _);
-            TaskCompleted?.Invoke(this, task);
+            try { TaskCompleted?.Invoke(this, task); }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    "Download completion notification failed ({TaskId}): {ErrorType}",
+                    task.Id,
+                    exception.GetType().Name);
+            }
         }
     }
     private void CopyLocalFile(DownloadTask task, string saveDir, DownloadPrefs prefs)
@@ -291,7 +308,9 @@ public class DownloadService : IDownloadService
     private async Task DownloadWithFallbackAsync(DownloadTask task, string saveDir, DownloadPrefs prefs, CancellationToken ct)
     {
         var requested = task.Quality;
-        var qualities = await _musicSourceService.GetQualitiesForSourceAsync(task.Music.Source);
+        var qualities = await _musicSourceService
+            .GetQualitiesForSourceAsync(task.Music.Source)
+            .WaitAsync(ct);
         var ordered = BuildQualityOrder(requested, qualities);
         string? lastError = null;
         foreach (var q in ordered)
@@ -299,7 +318,11 @@ public class DownloadService : IDownloadService
             ct.ThrowIfCancellationRequested();
             try
             {
-                var url = await _musicSourceService.GetPlayUrlAsync(task.Music, task.Music.Source, q);
+                var url = await _musicSourceService.GetPlayUrlAsync(
+                    task.Music,
+                    task.Music.Source,
+                    q,
+                    ct);
                 if (string.IsNullOrEmpty(url)) continue;
                 await DownloadFromUrlAsync(task, url, saveDir, prefs, ct);
                 if (task.Status == DownloadTaskStatus.Completed)
@@ -313,8 +336,12 @@ public class DownloadService : IDownloadService
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                lastError = ex.Message;
-                _logger.LogWarning(ex, "音质 {Quality} 下载失败，尝试下一音质: {Title}", q, task.Music.Title);
+                lastError = "下载请求失败";
+                _logger.LogWarning(
+                    "音质 {Quality} 下载失败，尝试下一音质 ({TaskId}): {ErrorType}",
+                    q,
+                    task.Id,
+                    ex.GetType().Name);
             }
         }
         if (task.Status != DownloadTaskStatus.Cancelled)
@@ -354,7 +381,12 @@ public class DownloadService : IDownloadService
     private async Task DownloadFromUrlAsync(DownloadTask task, string url, string saveDir, DownloadPrefs prefs, CancellationToken ct)
     {
         saveDir = EnsureDownloadDirectory(saveDir);
-        using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromMinutes(10));
+        using var response = await _httpClient.GetAsync(
+            url,
+            HttpCompletionOption.ResponseHeadersRead,
+            timeout.Token);
         response.EnsureSuccessStatusCode();
         var total = response.Content.Headers.ContentLength ?? 0;
         task.TotalBytes = total;
@@ -367,13 +399,13 @@ public class DownloadService : IDownloadService
         {
             await using (var fs = File.Create(tempPath))
             {
-                await using var src = await response.Content.ReadAsStreamAsync(ct);
+                await using var src = await response.Content.ReadAsStreamAsync(timeout.Token);
                 var buffer = new byte[81920];
                 long read = 0;
                 int n;
-                while ((n = await src.ReadAsync(buffer.AsMemory(0, buffer.Length), ct)) > 0)
+                while ((n = await src.ReadAsync(buffer.AsMemory(0, buffer.Length), timeout.Token)) > 0)
                 {
-                    await fs.WriteAsync(buffer.AsMemory(0, n), ct);
+                    await fs.WriteAsync(buffer.AsMemory(0, n), timeout.Token);
                     read += n;
                     task.DownloadedBytes = read;
                     if (total > 0) task.Progress = Math.Min(100, read * 100.0 / total);
@@ -399,7 +431,7 @@ public class DownloadService : IDownloadService
         catch
         {
             // 下载被取消或失败：删除未转正的临时 .download 文件，避免在下载目录残留缓存
-            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+            DeleteTemporaryFile(tempPath, task.Id);
             throw;
         }
     }
@@ -505,7 +537,7 @@ public class DownloadService : IDownloadService
     {
         try
         {
-            var result = await _lyricService.GetLyricAsync(task.Music);
+            var result = await _lyricService.GetLyricAsync(task.Music, ct);
             if (result?.Lyric == null || result.Lyric.Lines.Count == 0)
             {
                 _logger.LogDebug("无歌词可下载: {Title}", task.Music.Title);
@@ -545,5 +577,29 @@ public class DownloadService : IDownloadService
             var candidate = Path.Combine(dir, $"{name}({i}){ext}");
             if (!File.Exists(candidate)) return candidate;
         }
+    }
+
+    private static string DownloadSlot(DownloadTask task) => $"download.{task.Id}";
+
+    private void DeleteTemporaryFile(string path, string taskId)
+    {
+        try { File.Delete(path); }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "Download temporary file release failed ({TaskId}): {ErrorType}",
+                taskId,
+                exception.GetType().Name);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        var slots = Tasks.Select(DownloadSlot).Distinct(StringComparer.Ordinal).ToArray();
+        foreach (var slot in slots) _backgroundWork.Cancel(slot);
+        foreach (var slot in slots) await _backgroundWork.WaitAsync(slot);
+        if (_ownsBackgroundWork) await _backgroundWork.DisposeAsync();
+        if (_ownsHttpClient) _httpClient.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net.Http;
 using LXMusicAccessible.Audio;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Data;
@@ -50,6 +51,12 @@ public static class ApplicationHost
             })
             .ConfigureServices((_, services) =>
             {
+                services.AddSingleton(_ =>
+                {
+                    var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd("lx-music-accessible/2.0");
+                    return client;
+                });
                 services.AddSingleton<MusicHttpClient>();
                 services.AddSingleton<NeteaseMusicService>();
                 services.AddSingleton<QqMusicService>();
@@ -66,7 +73,14 @@ public static class ApplicationHost
                     sp.GetRequiredService<ILogger<DatabaseInitializer>>(), dataDir));
 
                 services.AddSingleton<IAudioPlayer, AudioPlayer>();
-                services.AddSingleton<IMusicPlayerService, MusicPlayerService>();
+                services.AddSingleton<BackgroundWorkHost>();
+                services.AddSingleton<IMusicPlayerService>(sp => new MusicPlayerService(
+                    sp.GetRequiredService<ILogger<MusicPlayerService>>(),
+                    sp.GetRequiredService<IAudioPlayer>(),
+                    sp.GetRequiredService<IMusicSourceService>(),
+                    sp.GetRequiredService<BackgroundWorkHost>(),
+                    sp.GetRequiredService<HttpClient>(),
+                    Path.Combine(dataDir, "cache")));
                 services.AddSingleton<IMusicSourceService, MusicSourceService>();
                 services.AddSingleton<IDownloadService, DownloadService>();
                 services.AddSingleton<ILyricService, LyricService>();

@@ -206,7 +206,10 @@ public class KugouMusicService : IMusicApi
     public List<string> GetSupportedQualities() => new() { "128k" };
 
     /// <summary>获取播放 URL</summary>
-    public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128k")
+    public async Task<string?> GetPlayUrlAsync(
+        string musicId,
+        string quality = "128k",
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -226,14 +229,23 @@ public class KugouMusicService : IMusicApi
                 ["Referer"] = "https://www.kugou.com/"
             };
 
-            var response = await _httpClient.GetAsync(url, parameters, headers);
+            var response = await _httpClient.GetAsync(
+                url,
+                parameters,
+                headers,
+                cancellationToken);
             try
             {
                 var result = JsonSerializer.Deserialize<KugouPlayUrlResponse>(response);
                 if (result?.ErrorCode == 0 && result.Data is { Count: > 0 })
                     return result.Data[0].Url;
             }
-            catch { }
+            catch (Exception exception)
+            {
+                _logger.LogDebug(
+                    "Kugou play response used generic JSON fallback: {ErrorType}",
+                    exception.GetType().Name);
+            }
 
             using (var doc = JsonDocument.Parse(response))
             {
@@ -247,9 +259,14 @@ public class KugouMusicService : IMusicApi
             }
             return null;
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception)
         {
-            _logger.LogError(ex, "获取酷狗音乐播放URL失败: {MusicId}", musicId);
+            _logger.LogError(
+                "Play URL lookup failed ({SourceId}, {MusicId}): {ErrorType}",
+                SourceId,
+                musicId,
+                exception.GetType().Name);
             return null;
         }
     }

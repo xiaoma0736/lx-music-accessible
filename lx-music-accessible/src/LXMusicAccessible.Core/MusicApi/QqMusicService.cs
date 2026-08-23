@@ -278,7 +278,10 @@ public class QqMusicService : IMusicApi
     public List<string> GetSupportedQualities() => new() { "128k" };
 
     /// <summary>获取播放 URL</summary>
-    public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128k")
+    public async Task<string?> GetPlayUrlAsync(
+        string musicId,
+        string quality = "128k",
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -318,7 +321,8 @@ public class QqMusicService : IMusicApi
                     ["data"] = JsonSerializer.Serialize(payload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }),
                     ["format"] = "json"
                 },
-                playHeaders);
+                playHeaders,
+                cancellationToken);
             if (response.TryGetProperty("req_0", out var req0) &&
                 req0.TryGetProperty("data", out var resData) &&
                 resData.TryGetProperty("midurlinfo", out var midUrlInfo) &&
@@ -335,9 +339,14 @@ public class QqMusicService : IMusicApi
 
             return null;
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception)
         {
-            _logger.LogError(ex, "获取QQ音乐播放URL失败: {MusicId}", musicId);
+            _logger.LogError(
+                "Play URL lookup failed ({SourceId}, {MusicId}): {ErrorType}",
+                SourceId,
+                musicId,
+                exception.GetType().Name);
             return null;
         }
     }

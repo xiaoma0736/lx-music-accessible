@@ -19,11 +19,12 @@ public class MusicSourceService : IMusicSourceService
     private readonly ScriptMusicSource _scriptSource;
     private readonly LxScriptEngine _scriptEngine;
     private readonly IDataService _dataService;
+    private readonly BackgroundWorkHost _backgroundWork;
     private readonly Dictionary<string, IMusicApi> _apiMap;
     private readonly List<MusicSource> _sources = new();
     private bool _scriptsInitialized = false;
     private bool _defaultTouchedByUser = false;
-    private readonly HttpClient _playUrlProbeClient = new() { Timeout = TimeSpan.FromSeconds(8) };
+    private readonly HttpClient _playUrlProbeClient;
     private readonly Dictionary<string, ScriptHealth> _scriptHealth = new(StringComparer.OrdinalIgnoreCase);
     private const string BundledScriptId = "bundled_verified_fallback";
     private const string BundledScriptResource = "LXMusicAccessible.Core.MusicApi.Scripts.verified-fallback.js";
@@ -62,7 +63,9 @@ public class MusicSourceService : IMusicSourceService
         MiguMusicService migu,
         ScriptMusicSource scriptSource,
         LxScriptEngine scriptEngine,
-        IDataService dataService)
+        IDataService dataService,
+        BackgroundWorkHost backgroundWork,
+        HttpClient httpClient)
     {
         _logger = logger;
         _netease = netease;
@@ -73,6 +76,8 @@ public class MusicSourceService : IMusicSourceService
         _scriptSource = scriptSource;
         _scriptEngine = scriptEngine;
         _dataService = dataService;
+        _backgroundWork = backgroundWork;
+        _playUrlProbeClient = httpClient;
 
         _apiMap = new Dictionary<string, IMusicApi>(StringComparer.OrdinalIgnoreCase)
         {
@@ -81,7 +86,16 @@ public class MusicSourceService : IMusicSourceService
         };
 
         InitializeDefaultSources();
-        _scriptEngine.UpdateAlert += (s, e) => { try { ScriptUpdateAlert?.Invoke(this, e); } catch { } };
+        _scriptEngine.UpdateAlert += (_, e) =>
+        {
+            try { ScriptUpdateAlert?.Invoke(this, e); }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    "Script update notification failed: {ErrorType}",
+                    exception.GetType().Name);
+            }
+        };
     }
 
     // ================================================================
@@ -115,7 +129,7 @@ public class MusicSourceService : IMusicSourceService
 
         await LoadBundledSourceAsync(cancellationToken);
 
-        await PersistSourcesAsync();
+        await PersistSourcesAsync(cancellationToken);
         RaiseSourcesChanged();
         _logger.LogInformation("脚本源初始化完成，共 {Count} 个音源", _sources.Count);
     }
@@ -327,14 +341,28 @@ public class MusicSourceService : IMusicSourceService
     //  播放 URL — 脚本源(JS)优先 → 当前源内置 → 跨源
     // ================================================================
 
-    public Task<string?> GetPlayUrlAsync(string musicId, string source, string quality = "128k")
-        => GetPlayUrlCoreAsync(musicId, source, quality, null);
+    public Task<string?> GetPlayUrlAsync(
+        string musicId,
+        string source,
+        string quality = "128k",
+        CancellationToken cancellationToken = default)
+        => GetPlayUrlCoreAsync(musicId, source, quality, null, cancellationToken);
 
-    public Task<string?> GetPlayUrlAsync(MusicInfo music, string source, string quality = "128k")
-        => GetPlayUrlCoreAsync(music.Id, source, quality, music);
+    public Task<string?> GetPlayUrlAsync(
+        MusicInfo music,
+        string source,
+        string quality = "128k",
+        CancellationToken cancellationToken = default)
+        => GetPlayUrlCoreAsync(music.Id, source, quality, music, cancellationToken);
 
-    private async Task<string?> GetPlayUrlCoreAsync(string musicId, string source, string quality, MusicInfo? music)
+    private async Task<string?> GetPlayUrlCoreAsync(
+        string musicId,
+        string source,
+        string quality,
+        MusicInfo? music,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _logger.LogInformation("获取播放URL: {MusicId}, 来源: {Source}, 音质: {Quality}", musicId, source, quality);
 
         // 解析顺序：默认源 → 其余已启用脚本源（按优先级，超时保护） → 官方API（当前源优先，再跨源）
@@ -349,16 +377,30 @@ public class MusicSourceService : IMusicSourceService
             {
                 try
                 {
-                    var urlTask = TryResolveScriptUrlAsync(defaultScript, musicId, source, quality, music);
-                    var finished = await Task.WhenAny(urlTask, Task.Delay(5000)) == urlTask;
-                    var url = finished ? await urlTask : null;
+                    using var attempt = CancellationTokenSource.CreateLinkedTokenSource(
+                        cancellationToken);
+                    attempt.CancelAfter(TimeSpan.FromSeconds(5));
+                    var url = await TryResolveScriptUrlAsync(
+                        defaultScript,
+                        musicId,
+                        source,
+                        quality,
+                        music,
+                        attempt.Token);
                     if (!string.IsNullOrEmpty(url))
                     {
                         _logger.LogInformation("默认脚本源 [{Script}] 获取播放URL成功: {Source}", defaultScript.Name, source);
                         return url;
                     }
                 }
-                catch (Exception ex) { _logger.LogDebug(ex, "默认脚本源 [{Script}] 获取播放URL失败", defaultScript.Name); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception exception)
+                {
+                    _logger.LogDebug(
+                        "Default script URL resolution failed ({ScriptId}): {ErrorType}",
+                        defaultScript.Id,
+                        exception.GetType().Name);
+                }
             }
         }
 
@@ -379,16 +421,30 @@ public class MusicSourceService : IMusicSourceService
                 continue;
             try
             {
-                var urlTask = TryResolveScriptUrlAsync(script, musicId, source, quality, music);
-                var finished = await Task.WhenAny(urlTask, Task.Delay(10000)) == urlTask;
-                var url = finished ? await urlTask : null;
+                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
+                attempt.CancelAfter(TimeSpan.FromSeconds(10));
+                var url = await TryResolveScriptUrlAsync(
+                    script,
+                    musicId,
+                    source,
+                    quality,
+                    music,
+                    attempt.Token);
                 if (!string.IsNullOrEmpty(url))
                 {
                     _logger.LogInformation("脚本源 [{Script}] 获取播放URL成功: {Source}", script.Name, source);
                     return url;
                 }
             }
-            catch (Exception ex) { _logger.LogDebug(ex, "脚本源 [{Script}] 获取播放URL失败", script.Name); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                _logger.LogDebug(
+                    "Script URL resolution failed ({ScriptId}): {ErrorType}",
+                    script.Id,
+                    exception.GetType().Name);
+            }
         }
 
         // 第3级: 官方API —— 当前音源内置（用该平台正确歌曲 ID，不会串歌）
@@ -396,10 +452,17 @@ public class MusicSourceService : IMusicSourceService
         {
             try
             {
-                var url = await api.GetPlayUrlAsync(musicId, quality);
+                var url = await api.GetPlayUrlAsync(musicId, quality, cancellationToken);
                 if (!string.IsNullOrEmpty(url)) return url;
             }
-            catch (Exception ex) { _logger.LogWarning(ex, "内置音源播放URL失败: {Source}", source); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    "Built-in source URL resolution failed ({SourceId}): {ErrorType}",
+                    source,
+                    exception.GetType().Name);
+            }
         }
 
         // 注意：不再跨平台回退官方 API —— 跨平台的歌曲 ID 不通用，
@@ -408,7 +471,13 @@ public class MusicSourceService : IMusicSourceService
     }
 
     /// <summary>解析单个脚本源的播放 URL：正则快路径优先，Jint 执行脚本兜底；过滤占位链接并做可播性校验</summary>
-    private async Task<string?> TryResolveScriptUrlAsync(LxScriptInfo script, string musicId, string source, string quality, MusicInfo? music)
+    private async Task<string?> TryResolveScriptUrlAsync(
+        LxScriptInfo script,
+        string musicId,
+        string source,
+        string quality,
+        MusicInfo? music,
+        CancellationToken cancellationToken)
     {
         // 快速失败：本会话已连续失败被降级的源直接跳过，不再发起请求
         if (IsScriptDegraded(script.Id))
@@ -417,9 +486,19 @@ public class MusicSourceService : IMusicSourceService
             return null;
         }
 
-        var url = await _scriptSource.GetPlayUrlAsync(script.Id, musicId, source, quality);
+        var url = await _scriptSource.GetPlayUrlAsync(
+            script.Id,
+            musicId,
+            source,
+            quality,
+            cancellationToken);
         if (string.IsNullOrEmpty(url) && music != null && !string.IsNullOrEmpty(script.RawScript))
-            url = await _scriptEngine.GetPlayUrlAsync(script, music, source, quality);
+            url = await _scriptEngine.GetPlayUrlAsync(
+                script,
+                music,
+                source,
+                quality,
+                cancellationToken);
 
         // 脚本拿不到歌曲 ID 时常返回 id=undefined/null 之类的占位 URL，视为解析失败，继续尝试其他音源
         if (!string.IsNullOrEmpty(url) &&
@@ -434,10 +513,10 @@ public class MusicSourceService : IMusicSourceService
         // 可播性校验：坏 URL（403/404/空响应等）快速跳过，避免坏 URL 抢先、可用源轮不到
         if (!string.IsNullOrEmpty(url))
         {
-            var playable = await IsPlayableAsync(url);
+            var playable = await IsPlayableAsync(url, cancellationToken);
             if (!playable)
             {
-                _logger.LogDebug("脚本源 [{Script}] 返回不可播 URL，忽略: {Url}", script.Name, url);
+                _logger.LogDebug("脚本源 [{Script}] 返回不可播 URL，忽略", script.Name);
                 MarkScriptFailure(script.Id);
                 return null;
             }
@@ -447,15 +526,18 @@ public class MusicSourceService : IMusicSourceService
     }
 
     /// <summary>轻量可播性校验：Range GET 首段，2xx/206 且 audio/* 内容类型、或长度>64KB、或首字节为音频魔数即通过</summary>
-    private async Task<bool> IsPlayableAsync(string url)
+    private async Task<bool> IsPlayableAsync(
+        string url,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(url)) return false;
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != "http" && uri.Scheme != "https"))
             return false;
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(6));
-            var req = new HttpRequestMessage(HttpMethod.Get, url);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(6));
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
             req.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 131071);
             using var resp = await _playUrlProbeClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
@@ -482,10 +564,22 @@ public class MusicSourceService : IMusicSourceService
                         return true;
                 }
             }
-            catch { }
+            catch (Exception exception)
+            {
+                _logger.LogDebug(
+                    "Audio probe header read failed: {ErrorType}",
+                    exception.GetType().Name);
+            }
             return false;
         }
-        catch { return false; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(
+                "Audio probe failed: {ErrorType}",
+                exception.GetType().Name);
+            return false;
+        }
     }
 
     /// <summary>脚本源连续失败 ≥2 次 → 本会话降级（快速跳过）一段时间，成功即复位</summary>
@@ -524,33 +618,59 @@ public class MusicSourceService : IMusicSourceService
             .ToList();
 
     /// <summary>通过脚本源的 lyric 动作解析歌词（失败/无歌词返回 null）</summary>
-    public async Task<LxLyricRaw?> GetLyricFromScriptsAsync(MusicInfo music)
+    public async Task<LxLyricRaw?> GetLyricFromScriptsAsync(
+        MusicInfo music,
+        CancellationToken cancellationToken = default)
     {
         if (music == null || string.IsNullOrEmpty(music.Source)) return null;
         foreach (var script in GetEnabledPlaybackScripts())
         {
             try
             {
-                var r = await _scriptEngine.GetLyricAsync(script, music, music.Source);
+                var r = await _scriptEngine.GetLyricAsync(
+                    script,
+                    music,
+                    music.Source,
+                    cancellationToken);
                 if (r != null && !string.IsNullOrWhiteSpace(r.Lyric)) return r;
             }
-            catch (Exception ex) { _logger.LogDebug(ex, "脚本源 [{Script}] lyric 失败", script.Name); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                _logger.LogDebug(
+                    "Script lyric lookup failed ({ScriptId}): {ErrorType}",
+                    script.Id,
+                    exception.GetType().Name);
+            }
         }
         return null;
     }
 
     /// <summary>通过脚本源的 pic 动作解析封面 URL（失败返回 null；当前 UI 暂无封面展示，仅供接口使用）</summary>
-    public async Task<string?> GetPicFromScriptAsync(MusicInfo music)
+    public async Task<string?> GetPicFromScriptAsync(
+        MusicInfo music,
+        CancellationToken cancellationToken = default)
     {
         if (music == null || string.IsNullOrEmpty(music.Source)) return null;
         foreach (var script in GetEnabledPlaybackScripts())
         {
             try
             {
-                var url = await _scriptEngine.GetPicAsync(script, music, music.Source);
+                var url = await _scriptEngine.GetPicAsync(
+                    script,
+                    music,
+                    music.Source,
+                    cancellationToken);
                 if (!string.IsNullOrEmpty(url)) return url;
             }
-            catch { }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                _logger.LogDebug(
+                    "Script cover lookup failed ({ScriptId}): {ErrorType}",
+                    script.Id,
+                    exception.GetType().Name);
+            }
         }
         return null;
     }
@@ -619,7 +739,13 @@ public class MusicSourceService : IMusicSourceService
         if (_apiMap.TryGetValue(source, out var api))
         {
             try { var r = await api.SearchAsync(musicId, 1, 1); return r.Items.FirstOrDefault(); }
-            catch { }
+            catch (Exception exception)
+            {
+                _logger.LogDebug(
+                    "Music info lookup failed ({SourceId}): {ErrorType}",
+                    source,
+                    exception.GetType().Name);
+            }
         }
         return null;
     }
@@ -645,7 +771,7 @@ public class MusicSourceService : IMusicSourceService
         foreach (var s in _sources)
             s.IsDefault = string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase);
         ClearCache();
-        _ = PersistSourcesAsync();
+        StartPersistence();
         RaiseSourcesChanged();
     }
 
@@ -735,13 +861,13 @@ public class MusicSourceService : IMusicSourceService
         }
     }
 
-    public void DisableSource(MusicSource s) { s.IsEnabled = false; _ = PersistSourcesAsync(); RaiseSourcesChanged(); }
+    public void DisableSource(MusicSource s) { s.IsEnabled = false; StartPersistence(); RaiseSourcesChanged(); }
     public void RemoveSource(MusicSource s)
     {
         _sources.Remove(s);
         _scriptSource.Remove(s.Id);
         ClearCache();
-        _ = PersistSourcesAsync();
+        StartPersistence();
         RaiseSourcesChanged();
     }
     public void ClearCache() { _searchSessions.Clear(); }
@@ -837,11 +963,22 @@ public class MusicSourceService : IMusicSourceService
     }
 
     /// <summary>持久化全部音源配置，失败时记录日志</summary>
-    public async Task PersistSourcesAsync()
+    public async Task PersistSourcesAsync(CancellationToken cancellationToken = default)
     {
-        try { await _dataService.SaveMusicSourcesAsync(_sources); }
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await _dataService.SaveMusicSourcesAsync(_sources);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex) { _logger.LogError(ex, "音源配置保存失败"); }
     }
+
+    private void StartPersistence() =>
+        _backgroundWork.StartLatest(
+            "script-source.persist",
+            context => PersistSourcesAsync(context.CancellationToken));
 
     /// <summary>恢复持久化状态；未信任或摘要失败的脚本只展示为禁用，不进入执行器。</summary>
     private async Task LoadPersistedSourcesAsync(CancellationToken cancellationToken)

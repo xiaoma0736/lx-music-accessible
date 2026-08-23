@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Windows;
 using LXMusicAccessible.App;
 using LXMusicAccessible.Audio;
@@ -66,6 +67,11 @@ internal sealed class TestApplicationHost : IAsyncDisposable
                 .ConfigureLogging(logging => logging.ClearProviders())
                 .ConfigureServices((_, services) =>
                 {
+                    services.Replace(ServiceDescriptor.Singleton(
+                        new HttpClient(httpHandler, disposeHandler: false)
+                        {
+                            Timeout = Timeout.InfiniteTimeSpan
+                        }));
                     services.Replace(ServiceDescriptor.Singleton<MusicHttpClient>(sp =>
                         new MusicHttpClient(
                             sp.GetRequiredService<ILogger<MusicHttpClient>>(),
@@ -231,7 +237,11 @@ internal sealed class RecordingAudioPlayer : IAudioPlayer
     public event EventHandler<AudioPlayerState>? StateChanged;
     public event EventHandler? PlaybackCompleted { add { } remove { } }
 
-    public Task LoadAsync(string url) => Task.CompletedTask;
+    public Task LoadAsync(string url, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
 
     public Task PlayAsync()
     {

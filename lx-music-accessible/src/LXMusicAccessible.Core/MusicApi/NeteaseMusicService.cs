@@ -200,7 +200,10 @@ public class NeteaseMusicService : IMusicApi
     public List<string> GetSupportedQualities() => new() { "128k", "192k", "320k", "flac", "flac24bit" };
 
     /// <summary>获取播放 URL</summary>
-    public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128k")
+    public async Task<string?> GetPlayUrlAsync(
+        string musicId,
+        string quality = "128k",
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -218,7 +221,8 @@ public class NeteaseMusicService : IMusicApi
             var result = await _httpClient.PostWeapiAsync<NeteasePlayUrlResponse>(
                 $"{WeapiBaseUrl}/song/enhance/player/url",
                 new { ids = $"[{musicId}]", br },
-                DefaultHeaders);
+                DefaultHeaders,
+                cancellationToken);
 
             if (result?.Data != null && result.Data.Count > 0 && result.Data[0].Url != null)
                 return result.Data[0].Url;
@@ -226,9 +230,14 @@ public class NeteaseMusicService : IMusicApi
             _logger.LogWarning("播放URL为空: {MusicId}, code={Code}", musicId, result?.Code);
             return null;
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception)
         {
-            _logger.LogError(ex, "获取播放URL失败: {MusicId}", musicId);
+            _logger.LogError(
+                "Play URL lookup failed ({SourceId}, {MusicId}): {ErrorType}",
+                SourceId,
+                musicId,
+                exception.GetType().Name);
             return null;
         }
     }

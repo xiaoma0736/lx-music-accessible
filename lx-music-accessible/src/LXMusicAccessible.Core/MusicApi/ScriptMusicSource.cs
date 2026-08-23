@@ -348,9 +348,12 @@ public class ScriptMusicSource : IDisposable
             _logger.LogWarning("脚本源 [{Name}] 请求被拒绝: {Code}", script.Name, ex.Code);
             return null;
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            _logger.LogDebug(ex, "脚本源 [{Name}] 请求失败", script.Name);
+            _logger.LogDebug(
+                "Script source request failed ({ScriptId}): {ErrorType}",
+                script.Id,
+                exception.GetType().Name);
             return null;
         }
     }
@@ -388,7 +391,7 @@ public class ScriptMusicSource : IDisposable
         };
     }
 
-    private static string? ExtractUrlFromResponse(string body, string sourceName)
+    private string? ExtractUrlFromResponse(string body, string sourceName)
     {
         try
         {
@@ -419,7 +422,13 @@ public class ScriptMusicSource : IDisposable
                 body2.TryGetProperty("url", out var url4) && url4.ValueKind == JsonValueKind.String)
                 return url4.GetString();
         }
-        catch { }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(
+                "Script source response used text fallback ({SourceName}): {ErrorType}",
+                sourceName,
+                exception.GetType().Name);
+        }
 
         // 最后尝试正则提取 URL
         var m = Regex.Match(body, @"https?://[^\s""'<>]+\.(?:mp3|m4a|flac|wav|ogg|aac)");

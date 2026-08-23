@@ -54,7 +54,11 @@ public class MusicHttpClient : IDisposable
     /// <summary>
     /// 发送 GET 请求
     /// </summary>
-    public async Task<string> GetAsync(string url, Dictionary<string, string>? parameters = null, Dictionary<string, string>? headers = null)
+    public async Task<string> GetAsync(
+        string url,
+        Dictionary<string, string>? parameters = null,
+        Dictionary<string, string>? headers = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -67,7 +71,7 @@ public class MusicHttpClient : IDisposable
 
             _logger.LogInformation("GET请求: {Endpoint}", GetSafeEndpoint(fullUrl));
 
-            var request = new HttpRequestMessage(HttpMethod.Get, fullUrl);
+            using var request = new HttpRequestMessage(HttpMethod.Get, fullUrl);
             if (headers != null)
             {
                 foreach (var header in headers)
@@ -76,12 +80,16 @@ public class MusicHttpClient : IDisposable
                 }
             }
 
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogInformation("GET请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(fullUrl), content.Length);
             return content;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -93,13 +101,16 @@ public class MusicHttpClient : IDisposable
     /// <summary>
     /// 发送 GET 请求并反序列化响应
     /// </summary>
-    public async Task<T?> GetAsync<T>(string url, Dictionary<string, string>? headers = null)
+    public async Task<T?> GetAsync<T>(
+        string url,
+        Dictionary<string, string>? headers = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
             _logger.LogInformation("GET请求: {Endpoint}", GetSafeEndpoint(url));
             
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
             if (headers != null)
             {
                 foreach (var header in headers)
@@ -108,14 +119,18 @@ public class MusicHttpClient : IDisposable
                 }
             }
 
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonSerializer.Deserialize<T>(content, _jsonOptions);
             
             _logger.LogInformation("GET请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(url), content.Length);
             return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -127,13 +142,17 @@ public class MusicHttpClient : IDisposable
     /// <summary>
     /// 发送 POST 请求
     /// </summary>
-    public async Task<T?> PostAsync<T>(string url, object? data = null, Dictionary<string, string>? headers = null)
+    public async Task<T?> PostAsync<T>(
+        string url,
+        object? data = null,
+        Dictionary<string, string>? headers = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
             _logger.LogInformation("POST请求: {Endpoint}", GetSafeEndpoint(url));
             
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
             if (headers != null)
             {
                 foreach (var header in headers)
@@ -148,14 +167,18 @@ public class MusicHttpClient : IDisposable
                 request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
             }
 
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonSerializer.Deserialize<T>(content, _jsonOptions);
             
             _logger.LogInformation("POST请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(url), content.Length);
             return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -167,13 +190,17 @@ public class MusicHttpClient : IDisposable
     /// <summary>
     /// 发送 POST 表单请求
     /// </summary>
-    public async Task<T?> PostFormAsync<T>(string url, Dictionary<string, string> formData, Dictionary<string, string>? headers = null)
+    public async Task<T?> PostFormAsync<T>(
+        string url,
+        Dictionary<string, string> formData,
+        Dictionary<string, string>? headers = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
             _logger.LogInformation("POST表单请求: {Endpoint}", GetSafeEndpoint(url));
             
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
             if (headers != null)
             {
                 foreach (var header in headers)
@@ -184,14 +211,18 @@ public class MusicHttpClient : IDisposable
 
             request.Content = new FormUrlEncodedContent(formData);
 
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonSerializer.Deserialize<T>(content, _jsonOptions);
             
             _logger.LogInformation("POST表单请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(url), content.Length);
             return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -203,7 +234,11 @@ public class MusicHttpClient : IDisposable
     /// <summary>
     /// 发送 weapi 加密 POST 请求（网易云音乐）
     /// </summary>
-    public async Task<T?> PostWeapiAsync<T>(string url, object data, Dictionary<string, string>? headers = null)
+    public async Task<T?> PostWeapiAsync<T>(
+        string url,
+        object data,
+        Dictionary<string, string>? headers = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -211,16 +246,20 @@ public class MusicHttpClient : IDisposable
 
             var crypto = NeteaseCrypto.Weapi(data);
 
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
             AddCommonHeaders(request, headers);
 
             request.Content = new FormUrlEncodedContent(crypto);
 
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -232,7 +271,11 @@ public class MusicHttpClient : IDisposable
     /// <summary>
     /// 发送 eapi 加密 POST 请求（网易云音乐搜索等）
     /// </summary>
-    public async Task<T?> PostEapiAsync<T>(string path, object data, Dictionary<string, string>? headers = null)
+    public async Task<T?> PostEapiAsync<T>(
+        string path,
+        object data,
+        Dictionary<string, string>? headers = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -241,16 +284,20 @@ public class MusicHttpClient : IDisposable
 
             var crypto = NeteaseCrypto.Eapi(path, data);
 
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
             AddCommonHeaders(request, headers);
 
             request.Content = new FormUrlEncodedContent(crypto);
 
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -262,7 +309,10 @@ public class MusicHttpClient : IDisposable
     /// <summary>
     /// 发送 linuxapi 加密 POST 请求（网易云歌单详情等）
     /// </summary>
-    public async Task<T?> PostLinuxApiAsync<T>(object data, Dictionary<string, string>? headers = null)
+    public async Task<T?> PostLinuxApiAsync<T>(
+        object data,
+        Dictionary<string, string>? headers = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -271,16 +321,20 @@ public class MusicHttpClient : IDisposable
 
             var crypto = NeteaseCrypto.Linuxapi(data);
 
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
             AddCommonHeaders(request, headers);
 
             request.Content = new FormUrlEncodedContent(crypto);
 
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -292,23 +346,31 @@ public class MusicHttpClient : IDisposable
     /// <summary>
     /// 发送 JSON POST 请求（QQ音乐等）
     /// </summary>
-    public async Task<T?> PostJsonAsync<T>(string url, object data, Dictionary<string, string>? headers = null)
+    public async Task<T?> PostJsonAsync<T>(
+        string url,
+        object data,
+        Dictionary<string, string>? headers = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
             _logger.LogInformation("JSON POST: {Endpoint}", GetSafeEndpoint(url));
 
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
             AddCommonHeaders(request, headers);
 
             var json = JsonSerializer.Serialize(data, _jsonOptions);
             request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
 
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -320,22 +382,30 @@ public class MusicHttpClient : IDisposable
     /// <summary>
     /// 发送原始 JSON 字符串 POST 请求（用于需要精确控制请求体以计算签名的接口，如酷狗）
     /// </summary>
-    public async Task<T?> PostRawJsonAsync<T>(string url, string jsonBody, Dictionary<string, string>? headers = null)
+    public async Task<T?> PostRawJsonAsync<T>(
+        string url,
+        string jsonBody,
+        Dictionary<string, string>? headers = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
             _logger.LogInformation("RAW JSON POST: {Endpoint}", GetSafeEndpoint(url));
 
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
             AddCommonHeaders(request, headers);
 
             request.Content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
 
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -411,7 +481,12 @@ public class MusicHttpClient : IDisposable
                 foreach (Cookie c in cookies) c.Expired = true;
             }
         }
-        catch { }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "Cookie cleanup failed: {ErrorType}",
+                exception.GetType().Name);
+        }
     }
     /// <summary>设置超时时间</summary>
     public void SetTimeout(TimeSpan timeout)

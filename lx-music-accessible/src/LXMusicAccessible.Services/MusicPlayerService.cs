@@ -1,14 +1,17 @@
 ﻿using Microsoft.Extensions.Logging;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Audio;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LXMusicAccessible.Services;
 
 /// <summary>
 /// 音乐播放器服务实现
 /// </summary>
-public class MusicPlayerService : IMusicPlayerService
+public class MusicPlayerService : IMusicPlayerService, IAsyncDisposable
 {
+    private const string PlaySlot = "music-player.play";
+    private const string PrecacheSlot = "music-player.precache";
     private readonly ILogger<MusicPlayerService> _logger;
     private readonly IAudioPlayer _audioPlayer;
     private Models.PlayerState _state = Models.PlayerState.Stopped;
@@ -18,11 +21,14 @@ public class MusicPlayerService : IMusicPlayerService
     private TimeSpan _resumePosition = TimeSpan.Zero;
     private double _volume = 0.8;
     private readonly IMusicSourceService _musicSourceService;
+    private readonly BackgroundWorkHost _backgroundWork;
+    private readonly HttpClient _httpClient;
+    private readonly bool _ownsBackgroundWork;
+    private readonly bool _ownsHttpClient;
+    private readonly string _precacheDirectory;
     private string _defaultQuality = "128k";
     // 预缓存（顺序连播）：(Id|Source) -> 预下载好的下一首临时文件
     private readonly Dictionary<string, string> _precachedPaths = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HttpClient _precacheHttpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
-    private CancellationTokenSource? _precacheCts;
 
     public event EventHandler<Models.PlayerStateChangedEventArgs>? StateChanged;
     public event EventHandler? QueueCompleted;
@@ -53,11 +59,20 @@ public class MusicPlayerService : IMusicPlayerService
     public MusicPlayerService(
         ILogger<MusicPlayerService> logger,
         IAudioPlayer audioPlayer,
-        IMusicSourceService musicSourceService)
+        IMusicSourceService musicSourceService,
+        BackgroundWorkHost? backgroundWork = null,
+        HttpClient? httpClient = null,
+        string? precacheDirectory = null)
     {
         _logger = logger;
         _audioPlayer = audioPlayer;
         _musicSourceService = musicSourceService;
+        _backgroundWork = backgroundWork
+            ?? new BackgroundWorkHost(NullLogger<BackgroundWorkHost>.Instance);
+        _httpClient = httpClient ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        _ownsBackgroundWork = backgroundWork is null;
+        _ownsHttpClient = httpClient is null;
+        _precacheDirectory = Path.GetFullPath(precacheDirectory ?? Path.GetTempPath());
         _audioPlayer.PlaybackCompleted += AudioPlayer_PlaybackCompleted;
     }
 
@@ -87,18 +102,24 @@ public class MusicPlayerService : IMusicPlayerService
     /// <summary>取消进行中的预缓存并清理已缓存临时文件（队列/列表变更时调用）</summary>
     private void CancelPrecache()
     {
-        try { _precacheCts?.Cancel(); } catch { }
-        _precacheCts = null;
+        _backgroundWork.Cancel(PrecacheSlot);
         if (_precachedPaths.Count == 0) return;
         foreach (var f in _precachedPaths.Values)
-        {
-            try { File.Delete(f); } catch { }
-        }
+            DeletePrecacheFile(f);
         _precachedPaths.Clear();
     }
 
-    public async Task PlayAsync(string url, MusicInfo musicInfo)
+    public Task PlayAsync(string url, MusicInfo musicInfo) =>
+        _backgroundWork.RunLatestAsync(
+            PlaySlot,
+            context => PlayCoreAsync(url, musicInfo, context));
+
+    private async Task PlayCoreAsync(
+        string url,
+        MusicInfo musicInfo,
+        BackgroundWorkContext context)
     {
+        var cancellationToken = context.CancellationToken;
         try
         {
             _logger.LogInformation("播放音乐: {Title} - {Artist}", musicInfo.Title, musicInfo.Artist);
@@ -111,9 +132,10 @@ public class MusicPlayerService : IMusicPlayerService
                 string.Equals(_currentMusic.Source, musicInfo.Source, StringComparison.OrdinalIgnoreCase);
 
             var oldState = _state;
-            _state = Models.PlayerState.Loading;
+            if (!context.TryCommit(() => _state = Models.PlayerState.Loading)) return;
 
-            await _audioPlayer.LoadAsync(url);
+            await _audioPlayer.LoadAsync(url, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (sameMusic && resumePosition > TimeSpan.Zero)
             {
                 try
@@ -127,44 +149,59 @@ public class MusicPlayerService : IMusicPlayerService
                 }
             }
             await _audioPlayer.PlayAsync();
+            cancellationToken.ThrowIfCancellationRequested();
 
-            // 将歌曲加入内部播放列表（按 Id+Source 去重），使上一首/下一首可用
-            var existingIndex = _playlist.FindIndex(m => m.Id == musicInfo.Id && m.Source == musicInfo.Source);
-            if (existingIndex >= 0)
+            var committed = context.TryCommit(() =>
             {
-                _currentIndex = existingIndex;
-            }
-            else
-            {
-                _playlist.Add(musicInfo);
-                _currentIndex = _playlist.Count - 1;
-            }
+                // 将歌曲加入内部播放列表（按 Id+Source 去重），使上一首/下一首可用
+                var existingIndex = _playlist.FindIndex(m =>
+                    m.Id == musicInfo.Id && m.Source == musicInfo.Source);
+                if (existingIndex >= 0)
+                    _currentIndex = existingIndex;
+                else
+                {
+                    _playlist.Add(musicInfo);
+                    _currentIndex = _playlist.Count - 1;
+                }
 
-            _currentMusic = musicInfo;
-            _state = Models.PlayerState.Playing;
-            
-            StateChanged?.Invoke(this, new Models.PlayerStateChangedEventArgs
-            {
-                OldState = oldState,
-                NewState = _state,
-                CurrentMusic = musicInfo
+                _currentMusic = musicInfo;
+                _state = Models.PlayerState.Playing;
+                StateChanged?.Invoke(this, new Models.PlayerStateChangedEventArgs
+                {
+                    OldState = oldState,
+                    NewState = _state,
+                    CurrentMusic = musicInfo
+                });
             });
-            
+
+            if (!committed)
+            {
+                _audioPlayer.Stop();
+                return;
+            }
+
             // 播放成功后，后台预缓存下一首，顺序连播更顺畅
-            _ = PreCacheNextAsync();
+            StartPrecache();
 
             _logger.LogInformation("开始播放");
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _audioPlayer.Stop();
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "播放音乐失败");
-            var errorState = _state;
-            _state = Models.PlayerState.Error;
-            StateChanged?.Invoke(this, new Models.PlayerStateChangedEventArgs
+            _logger.LogError("播放音乐失败: {ErrorType}", ex.GetType().Name);
+            context.TryCommit(() =>
             {
-                OldState = errorState,
-                NewState = _state,
-                CurrentMusic = musicInfo
+                var errorState = _state;
+                _state = Models.PlayerState.Error;
+                StateChanged?.Invoke(this, new Models.PlayerStateChangedEventArgs
+                {
+                    OldState = errorState,
+                    NewState = _state,
+                    CurrentMusic = musicInfo
+                });
             });
         }
     }
@@ -225,6 +262,8 @@ public class MusicPlayerService : IMusicPlayerService
     {
         try
         {
+            _backgroundWork.Cancel(PlaySlot);
+            CancelPrecache();
             _logger.LogInformation("停止播放");
             var oldState = _state;
             _audioPlayer.Stop();
@@ -261,7 +300,7 @@ public class MusicPlayerService : IMusicPlayerService
                 return;
             }
             _currentIndex = nextIdx;
-            _ = PlayQueueItemAsync(_playlist[_currentIndex]);
+            StartQueueItem(_playlist[_currentIndex]);
         }
         catch (Exception ex)
         {
@@ -297,7 +336,7 @@ public class MusicPlayerService : IMusicPlayerService
 
             if (_currentIndex >= 0 && _currentIndex < _playlist.Count)
             {
-                _ = PlayQueueItemAsync(_playlist[_currentIndex]);
+                StartQueueItem(_playlist[_currentIndex]);
             }
         }
         catch (Exception ex)
@@ -310,7 +349,14 @@ public class MusicPlayerService : IMusicPlayerService
     /// 播放队列中的指定歌曲：无播放链接时按当前音源与默认音质解析后播放
     /// （本地歌曲直接使用本地路径），保证“下一首/上一首/自动连播”可作用于整个列表。
     /// </summary>
-    private async Task PlayQueueItemAsync(MusicInfo music)
+    private void StartQueueItem(MusicInfo music) =>
+        _backgroundWork.StartLatest(
+            PlaySlot,
+            context => PlayQueueItemAsync(music, context));
+
+    private async Task PlayQueueItemAsync(
+        MusicInfo music,
+        BackgroundWorkContext context)
     {
         try
         {
@@ -333,8 +379,13 @@ public class MusicPlayerService : IMusicPlayerService
             if (url == null) url = music.PlayUrl;
             if (string.IsNullOrEmpty(url) && !isLocal && _musicSourceService != null)
             {
-                url = await _musicSourceService.GetPlayUrlAsync(music, music.Source, _defaultQuality) ?? string.Empty;
-                music.PlayUrl = string.IsNullOrEmpty(url) ? null : url;
+                url = await _musicSourceService.GetPlayUrlAsync(
+                    music,
+                    music.Source,
+                    _defaultQuality,
+                    context.CancellationToken) ?? string.Empty;
+                context.TryCommit(() =>
+                    music.PlayUrl = string.IsNullOrEmpty(url) ? null : url);
             }
 
             if (string.IsNullOrEmpty(url))
@@ -343,79 +394,103 @@ public class MusicPlayerService : IMusicPlayerService
                 return;
             }
 
-            await PlayAsync(url, music);
+            await PlayCoreAsync(url, music, context);
 
             // 已消费的预缓存文件：从字典移除并尽力删除（被 BASS 占用时删除失败，交由“清理缓存”处理）
-            if (_precachedPaths.Remove(key))
+            context.TryCommit(() =>
             {
-                try { File.Delete(pre!); } catch { }
-            }
+                if (_precachedPaths.Remove(key)) DeletePrecacheFile(pre!);
+            });
         }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested) { }
         catch (Exception ex)
         {
             _logger.LogError(ex, "播放队列歌曲失败: {Title}", music?.Title);
         }
     }
 
-    /// <summary>后台预缓存下一首在线歌曲到临时文件，供顺序连播直接使用（本地歌曲/无下一首跳过；失败静默回退流式）</summary>
-    private async Task PreCacheNextAsync()
+    /// <summary>后台预缓存下一首在线歌曲到临时文件，供顺序连播直接使用。</summary>
+    private void StartPrecache() =>
+        _backgroundWork.StartLatest(PrecacheSlot, PreCacheNextAsync);
+
+    private async Task PreCacheNextAsync(BackgroundWorkContext context)
     {
+        var token = context.CancellationToken;
+        string? temporaryPath = null;
         try
         {
-            _precacheCts?.Cancel();
-            var cts = new CancellationTokenSource();
-            _precacheCts = cts;
-            var token = cts.Token;
-
             var nextIdx = ComputeNextIndex();
             if (nextIdx < 0 || nextIdx >= _playlist.Count) return;
             var next = _playlist[nextIdx];
             if (string.Equals(next.Source, "Local", StringComparison.OrdinalIgnoreCase)) return;
 
             var key = GetMusicKey(next);
-            if (_precachedPaths.ContainsKey(key)) return; // 已预缓存
+            if (_precachedPaths.ContainsKey(key)) return;
 
             var url = next.PlayUrl;
-            if (string.IsNullOrEmpty(url) && _musicSourceService != null)
+            if (string.IsNullOrEmpty(url))
             {
-                url = await _musicSourceService.GetPlayUrlAsync(next, next.Source, _defaultQuality) ?? string.Empty;
-                next.PlayUrl = string.IsNullOrEmpty(url) ? null : url;
+                url = await _musicSourceService.GetPlayUrlAsync(
+                    next,
+                    next.Source,
+                    _defaultQuality,
+                    token) ?? string.Empty;
             }
             if (string.IsNullOrEmpty(url)) return;
             token.ThrowIfCancellationRequested();
 
-            var tmp = Path.Combine(Path.GetTempPath(), $"lxmusic_pre_{Guid.NewGuid():N}.tmp");
-            try
+            Directory.CreateDirectory(_precacheDirectory);
+            temporaryPath = Path.Combine(
+                _precacheDirectory,
+                $"lxmusic_pre_{Guid.NewGuid():N}.tmp");
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            using (var response = await _httpClient.GetAsync(
+                url,
+                HttpCompletionOption.ResponseHeadersRead,
+                timeout.Token))
             {
-                using (var response = await _precacheHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token))
-                {
-                    response.EnsureSuccessStatusCode();
-                    using var fs = File.Create(tmp);
-                    await response.Content.CopyToAsync(fs, token);
-                }
-                token.ThrowIfCancellationRequested();
+                response.EnsureSuccessStatusCode();
+                await using var stream = File.Create(temporaryPath);
+                await response.Content.CopyToAsync(stream, timeout.Token);
+            }
+            token.ThrowIfCancellationRequested();
 
-                // 只保留当前要用的下一首预缓存，清掉其它过期条目
-                foreach (var kv in _precachedPaths.ToList())
-                {
-                    if (!string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase))
-                    {
-                        _precachedPaths.Remove(kv.Key);
-                        try { File.Delete(kv.Value); } catch { }
-                    }
-                }
-                _precachedPaths[key] = tmp;
-                _logger.LogInformation("已预缓存下一首: {Title}", next.Title);
-            }
-            catch
+            var published = context.TryCommit(() =>
             {
-                try { File.Delete(tmp); } catch { }
-            }
+                next.PlayUrl = url;
+                foreach (var cached in _precachedPaths.ToList())
+                {
+                    if (string.Equals(cached.Key, key, StringComparison.OrdinalIgnoreCase)) continue;
+                    _precachedPaths.Remove(cached.Key);
+                    DeletePrecacheFile(cached.Value);
+                }
+                _precachedPaths[key] = temporaryPath;
+                _logger.LogInformation("已预缓存下一首: {Title}", next.Title);
+            });
+            if (published) temporaryPath = null;
         }
-        catch (OperationCanceledException) { }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (Exception exception)
         {
-            _logger.LogWarning(ex, "预缓存下一首失败");
+            _logger.LogWarning(
+                "预缓存下一首失败: {ErrorType}",
+                exception.GetType().Name);
+        }
+        finally
+        {
+            if (temporaryPath is not null) DeletePrecacheFile(temporaryPath);
+        }
+    }
+
+    private void DeletePrecacheFile(string path)
+    {
+        try { File.Delete(path); }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "Precache file release failed: {ErrorType}",
+                exception.GetType().Name);
         }
     }
 
@@ -576,5 +651,17 @@ public class MusicPlayerService : IMusicPlayerService
             _logger.LogError(ex, "切换输出设备异常");
             return null;
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _audioPlayer.PlaybackCompleted -= AudioPlayer_PlaybackCompleted;
+        _backgroundWork.Cancel(PlaySlot);
+        CancelPrecache();
+        await _backgroundWork.WaitAsync(PlaySlot);
+        await _backgroundWork.WaitAsync(PrecacheSlot);
+        if (_ownsBackgroundWork) await _backgroundWork.DisposeAsync();
+        if (_ownsHttpClient) _httpClient.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

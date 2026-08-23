@@ -27,7 +27,9 @@ public class LyricService : ILyricService
     }
 
     /// <summary>获取歌词：同平台优先，缺失时自动跨平台搜索；null 表示确定无歌词（已缓存，避免重复请求）</summary>
-    public async Task<LyricResult?> GetLyricAsync(MusicInfo music)
+    public async Task<LyricResult?> GetLyricAsync(
+        MusicInfo music,
+        CancellationToken cancellationToken = default)
     {
         if (music == null || string.IsNullOrEmpty(music.Source) ||
             string.Equals(music.Source, "Local", StringComparison.OrdinalIgnoreCase))
@@ -42,7 +44,7 @@ public class LyricService : ILyricService
         _logger.LogInformation("获取歌词: {Title} - {Artist} [{Source}]", music.Title, music.Artist, music.Source);
 
         // 1) 同平台歌词
-        var own = await FetchFromApiAsync(music);
+        var own = await FetchFromApiAsync(music, cancellationToken);
         if (own is { Lines.Count: > 0 })
         {
             var r = new LyricResult { Lyric = own, SourceId = music.Source, FromSearch = false };
@@ -51,7 +53,7 @@ public class LyricService : ILyricService
         }
 
         // 1.5) 脚本源歌词（同一首歌，由第三方音源脚本的 lyric 动作提供）
-        var scripted = await FetchFromScriptsAsync(music);
+        var scripted = await FetchFromScriptsAsync(music, cancellationToken);
         if (scripted != null)
         {
             _cache[key] = scripted;
@@ -60,7 +62,7 @@ public class LyricService : ILyricService
         }
 
         // 2) 跨平台搜索歌词
-        var searched = await SearchOtherSourcesAsync(music);
+        var searched = await SearchOtherSourcesAsync(music, cancellationToken);
         if (searched != null)
         {
             _cache[key] = searched;
@@ -73,13 +75,18 @@ public class LyricService : ILyricService
     }
 
     /// <summary>同平台歌词获取（失败静默）</summary>
-    private async Task<Lyric?> FetchFromApiAsync(MusicInfo music)
+    private async Task<Lyric?> FetchFromApiAsync(
+        MusicInfo music,
+        CancellationToken cancellationToken)
     {
         try
         {
             var api = _musicSource.GetApi(music.Source);
-            return api == null ? null : await api.GetLyricAsync(music);
+            return api == null
+                ? null
+                : await api.GetLyricAsync(music).WaitAsync(cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "同平台歌词获取失败: {Source}:{Id}", music.Source, music.Id);
@@ -88,16 +95,19 @@ public class LyricService : ILyricService
     }
 
     /// <summary>脚本源歌词：遍历已启用脚本源，调用其 lyric 动作并解析 LRC</summary>
-    private async Task<LyricResult?> FetchFromScriptsAsync(MusicInfo music)
+    private async Task<LyricResult?> FetchFromScriptsAsync(
+        MusicInfo music,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var raw = await _musicSource.GetLyricFromScriptsAsync(music);
+            var raw = await _musicSource.GetLyricFromScriptsAsync(music, cancellationToken);
             if (raw == null || string.IsNullOrWhiteSpace(raw.Lyric)) return null;
             var lyric = ParseLrc(raw);
             if (lyric == null || lyric.Lines.Count == 0) return null;
             return new LyricResult { Lyric = lyric, SourceId = "script", FromSearch = true };
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "脚本源歌词获取失败: {Title}", music.Title);
@@ -147,7 +157,9 @@ public class LyricService : ILyricService
     }
 
     /// <summary>跨平台搜索：按 标题+歌手 检索并对每个源取歌词，标题/歌手相似度打分取最优</summary>
-    private async Task<LyricResult?> SearchOtherSourcesAsync(MusicInfo music)
+    private async Task<LyricResult?> SearchOtherSourcesAsync(
+        MusicInfo music,
+        CancellationToken cancellationToken)
     {
         foreach (var sid in SearchOrder)
         {
@@ -156,13 +168,16 @@ public class LyricService : ILyricService
             if (api == null) continue;
             try
             {
-                var results = await _musicSource.SearchAsync(MusicSearchMatcher.BuildSearchKeyword(music), 1, 8, "song", sid);
+                var results = await _musicSource
+                    .SearchAsync(MusicSearchMatcher.BuildSearchKeyword(music), 1, 8, "song", sid)
+                    .WaitAsync(cancellationToken);
                 var best = MusicSearchMatcher.BestMatch(results.Items, music);
                 if (best == null) continue;
-                var lyric = await api.GetLyricAsync(best);
+                var lyric = await api.GetLyricAsync(best).WaitAsync(cancellationToken);
                 if (lyric != null && lyric.Lines.Count > 0)
                     return new LyricResult { Lyric = lyric, SourceId = sid, FromSearch = true };
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
                 _logger.LogDebug(ex, "跨平台歌词搜索失败: [{Source}] {Title}", sid, music.Title);

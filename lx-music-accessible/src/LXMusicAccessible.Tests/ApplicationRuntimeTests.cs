@@ -99,6 +99,38 @@ public sealed class ApplicationRuntimeTests
         Cleanup(directory);
     }
 
+    [Fact]
+    public async Task Stop_quiesces_host_owned_work_before_persistence_and_host_release()
+    {
+        var events = new List<string>();
+        var directory = Directory.CreateTempSubdirectory("LXMusicAccessible.Runtime-").FullName;
+        var shell = new RecordingShell(events);
+        var initializer = new RecordingInitializer(directory, events);
+        var failures = new RecordingFailurePresenter(StartupFailureDecision.Exit, events);
+        var probe = new AsyncReleaseProbe(events);
+        var started = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var runtime = CreateRuntime(directory, initializer, failures, shell, events);
+        Assert.Equal(ApplicationStartOutcome.Started, await runtime.StartAsync());
+        var background = runtime.Services!.GetRequiredService<BackgroundWorkHost>();
+        background.StartLatest("download.fixture", async context =>
+        {
+            await using var owned = probe;
+            started.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken);
+        });
+        await started.Task;
+
+        await runtime.StopAsync();
+
+        Assert.Equal(0, background.ActiveCount);
+        Assert.Equal(1, probe.ReleaseCount);
+        Assert.True(events.IndexOf("background-release") < events.IndexOf("shutdown-persist"));
+        Assert.True(events.IndexOf("shutdown-persist") < events.LastIndexOf("host-stop"));
+        Cleanup(directory);
+    }
+
     private static ApplicationRuntime CreateRuntime(
         string directory,
         IStartupInitializer initializer,
@@ -247,5 +279,17 @@ public sealed class ApplicationRuntimeTests
     private sealed class RecordingShutdownFeedback : IShutdownFeedback
     {
         public void Report(ShutdownResult result) { }
+    }
+
+    private sealed class AsyncReleaseProbe(List<string> events) : IAsyncDisposable
+    {
+        public int ReleaseCount { get; private set; }
+
+        public ValueTask DisposeAsync()
+        {
+            ReleaseCount++;
+            events.Add("background-release");
+            return ValueTask.CompletedTask;
+        }
     }
 }

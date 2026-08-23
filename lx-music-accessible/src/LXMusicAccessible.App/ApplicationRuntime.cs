@@ -23,8 +23,7 @@ public sealed class ApplicationRuntime : IAsyncDisposable
     private readonly IStartupInitializer _initializer;
     private readonly IStartupFailurePresenter _failurePresenter;
     private IHost? _host;
-    private CancellationTokenSource? _backgroundCancellation;
-    private Task? _backgroundTask;
+    private BackgroundWorkHost? _backgroundWork;
     private ApplicationShutdownCoordinator? _shutdownCoordinator;
     private bool _started;
     private bool _disposed;
@@ -109,25 +108,16 @@ public sealed class ApplicationRuntime : IAsyncDisposable
         if (_disposed) return;
         _disposed = true;
         _started = false;
-        var backgroundCancellation = Interlocked.Exchange(ref _backgroundCancellation, null);
-        backgroundCancellation?.Cancel();
-        backgroundCancellation?.Dispose();
-        _ = Interlocked.Exchange(ref _backgroundTask, null);
+        Interlocked.Exchange(ref _backgroundWork, null);
         Interlocked.Exchange(ref _host, null)?.Dispose();
     }
 
     private async Task QuiesceBackgroundAsync(CancellationToken cancellationToken)
     {
         _started = false;
-        var backgroundCancellation = Interlocked.Exchange(ref _backgroundCancellation, null);
-        var backgroundTask = Interlocked.Exchange(ref _backgroundTask, null);
-        backgroundCancellation?.Cancel();
-        if (backgroundTask is not null)
-        {
-            try { await backgroundTask.WaitAsync(cancellationToken); }
-            catch (OperationCanceledException) when (backgroundCancellation?.IsCancellationRequested == true) { }
-        }
-        backgroundCancellation?.Dispose();
+        var backgroundWork = Interlocked.Exchange(ref _backgroundWork, null);
+        if (backgroundWork is not null)
+            await backgroundWork.StopAsync(cancellationToken);
     }
 
     public async ValueTask DisposeAsync()
@@ -139,17 +129,17 @@ public sealed class ApplicationRuntime : IAsyncDisposable
 
     private void StartOptionalBackgroundWork(IServiceProvider services)
     {
+        _backgroundWork = services.GetRequiredService<BackgroundWorkHost>();
+
         if (services.GetService<IMusicSourceService>() is not MusicSourceService sourceService)
             return;
 
-        _backgroundCancellation = new CancellationTokenSource();
-        var logger = services.GetRequiredService<ILogger<ApplicationRuntime>>();
-        _backgroundTask = Task.Run(
-            () => RunOptionalBackgroundWorkAsync(
+        _backgroundWork.StartLatest(
+            "script-source.initialize",
+            context => RunOptionalBackgroundWorkAsync(
                 sourceService,
-                logger,
-                _backgroundCancellation.Token),
-            _backgroundCancellation.Token);
+                services.GetRequiredService<ILogger<ApplicationRuntime>>(),
+                context.CancellationToken));
     }
 
     private void BindShutdown(IServiceProvider services)

@@ -189,7 +189,10 @@ public class MiguMusicService : IMusicApi
     public List<string> GetSupportedQualities() => new() { "128k" };
 
     /// <summary>获取播放 URL</summary>
-    public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128k")
+    public async Task<string?> GetPlayUrlAsync(
+        string musicId,
+        string quality = "128k",
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -197,14 +200,27 @@ public class MiguMusicService : IMusicApi
             var url = $"{ApiBase}/song_info";
             var parameters = new Dictionary<string, string> { ["songId"] = musicId, ["rateType"] = "3" };
             var headers = new Dictionary<string, string> { ["User-Agent"] = "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36" };
-            var response = await _httpClient.GetAsync(url, parameters, headers);
+            var response = await _httpClient.GetAsync(
+                url,
+                parameters,
+                headers,
+                cancellationToken);
             var data = JsonSerializer.Deserialize<JsonElement>(response);
             if (data.TryGetProperty("code", out var c) && c.GetString() == "000000" &&
                 data.TryGetProperty("data", out var d) && d.TryGetProperty("url", out var u))
                 return u.GetString();
             return null;
         }
-        catch (Exception ex) { _logger.LogError(ex, "获取咪咕音乐播放URL失败: {MusicId}", musicId); return null; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                "Play URL lookup failed ({SourceId}, {MusicId}): {ErrorType}",
+                SourceId,
+                musicId,
+                exception.GetType().Name);
+            return null;
+        }
     }
 
     /// <summary>获取歌词：优先直取搜索结果自带的 lyricUrl（实测可用），song_lyric/v3 仅作兜底</summary>

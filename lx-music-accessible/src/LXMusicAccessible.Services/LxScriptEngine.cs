@@ -318,7 +318,12 @@ public class LxScriptEngine
                 if (odoc.RootElement.TryGetProperty("timeoutMs", out var t) && t.ValueKind == JsonValueKind.Number)
                     timeoutMs = t.GetInt32();
             }
-            catch { }
+            catch (Exception exception)
+            {
+                _logger.LogDebug(
+                    "Script HTTP options were ignored: {ErrorType}",
+                    exception.GetType().Name);
+            }
             if (timeoutMs > 0) cts.CancelAfter(Math.Min(timeoutMs, (int)ExecutionTimeout.TotalMilliseconds));
 
             var requestMethod = string.IsNullOrWhiteSpace(method) ? "GET" : method.ToUpperInvariant();
@@ -346,12 +351,22 @@ public class LxScriptEngine
                                     req.Content ??= new ByteArrayContent(Array.Empty<byte>());
                                     req.Content.Headers.TryAddWithoutValidation(h.Key, h.Value);
                                 }
-                                catch { }
+                                catch (Exception exception)
+                                {
+                                    _logger.LogDebug(
+                                        "Script content header was ignored: {ErrorType}",
+                                        exception.GetType().Name);
+                                }
                             }
                         }
                 }
             }
-            catch { }
+            catch (Exception exception)
+            {
+                _logger.LogDebug(
+                    "Script HTTP headers were ignored: {ErrorType}",
+                    exception.GetType().Name);
+            }
             req.Headers.TryAddWithoutValidation("User-Agent", "lx-music-desktop/2.0.0");
 
             if (!string.IsNullOrEmpty(body) && req.Method != HttpMethod.Get && req.Method != HttpMethod.Head)
@@ -579,9 +594,25 @@ public class LxScriptEngine
             string? log = null, updateUrl = null;
             if (root.TryGetProperty("log", out var l) && l.ValueKind == JsonValueKind.String) log = l.GetString();
             if (root.TryGetProperty("updateUrl", out var u) && u.ValueKind == JsonValueKind.String) updateUrl = u.GetString();
-            try { UpdateAlert?.Invoke(this, new LxScriptUpdateAlertEventArgs { Log = log ?? "", UpdateUrl = updateUrl }); } catch { }
+            try
+            {
+                UpdateAlert?.Invoke(
+                    this,
+                    new LxScriptUpdateAlertEventArgs { Log = log ?? "", UpdateUrl = updateUrl });
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    "Script update event failed: {ErrorType}",
+                    exception.GetType().Name);
+            }
         }
-        catch { }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(
+                "Script update event payload was ignored: {ErrorType}",
+                exception.GetType().Name);
+        }
         return "{}";
     }
 
