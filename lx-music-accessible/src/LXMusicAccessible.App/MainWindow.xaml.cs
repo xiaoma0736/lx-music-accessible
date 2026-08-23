@@ -25,7 +25,7 @@ public partial class MainWindow : Window
     private readonly IAudioPlaybackControl _playerService;
     private bool _autoPaging;
     private readonly IDataService _dataService;
-    private readonly IHotkeyManager _hotkeyManager;
+    private readonly SettingsWorkflow _settingsWorkflow;
     private readonly ITtsService _ttsService;
     private readonly IMusicSourceService _musicSourceService;
     private readonly LyricsWorkflow _lyrics;
@@ -36,7 +36,7 @@ public partial class MainWindow : Window
     private readonly ApplicationWindowFactory _windowFactory;
     private readonly IApplicationShutdown _applicationShutdown;
     private readonly MusicBrowseWorkflow _browseWorkflow;
-    private UserSettings _loadedSettings = new();
+    private SettingsEditState _settingsState;
     private Task? _closeAfterShutdown;
     private bool _shutdownCloseAllowed;
     private bool _shutdownBlocked;
@@ -125,7 +125,7 @@ public partial class MainWindow : Window
         IPlaybackCoordinator playback,
         IAudioPlaybackControl playerService,
         IDataService dataService,
-        IHotkeyManager hotkeyManager,
+        SettingsWorkflow settingsWorkflow,
         ITtsService ttsService,
         IMusicSourceService musicSourceService,
         LyricsWorkflow lyrics,
@@ -141,7 +141,8 @@ public partial class MainWindow : Window
         _playback = playback;
         _playerService = playerService;
         _dataService = dataService;
-        _hotkeyManager = hotkeyManager;
+        _settingsWorkflow = settingsWorkflow;
+        _settingsState = settingsWorkflow.Current;
         _ttsService = ttsService;
         _musicSourceService = musicSourceService;
         _lyrics = lyrics;
@@ -166,8 +167,8 @@ public partial class MainWindow : Window
         _sourceContextMenu = (ContextMenu)FindResource("SourceContextMenu");
         _sourceContextMenu.PreviewKeyUp += ContextMenu_PreviewKeyUp;
         _playback.QueueCompleted += PlayerService_QueueCompleted;
-        _hotkeyManager.HotkeyPressed += HotkeyManager_HotkeyPressed;
-        _hotkeyManager.HotkeysRegistrationFailed += HotkeyManager_HotkeysRegistrationFailed;
+        _settingsWorkflow.HotkeyPressed += HotkeyManager_HotkeyPressed;
+        _settingsWorkflow.HotkeysRegistrationFailed += HotkeyManager_HotkeysRegistrationFailed;
         _musicSourceService.SourcesChanged += MusicSourceService_SourcesChanged;
         _musicSourceService.ScriptUpdateAlert += MusicSourceService_ScriptUpdateAlert;
         DownloadTaskList.ItemsSource = _downloads.Tasks;
@@ -417,7 +418,7 @@ public partial class MainWindow : Window
 
         // 配置的全局快捷键（仅处理全局注册失败的组合，避免与 WM_HOTKEY 重复触发）
         var effectiveKey = e.Key == Key.System ? e.SystemKey : e.Key;
-        var fallbackHotkey = _hotkeyManager?.MatchFallback(effectiveKey, mods);
+        var fallbackHotkey = _settingsWorkflow.MatchFallback(effectiveKey, mods);
         if (fallbackHotkey != null)
         {
             // 修复：NumLock 关闭时小键盘 4/6/2/8 会作为方向键上报，避免其误触发方向键热键
@@ -480,7 +481,7 @@ public partial class MainWindow : Window
         }
 
         // 局部快捷键（IsGlobal=false，仅主窗口聚焦时生效；保留组合键优先）
-        var localHotkey = _hotkeyManager?.MatchLocalHotkey(effectiveKey, mods);
+        var localHotkey = _settingsWorkflow.MatchLocalHotkey(effectiveKey, mods);
         if (localHotkey != null)
         {
             // 修复：NumLock 关闭时小键盘 4/6/2/8 会作为方向键上报，避免其误触发方向键热键
@@ -717,8 +718,9 @@ public partial class MainWindow : Window
         if (_dataService == null) return;
         try
         {
-            var settings = await _dataService.GetSettingsAsync();
-            _loadedSettings = CloneForShutdown(settings ?? new UserSettings());
+            var handle = new WindowInteropHelper(this).Handle;
+            _settingsState = await _settingsWorkflow.LoadAsync(handle);
+            var settings = _settingsState.Settings;
             if (settings != null)
             {
                 ApplyVolume(settings.DefaultVolume, announce: false);
@@ -768,11 +770,7 @@ public partial class MainWindow : Window
             LoadVoiceSettings(settings);
 
             // 快捷键配置：载入 + 注册全局热键
-            _hotkeyManager?.LoadHotkeys(settings?.CustomHotkeys ?? new List<Hotkey>());
             BuildHotkeySettingItems();
-            var handle = new WindowInteropHelper(this).Handle;
-            if (handle != IntPtr.Zero)
-                _hotkeyManager?.InitializeGlobalHotkeys(handle);
             RefreshHotkeyConflictMarkers();
 
             // 应用下载歌词/命名设置到下载服务（立即生效）
@@ -1077,84 +1075,79 @@ public partial class MainWindow : Window
         if (_shutdownBlocked)
             throw new InvalidOperationException("Shutdown state has already been captured.");
 
-        var settings = CloneForShutdown(_loadedSettings);
-        settings.DefaultVolume = _playerService.Volume;
-        settings.WindowWidth = (int)Math.Round(ActualWidth);
-        settings.WindowHeight = (int)Math.Round(ActualHeight);
-        settings.AutoPlay = AutoPlayCheckBox.IsChecked ?? true;
-        settings.ShuffleMode = ShufflePlayCheckBox.IsChecked ?? false;
-        settings.LoopMode = RepeatPlayCheckBox.IsChecked ?? false;
-        settings.EnableScreenReader = EnableScreenReaderCheckBox.IsChecked ?? true;
-        settings.EnableVoiceAnnouncement = EnableVoiceAnnouncementCheckBox.IsChecked ?? true;
-        settings.DefaultPlayQuality = GetComboTag(DefaultQualityCombo, "128k");
-        settings.DefaultDownloadQuality = GetComboTag(DownloadQualityCombo, "128k");
-        settings.DownloadPath = DownloadPathBox.Text?.Trim() ?? string.Empty;
-        settings.DownloadLyric = DownloadLyricCheckBox?.IsChecked ?? true;
-        settings.DownloadNameOrder = string.Equals(
-            GetComboTag(DownloadNameOrderCombo, "ArtistTitle"),
-            "TitleArtist",
-            StringComparison.OrdinalIgnoreCase)
-            ? DownloadNameOrder.TitleArtist
-            : DownloadNameOrder.ArtistTitle;
-        settings.DownloadNameIncludeQuality = DownloadNameQualityCheckBox?.IsChecked ?? true;
-        settings.ThirdPartyPlayerPath = ThirdPartyPlayerPathBox?.Text?.Trim() ?? string.Empty;
-        settings.LyricAutoAnnounce = LyricAnnounceCheckBox.IsChecked ?? true;
-        settings.LyricAutoScroll = LyricScrollCheckBox.IsChecked ?? true;
-        settings.DefaultSearchSource = GetComboTag(SearchSourceCombo, "all");
-        settings.AccessibilitySettings ??= new AccessibilitySettings();
-        settings.AccessibilitySettings.AnnouncementVoiceId = GetComboTag(VoiceCombo, "");
-        settings.AccessibilitySettings.AnnouncementRate =
-            double.TryParse(GetComboTag(SpeechRateCombo, "1"), out var speechRate)
-                ? speechRate
-                : 1.0;
-        settings.CustomHotkeys = CloneForShutdown(_hotkeyManager.GetAllHotkeys());
-        settings.OutputDeviceIndex = _playerService.CurrentOutputDeviceIndex;
-        settings.LyricOffsets = new Dictionary<string, int>(_lyrics.GetOffsetsSnapshot());
-        settings.HideToTrayOnAltF4 = _hideToTrayOnAltF4;
-        settings.Playback = new PlaybackSessionState
+        var edit = _settingsWorkflow.Edit(settings =>
         {
-            CurrentMusic = _playback.CurrentMusic is null
-                ? null
-                : CapturePlaybackMusic(_playback.CurrentMusic),
-            PositionSeconds = Math.Max(0, _playerService.Position.TotalSeconds),
-            WasPlaying = _playback.IsPlaying,
-            WasPaused = _playback.IsPaused
-        };
+            settings.DefaultVolume = _playerService.Volume;
+            settings.WindowWidth = (int)Math.Round(ActualWidth);
+            settings.WindowHeight = (int)Math.Round(ActualHeight);
+            settings.AutoPlay = AutoPlayCheckBox.IsChecked ?? true;
+            settings.ShuffleMode = ShufflePlayCheckBox.IsChecked ?? false;
+            settings.LoopMode = RepeatPlayCheckBox.IsChecked ?? false;
+            settings.EnableScreenReader = EnableScreenReaderCheckBox.IsChecked ?? true;
+            settings.EnableVoiceAnnouncement = EnableVoiceAnnouncementCheckBox.IsChecked ?? true;
+            settings.DefaultPlayQuality = GetComboTag(DefaultQualityCombo, "128k");
+            settings.DefaultDownloadQuality = GetComboTag(DownloadQualityCombo, "128k");
+            settings.DownloadPath = DownloadPathBox.Text?.Trim() ?? string.Empty;
+            settings.DownloadLyric = DownloadLyricCheckBox?.IsChecked ?? true;
+            settings.DownloadNameOrder = string.Equals(
+                GetComboTag(DownloadNameOrderCombo, "ArtistTitle"),
+                "TitleArtist",
+                StringComparison.OrdinalIgnoreCase)
+                ? DownloadNameOrder.TitleArtist
+                : DownloadNameOrder.ArtistTitle;
+            settings.DownloadNameIncludeQuality = DownloadNameQualityCheckBox?.IsChecked ?? true;
+            settings.ThirdPartyPlayerPath = ThirdPartyPlayerPathBox?.Text?.Trim() ?? string.Empty;
+            settings.LyricAutoAnnounce = LyricAnnounceCheckBox.IsChecked ?? true;
+            settings.LyricAutoScroll = LyricScrollCheckBox.IsChecked ?? true;
+            settings.DefaultSearchSource = GetComboTag(SearchSourceCombo, "all");
+            settings.AccessibilitySettings ??= new AccessibilitySettings();
+            settings.AccessibilitySettings.AnnouncementVoiceId = GetComboTag(VoiceCombo, "");
+            settings.AccessibilitySettings.AnnouncementRate =
+                double.TryParse(GetComboTag(SpeechRateCombo, "1"), out var speechRate)
+                    ? speechRate
+                    : 1.0;
+            settings.CustomHotkeys = _settingsWorkflow.GetHotkeys().ToList();
+            settings.OutputDeviceIndex = _playerService.CurrentOutputDeviceIndex;
+            settings.LyricOffsets = new Dictionary<string, int>(_lyrics.GetOffsetsSnapshot());
+            settings.HideToTrayOnAltF4 = _hideToTrayOnAltF4;
+            settings.Playback = new PlaybackSessionState
+            {
+                CurrentMusic = _playback.CurrentMusic is null
+                    ? null
+                    : CapturePlaybackMusic(_playback.CurrentMusic),
+                PositionSeconds = Math.Max(0, _playerService.Position.TotalSeconds),
+                WasPlaying = _playback.IsPlaying,
+                WasPaused = _playback.IsPaused
+            };
+        });
+        if (!edit.Accepted)
+            throw new InvalidOperationException(string.Join(" ", edit.Errors));
+        _settingsState = edit.State;
         var sources = CloneForShutdown(_musicSourceService.GetAllSources());
 
         _shutdownBlocked = true;
         IsEnabled = false;
         _positionTimer.Stop();
         _clockTimer.Stop();
-        _hotkeyManager.UnregisterAllGlobal();
+        _settingsWorkflow.UnregisterAllGlobal();
         UninstallNumpadHook();
         _musicSourceService.SourcesChanged -= MusicSourceService_SourcesChanged;
         _musicSourceService.ScriptUpdateAlert -= MusicSourceService_ScriptUpdateAlert;
         _playback.QueueCompleted -= PlayerService_QueueCompleted;
         DisposeTrayIcon();
 
-        return new ApplicationShutdownSnapshot(settings, sources);
+        return new ApplicationShutdownSnapshot(_settingsState, sources);
     }
 
     internal async Task PersistShutdownAsync(
         ApplicationShutdownSnapshot snapshot,
         CancellationToken cancellationToken)
     {
-        var stored = await _dataService.GetSettingsAsync(cancellationToken);
-        if (stored is not null)
-        {
-            snapshot.Settings.DefaultSourceId = stored.DefaultSourceId;
-            snapshot.Settings.FavoritePlaylistName = stored.FavoritePlaylistName;
-            snapshot.Settings.AccessibilitySettings.AnnouncementVolume =
-                stored.AccessibilitySettings?.AnnouncementVolume ?? 0.8;
-            snapshot.Settings.AccessibilitySettings.EnableFocusAnnouncements =
-                stored.AccessibilitySettings?.EnableFocusAnnouncements ?? true;
-            snapshot.Settings.AccessibilitySettings.FocusAnnouncementDelay =
-                stored.AccessibilitySettings?.FocusAnnouncementDelay ?? 300;
-        }
-        await _dataService.SaveSettingsAsync(snapshot.Settings, cancellationToken);
+        var saved = await _settingsWorkflow.SaveAsync(snapshot.Settings, cancellationToken);
+        if (!saved.Succeeded)
+            throw new InvalidOperationException($"Settings persistence failed: {saved.ErrorType}");
         await _dataService.SaveMusicSourcesAsync(snapshot.Sources.ToList(), cancellationToken);
-        _loadedSettings = CloneForShutdown(snapshot.Settings);
+        _settingsState = snapshot.Settings;
     }
 
     private static T CloneForShutdown<T>(T value) =>
@@ -1997,10 +1990,9 @@ public partial class MainWindow : Window
     /// <summary>歌词窗口内局部热键处理：匹配局部快捷键并执行（F1~F12、Shift+F7/F8 等），返回是否已处理</summary>
     internal bool TryHandleLyricsWindowHotkey(KeyEventArgs e)
     {
-        if (_hotkeyManager == null) return false;
         var mods = Keyboard.Modifiers;
         var effectiveKey = e.Key == Key.System ? e.SystemKey : e.Key;
-        var localHotkey = _hotkeyManager.MatchLocalHotkey(effectiveKey, mods);
+        var localHotkey = _settingsWorkflow.MatchLocalHotkey(effectiveKey, mods);
         if (localHotkey == null) return false;
         if (!IsNumpadOriginHotkey(localHotkey.Key))
             ExecuteHotkeyAction(localHotkey.ActionId);
@@ -3433,7 +3425,7 @@ public partial class MainWindow : Window
     {
         if (msg == WM_HOTKEY)
         {
-            _hotkeyManager?.RaiseGlobalHotkey(wParam.ToInt32());
+            _settingsWorkflow.RaiseGlobalHotkey(wParam.ToInt32());
             handled = true;
         }
         return IntPtr.Zero;
@@ -3568,23 +3560,22 @@ public partial class MainWindow : Window
     /// <summary>刷新设置列表中全局快捷键的“（冲突）”标记（注册失败的全局项）</summary>
     private void RefreshHotkeyConflictMarkers()
     {
-        if (_hotkeyManager == null) return;
         foreach (var item in _hotkeySettingItems)
         {
-            var h = _hotkeyManager.GetAllHotkeys().FirstOrDefault(x => x.ActionId == item.ActionId && x.IsGlobal == item.IsGlobal);
+            var h = _settingsWorkflow.GetHotkeys().FirstOrDefault(x => x.ActionId == item.ActionId && x.IsGlobal == item.IsGlobal);
             if (h == null) continue;
             var text = FormatHotkey(h);
             var conflicted = h.IsGlobal && h.IsEnabled && h.Key != Key.None
-                && !_hotkeyManager.IsGlobalHotkeyRegistered(h);
+                && !_settingsWorkflow.IsGlobalHotkeyRegistered(h);
             item.ShortcutText = conflicted ? $"{text}（冲突）" : text;
+            item.HasConflict = conflicted;
         }
     }
 
     private void BuildHotkeySettingItems()
     {
         _hotkeySettingItems.Clear();
-        if (_hotkeyManager == null) return;
-        foreach (var h in _hotkeyManager.GetAllHotkeys())
+        foreach (var h in _settingsWorkflow.GetHotkeys())
         {
             _hotkeySettingItems.Add(new HotkeySettingItem
             {
@@ -3645,33 +3636,21 @@ public partial class MainWindow : Window
         Announce($"请按下{item.ActionName}的快捷键，Esc取消，Delete清除");
     }
 
-    private void ClearHotkey(HotkeySettingItem item)
+    private async void ClearHotkey(HotkeySettingItem item)
     {
-        if (_hotkeyManager == null) return;
-        var target = _hotkeyManager.GetAllHotkeys().FirstOrDefault(h => h.ActionId == item.ActionId && h.IsGlobal == item.IsGlobal);
-        if (target == null) return;
-        target.Key = Key.None;
-        target.Modifiers = ModifierKeys.None;
-        target.IsEnabled = false;
-        item.ShortcutText = FormatHotkey(target);
-        _hotkeyManager.RefreshGlobalHotkeys();
-        RefreshHotkeyConflictMarkers();
-        SaveHotkeys();
-        Announce($"{item.ActionName}快捷键已清除");
+        var result = await _settingsWorkflow.ClearHotkeyAsync(item.ActionId, item.IsGlobal);
+        _settingsState = result.State;
+        PresentHotkeyResult(result, null, $"{item.ActionName}快捷键已清除");
     }
 
-    private void ResetHotkeysBtn_Click(object sender, RoutedEventArgs e)
+    private async void ResetHotkeysBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_hotkeyManager == null) return;
-        _hotkeyManager.LoadHotkeys(new List<Hotkey>());
-        BuildHotkeySettingItems();
-        _hotkeyManager.RefreshGlobalHotkeys();
-        RefreshHotkeyConflictMarkers();
-        SaveHotkeys();
-        Announce("快捷键已恢复默认");
+        var result = await _settingsWorkflow.ResetHotkeysAsync();
+        _settingsState = result.State;
+        PresentHotkeyResult(result, null, "快捷键已恢复默认");
     }
 
-    private void HandleHotkeyRecording(KeyEventArgs e)
+    private async void HandleHotkeyRecording(KeyEventArgs e)
     {
         var item = _recordingHotkeyItem!;
         if (e.Key == Key.Escape)
@@ -3691,80 +3670,46 @@ public partial class MainWindow : Window
 
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var mods = Keyboard.Modifiers;
-        bool isFunctionKey = key >= Key.F1 && key <= Key.F12;
-        bool isMediaKey = key is Key.MediaPlayPause or Key.MediaStop or Key.MediaNextTrack or Key.MediaPreviousTrack;
         bool isModifierOnly = key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl
             or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin;
         if (isModifierOnly) return;
-        if (mods == ModifierKeys.None && !isFunctionKey && !isMediaKey)
-        {
-            Announce("请按下带 Ctrl、Alt 或 Shift 的组合键，或功能键、媒体键");
-            return;
-        }
-        if (IsReservedCombo(key, mods))
-        {
-            Announce("该快捷键与系统内置功能冲突，请换一个组合");
-            return;
-        }
-
-        var target = _hotkeyManager?.GetAllHotkeys().FirstOrDefault(h => h.ActionId == item.ActionId && h.IsGlobal == item.IsGlobal);
-        if (target == null) return;
-        var conflict = _hotkeyManager?.GetAllHotkeys().FirstOrDefault(h =>
-            !ReferenceEquals(h, target) && h.IsEnabled && h.Key == key && h.Modifiers == mods);
-        if (conflict != null)
-        {
-            Announce($"该快捷键已被{conflict.Name}使用");
-            return;
-        }
-        // 全局快捷键系统级占用预检：与其他程序冲突时立即提示，不保存
-        bool isSameAsCurrent = target.Key == key && target.Modifiers == mods;
-        if (item.IsGlobal && !isSameAsCurrent && _hotkeyManager != null && _hotkeyManager.IsComboOccupied(key, mods))
-        {
-            Announce("该快捷键已被其他程序占用，请换一个组合");
-            return;
-        }
-        target.Key = key;
-        target.Modifiers = mods;
-        target.IsEnabled = true;
-        item.ShortcutText = FormatHotkey(target);
-        _hotkeyManager?.RefreshGlobalHotkeys();
-        SaveHotkeys();
+        var result = await _settingsWorkflow.ReplaceHotkeyAsync(
+            item.ActionId,
+            item.IsGlobal,
+            key,
+            mods);
+        _settingsState = result.State;
         _recordingHotkeyItem = null;
-        RefreshHotkeyConflictMarkers();
-        var message = $"{item.ActionName}功能，{FormatHotkey(target)}热键设置完成";
-        Announce(message);
-        new HotkeyConfirmDialog(message).ShowDialog();
+        var saved = _settingsWorkflow.GetHotkeys().First(h =>
+            h.ActionId == item.ActionId && h.IsGlobal == item.IsGlobal);
+        var message = $"{item.ActionName}功能，{FormatHotkey(saved)}热键设置完成";
+        PresentHotkeyResult(result, item, message);
         RefocusHotkeyList();
     }
 
-    private static bool IsReservedCombo(Key key, ModifierKeys mods)
+    private void PresentHotkeyResult(
+        HotkeyEditResult result,
+        HotkeySettingItem? item,
+        string successMessage)
     {
-        if (mods == ModifierKeys.Alt && key >= Key.D1 && key <= Key.D8) return true;
-        if (mods == ModifierKeys.Control && key == Key.F) return true;
-        if (mods == ModifierKeys.Control && key == Key.R) return true;
-        if (mods == ModifierKeys.Alt && key is Key.M or Key.C or Key.L or Key.S or Key.R) return true;
-        return false;
+        BuildHotkeySettingItems();
+        RefreshHotkeyConflictMarkers();
+        var message = result.Status switch
+        {
+            HotkeyEditStatus.Applied or HotkeyEditStatus.Unchanged => successMessage,
+            HotkeyEditStatus.Invalid => "该组合不是有效快捷键，请使用带修饰键的组合、功能键或媒体键。",
+            HotkeyEditStatus.Conflict => $"该快捷键已被{result.Conflicts.FirstOrDefault()?.Name ?? "其他功能"}使用。",
+            HotkeyEditStatus.RegistrationFailed => "该全局快捷键已被其他程序占用，原快捷键已恢复。",
+            HotkeyEditStatus.RollbackFailed => "快捷键注册失败，旧注册也无法恢复；请重新设置冲突项。",
+            HotkeyEditStatus.PersistenceFailed => "快捷键已生效，但保存失败；退出时将再次保存。",
+            _ => "快捷键未更改。"
+        };
+        Announce(message);
+        if (result.Applied && item is not null)
+            new HotkeyConfirmDialog(message) { Owner = this }.ShowDialog();
     }
 
     private void RefocusHotkeyList() => FocusListContent(HotkeyListBox);
-
-    private async void SaveHotkeys()
-    {
-        try
-        {
-            var settings = await _dataService.GetSettingsAsync() ?? new UserSettings();
-            settings.CustomHotkeys = _hotkeyManager?.GetAllHotkeys() ?? new List<Hotkey>();
-            settings.OutputDeviceIndex = _playerService?.CurrentOutputDeviceIndex ?? -1;
-            await _dataService.SaveSettingsAsync(settings);
-            // 音源配置（导入/启用/禁用/默认/优先级）随退出一并持久化，避免异步保存未完成而丢失
-            if (_musicSourceService != null)
-                await _musicSourceService.PersistSourcesAsync();
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"保存快捷键设置失败: {ex.Message}");
-        }
-    }
 
     private void ExecuteHotkeyAction(string actionId)
     {
@@ -3878,10 +3823,13 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (_dataService == null || _playerService == null) return;
-            var settings = await _dataService.GetSettingsAsync() ?? new UserSettings();
-            settings.OutputDeviceIndex = _playerService.CurrentOutputDeviceIndex;
-            await _dataService.SaveSettingsAsync(settings);
+            var edit = _settingsWorkflow.Edit(settings =>
+                settings.OutputDeviceIndex = _playerService.CurrentOutputDeviceIndex);
+            if (!edit.Accepted) return;
+            _settingsState = edit.State;
+            var saved = await _settingsWorkflow.SaveAsync(edit.State);
+            if (!saved.Succeeded)
+                Announce("保存输出设备设置失败，退出时将再次保存");
         }
         catch (Exception ex)
         {
@@ -4099,7 +4047,7 @@ public partial class MainWindow : Window
         DisposeTrayIcon();
         if (_musicSourceService != null)
             _musicSourceService.SourcesChanged -= MusicSourceService_SourcesChanged;
-        _hotkeyManager?.UnregisterAllGlobal();
+        _settingsWorkflow.UnregisterAllGlobal();
         UninstallNumpadHook();
         if (_lyricsWindow != null)
         {

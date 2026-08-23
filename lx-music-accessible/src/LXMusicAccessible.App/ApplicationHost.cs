@@ -98,7 +98,7 @@ public static class ApplicationHost
                 services.AddSingleton<ITtsService, RoutingTtsService>();
                 services.AddSingleton<IDataStorageService>(_ =>
                     new LocalFileDataStorageService(Path.Combine(dataDir, "file-storage")));
-                services.AddSingleton<IHotkeyManager, HotkeyManagerService>();
+                services.AddSingleton<SettingsWorkflow>();
                 services.AddSingleton<IProcessLauncher, SystemProcessLauncher>();
 
                 services.AddSingleton<IPlaylistImportService, PlaylistImportService>();

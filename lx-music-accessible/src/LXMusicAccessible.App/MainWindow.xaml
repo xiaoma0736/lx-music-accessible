@@ -638,7 +638,9 @@
                                         <ListBox.ItemContainerStyle>
                                             <Style TargetType="ListBoxItem">
                                                 <!-- 显式设置单一读屏名称，避免读屏把名称与内部多个文本块重复朗读两次 -->
-                                                <Setter Property="AutomationProperties.Name" Value="{Binding ToString}"/>
+                                                <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleText}"/>
+                                                <Setter Property="AutomationProperties.HelpText" Value="{Binding ConflictStatus}"/>
+                                                <Setter Property="AutomationProperties.ItemStatus" Value="{Binding ConflictStatus}"/>
                                             </Style>
                                         </ListBox.ItemContainerStyle>
                                         <ListBox.ItemTemplate>

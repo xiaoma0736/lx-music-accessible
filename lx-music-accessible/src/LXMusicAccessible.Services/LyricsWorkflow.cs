@@ -1,4 +1,3 @@
-using LXMusicAccessible.Data;
 using LXMusicAccessible.Models;
 using Microsoft.Extensions.Logging;
 
@@ -79,7 +78,7 @@ public sealed class LyricsWorkflow : IDisposable
         IAudioPlaybackControl audio,
         BackgroundWorkHost backgroundWork,
         IAccessibleAnnouncer announcer,
-        IDataService dataService)
+        SettingsWorkflow settingsWorkflow)
         : this(
             logger,
             lyrics,
@@ -87,7 +86,7 @@ public sealed class LyricsWorkflow : IDisposable
             audio,
             backgroundWork,
             announcer,
-            (offsets, cancellationToken) => PersistOffsetsAsync(dataService, offsets, cancellationToken),
+            (offsets, cancellationToken) => PersistOffsetsAsync(settingsWorkflow, offsets, cancellationToken),
             startPositionTracking: true)
     {
     }
@@ -535,14 +534,17 @@ public sealed class LyricsWorkflow : IDisposable
     };
 
     private static async Task PersistOffsetsAsync(
-        IDataService dataService,
+        SettingsWorkflow settingsWorkflow,
         IReadOnlyDictionary<string, int> offsets,
         CancellationToken cancellationToken)
     {
-        var settings = await dataService.GetSettingsAsync() ?? new UserSettings();
-        cancellationToken.ThrowIfCancellationRequested();
-        settings.LyricOffsets = new Dictionary<string, int>(offsets, StringComparer.OrdinalIgnoreCase);
-        await dataService.SaveSettingsAsync(settings, cancellationToken);
+        var edit = settingsWorkflow.Edit(settings =>
+            settings.LyricOffsets = new Dictionary<string, int>(offsets, StringComparer.OrdinalIgnoreCase));
+        if (!edit.Accepted)
+            throw new InvalidOperationException(string.Join(" ", edit.Errors));
+        var saved = await settingsWorkflow.SaveAsync(edit.State, cancellationToken);
+        if (!saved.Succeeded)
+            throw new InvalidOperationException($"Lyric offset persistence failed: {saved.ErrorType}");
     }
 
     public void Dispose()

@@ -22,7 +22,7 @@ public readonly record struct ShutdownResult(ShutdownStatus Status, string Phase
 }
 
 internal sealed record ApplicationShutdownSnapshot(
-    UserSettings Settings,
+    SettingsEditState Settings,
     IReadOnlyList<MusicSource> Sources);
 
 internal interface IApplicationShutdownParticipant

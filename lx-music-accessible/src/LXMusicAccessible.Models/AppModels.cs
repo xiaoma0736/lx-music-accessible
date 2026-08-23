@@ -126,15 +126,38 @@ public class HotkeySettingItem : INotifyPropertyChanged
     public string ShortcutText
     {
         get => _shortcutText;
-        set { if (_shortcutText != value) { _shortcutText = value; OnPropertyChanged(nameof(ShortcutText)); } }
+        set
+        {
+            if (_shortcutText == value) return;
+            _shortcutText = value;
+            OnPropertyChanged(nameof(ShortcutText));
+            OnPropertyChanged(nameof(AccessibleText));
+        }
     }
+
+    private bool _hasConflict;
+    public bool HasConflict
+    {
+        get => _hasConflict;
+        set
+        {
+            if (_hasConflict == value) return;
+            _hasConflict = value;
+            OnPropertyChanged(nameof(HasConflict));
+            OnPropertyChanged(nameof(ConflictStatus));
+            OnPropertyChanged(nameof(AccessibleText));
+        }
+    }
+
+    public string ConflictStatus => HasConflict ? "全局注册冲突" : "可用";
+    public string AccessibleText => $"{ActionName}：{ShortcutText}，{ConflictStatus}";
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private void OnPropertyChanged(string propertyName)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
-    public override string ToString() => $"{ActionName}：{ShortcutText}";
+    public override string ToString() => AccessibleText;
 }
 
 /// <summary>

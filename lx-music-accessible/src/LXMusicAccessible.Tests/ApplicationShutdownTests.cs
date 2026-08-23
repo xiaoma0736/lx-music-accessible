@@ -2,6 +2,7 @@ using System.IO;
 using LXMusicAccessible.App;
 using LXMusicAccessible.Data;
 using LXMusicAccessible.Models;
+using LXMusicAccessible.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -250,7 +251,7 @@ public sealed class ApplicationShutdownTests
         {
             CaptureCount++;
             events.Add("capture-block");
-            return new(new UserSettings(), Array.Empty<MusicSource>());
+            return new(new SettingsEditState(0, new UserSettings()), Array.Empty<MusicSource>());
         }
 
         public async Task PersistAsync(
@@ -279,13 +280,13 @@ public sealed class ApplicationShutdownTests
         IReadOnlyList<MusicSource> sources) : IApplicationShutdownParticipant
     {
         public ApplicationShutdownSnapshot CaptureAndBlock() =>
-            new(settings, sources);
+            new(new SettingsEditState(0, settings), sources);
 
         public async Task PersistAsync(
             ApplicationShutdownSnapshot snapshot,
             CancellationToken cancellationToken)
         {
-            await data.SaveSettingsAsync(snapshot.Settings, cancellationToken);
+            await data.SaveSettingsAsync(snapshot.Settings.Settings, cancellationToken);
             await data.SaveMusicSourcesAsync(snapshot.Sources.ToList(), cancellationToken);
         }
     }
