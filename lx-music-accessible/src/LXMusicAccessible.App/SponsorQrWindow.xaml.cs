@@ -9,9 +9,9 @@ namespace LXMusicAccessible.App;
 /// </summary>
 public partial class SponsorQrWindow : Window
 {
-    private readonly IAccessibilityService _announce;
+    private readonly IAccessibleAnnouncer _announce;
 
-    public SponsorQrWindow(IAccessibilityService announce)
+    public SponsorQrWindow(IAccessibleAnnouncer announce)
     {
         _announce = announce;
         InitializeComponent();
@@ -20,11 +20,7 @@ public partial class SponsorQrWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            _announce.Announce("赞助二维码已显示。本软件所有功能均免费，如蒙赞助支持，请用手机扫描窗口中放大的二维码；扫描完成后按 Esc 或“关闭”按钮关闭本窗口。");
-        }
-        catch { /* 播报失败不阻塞 */ }
+        _announce.Announce("赞助二维码已显示。本软件所有功能均免费，如蒙赞助支持，请用手机扫描窗口中放大的二维码；扫描完成后按 Esc 或“关闭”按钮关闭本窗口。");
         CloseBtn.Focus();
     }
 

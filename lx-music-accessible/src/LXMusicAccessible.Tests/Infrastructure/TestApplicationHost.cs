@@ -27,6 +27,7 @@ internal sealed class TestApplicationHost : IAsyncDisposable
         string dataDirectory,
         RejectingHttpMessageHandler httpHandler,
         RecordingAnnouncer announcer,
+        RecordingTtsAdapter speech,
         RecordingProcessLauncher processLauncher,
         RecordingAudioPlayer audioPlayer)
     {
@@ -34,6 +35,7 @@ internal sealed class TestApplicationHost : IAsyncDisposable
         DataDirectory = dataDirectory;
         HttpHandler = httpHandler;
         Announcer = announcer;
+        Speech = speech;
         ProcessLauncher = processLauncher;
         AudioPlayer = audioPlayer;
     }
@@ -42,6 +44,7 @@ internal sealed class TestApplicationHost : IAsyncDisposable
     public string DataDirectory { get; }
     public RejectingHttpMessageHandler HttpHandler { get; }
     public RecordingAnnouncer Announcer { get; }
+    public RecordingTtsAdapter Speech { get; }
     public RecordingProcessLauncher ProcessLauncher { get; }
     public RecordingAudioPlayer AudioPlayer { get; }
 
@@ -52,6 +55,7 @@ internal sealed class TestApplicationHost : IAsyncDisposable
 
         var httpHandler = new RejectingHttpMessageHandler();
         var announcer = new RecordingAnnouncer();
+        var speech = new RecordingTtsAdapter();
         var processLauncher = new RecordingProcessLauncher();
         var audioPlayer = new RecordingAudioPlayer();
         IHost? host = null;
@@ -68,8 +72,8 @@ internal sealed class TestApplicationHost : IAsyncDisposable
                             httpHandler)));
                     services.Replace(ServiceDescriptor.Singleton(
                         new ScriptNetworkClient(httpHandler, ResolveFixtureAddressAsync)));
-                    services.Replace(ServiceDescriptor.Singleton<IAccessibilityService>(announcer));
-                    services.Replace(ServiceDescriptor.Singleton<ITtsService>(announcer));
+                    services.Replace(ServiceDescriptor.Singleton<IAccessibleAnnouncer>(announcer));
+                    services.Replace(ServiceDescriptor.Singleton<ITtsService>(speech));
                     services.Replace(ServiceDescriptor.Singleton<IProcessLauncher>(processLauncher));
                     services.Replace(ServiceDescriptor.Singleton<IAudioPlayer>(audioPlayer));
                     services.Replace(ServiceDescriptor.Singleton<IDataStorageService>(
@@ -86,6 +90,7 @@ internal sealed class TestApplicationHost : IAsyncDisposable
                 dataDirectory,
                 httpHandler,
                 announcer,
+                speech,
                 processLauncher,
                 audioPlayer);
         }
@@ -149,38 +154,31 @@ internal sealed class TestApplicationHost : IAsyncDisposable
     }
 }
 
-internal sealed class RecordingAnnouncer : IAccessibilityService, ITtsService
+internal sealed class RecordingAnnouncer : IAccessibleAnnouncer
 {
     private readonly List<string> _messages = new();
-    private FrameworkElement? _currentFocus;
 
     public IReadOnlyList<string> Messages => _messages;
-    public bool IsAvailable => true;
-    public string ActiveBackendName => "Test recorder";
-    public event EventHandler<FocusChangedEventArgs>? FocusChanged;
+    public List<AccessibleAnnouncement> Announcements { get; } = new();
+    public bool SpeechEnabled { get; set; } = true;
 
-    public void Announce(string message) => _messages.Add(message);
-
-    public void SetFocus(FrameworkElement element)
+    public void Announce(AccessibleAnnouncement announcement)
     {
-        var oldFocus = _currentFocus;
-        _currentFocus = element;
-        FocusChanged?.Invoke(this, new FocusChangedEventArgs
-        {
-            OldFocus = oldFocus,
-            NewFocus = element,
-            OldElementName = oldFocus?.Name,
-            NewElementName = element.Name
-        });
+        Announcements.Add(announcement);
+        _messages.Add(announcement.Text);
     }
 
-    public void Navigate(NavigationDirection direction) { }
-    public FrameworkElement? GetCurrentFocus() => _currentFocus;
-    public bool ValidateFocusOrder() => true;
+}
+
+internal sealed class RecordingTtsAdapter : ITtsService
+{
+    public List<string> Messages { get; } = new();
+    public bool IsAvailable => true;
+    public string ActiveBackendName => "Test speech recorder";
 
     public Task SpeakAsync(string text)
     {
-        _messages.Add(text);
+        Messages.Add(text);
         return Task.CompletedTask;
     }
 

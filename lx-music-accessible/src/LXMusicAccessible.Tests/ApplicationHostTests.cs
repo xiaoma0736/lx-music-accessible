@@ -32,7 +32,7 @@ public sealed class ApplicationHostTests
             app.Services.GetRequiredService<MusicHttpClient>());
         Assert.Same(
             app.Announcer,
-            app.Services.GetRequiredService<IAccessibilityService>());
+            app.Services.GetRequiredService<IAccessibleAnnouncer>());
 
         var windows = app.Services.GetRequiredService<ApplicationWindowFactory>();
         Assert.Same(windows, app.Services.GetRequiredService<ApplicationWindowFactory>());
@@ -116,13 +116,14 @@ public sealed class ApplicationHostTests
                 "file-storage",
                 "user_settings.json")));
 
-            var accessibility = app.Services.GetRequiredService<IAccessibilityService>();
+            var accessibility = app.Services.GetRequiredService<IAccessibleAnnouncer>();
             var speech = app.Services.GetRequiredService<ITtsService>();
             Assert.Same(app.Announcer, accessibility);
-            Assert.Same(app.Announcer, speech);
+            Assert.Same(app.Speech, speech);
             accessibility.Announce("host ready");
             await speech.SpeakAsync("speech recorded");
-            Assert.Equal(new[] { "host ready", "speech recorded" }, app.Announcer.Messages);
+            Assert.Equal(new[] { "host ready" }, app.Announcer.Messages);
+            Assert.Equal(new[] { "speech recorded" }, app.Speech.Messages);
 
             var launcher = app.Services.GetRequiredService<IProcessLauncher>();
             Assert.Same(app.ProcessLauncher, launcher);

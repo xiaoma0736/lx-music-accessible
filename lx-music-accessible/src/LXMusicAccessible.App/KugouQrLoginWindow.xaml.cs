@@ -14,16 +14,17 @@ namespace LXMusicAccessible.App;
 public partial class KugouQrLoginWindow : Window
 {
     private readonly IPlaylistImportService _service;
-    private readonly IAccessibilityService _announce;
+    private readonly IAccessibleAnnouncer _announce;
     private readonly KugouQrLoginService _qr;
     private readonly DispatcherTimer _timer;
     private string _qrKey = string.Empty;
     private bool _succeeded;
     private int _failCount;
+    private string _activityId = string.Empty;
 
     public KugouQrLoginWindow(
         IPlaylistImportService service,
-        IAccessibilityService announce,
+        IAccessibleAnnouncer announce,
         KugouQrLoginService qr)
     {
         InitializeComponent();
@@ -37,21 +38,24 @@ public partial class KugouQrLoginWindow : Window
         Loaded += async (_, _) => await LoadQrAsync();
     }
 
-    private void Announce(string message)
+    private void Announce(
+        string message,
+        AnnouncementKind kind = AnnouncementKind.Status,
+        string? activityId = null)
     {
-        try { _announce.Announce(message); }
-        catch { /* 播报失败不阻塞 */ }
+        _announce.Announce(new AccessibleAnnouncement(message, kind, activityId));
     }
 
     private async Task LoadQrAsync()
     {
+        _activityId = $"qr-login:{Guid.NewGuid():N}";
         StatusText.Text = "正在获取二维码，请稍候。";
-        Announce("正在获取酷狗登录二维码，请稍候。");
+        Announce("正在获取酷狗登录二维码，请稍候。", AnnouncementKind.Busy, _activityId);
         var key = await _qr.GetQrKeyAsync();
         if (key == null || string.IsNullOrEmpty(key.QrImage))
         {
             StatusText.Text = "获取二维码失败，请检查网络后按刷新二维码按钮重试。";
-            Announce("获取二维码失败，请检查网络后按刷新二维码按钮重试。");
+            Announce("获取二维码失败，请检查网络后按刷新二维码按钮重试。", AnnouncementKind.Error, _activityId);
             return;
         }
         _qrKey = key.QrKey;
@@ -123,13 +127,13 @@ public partial class KugouQrLoginWindow : Window
             if (acc == null)
             {
                 StatusText.Text = "登录状态保存失败，请重试。";
-                Announce("登录状态保存失败，请重试。");
+                Announce("登录状态保存失败，请重试。", AnnouncementKind.Error, _activityId);
                 _succeeded = false;
                 _timer.Start();
                 return;
             }
             StatusText.Text = $"登录成功：{acc.DisplayName}。";
-            Announce($"登录成功：{acc.DisplayName}。");
+            Announce($"登录成功：{acc.DisplayName}。", AnnouncementKind.Success, _activityId);
             DialogResult = true;
         }
         catch (Exception)
@@ -138,7 +142,7 @@ public partial class KugouQrLoginWindow : Window
             var message = LoginDiagnostics.CreateUserMessage(
                 LoginDiagnosticOutcome.Exception, LoginDiagnosticError.Unexpected, correlationId);
             StatusText.Text = message;
-            Announce(message);
+            Announce(message, AnnouncementKind.Error, _activityId);
             _succeeded = false;
         }
     }

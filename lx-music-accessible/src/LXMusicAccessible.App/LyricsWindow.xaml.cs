@@ -34,13 +34,6 @@ public partial class LyricsWindow : Window
         LyricsList.ScrollIntoView(LyricsList.Items[idx]);
     }
 
-    /// <summary>更新歌词窗口的实时区域（读屏在窗口聚焦时播报）</summary>
-    public void SetLiveRegion(string text)
-    {
-        if (string.IsNullOrEmpty(text)) return;
-        LiveRegion.Text = text;
-    }
-
     /// <summary>设置窗口标题中的歌曲名</summary>
     public void SetTitle(string title)
     {

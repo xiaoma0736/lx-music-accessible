@@ -781,9 +781,9 @@
         </StatusBar>
 
         <!-- 无障碍实时区域：NVDA/讲述人/JAWS 播报用 -->
-        <TextBlock x:Name="LiveRegion" Width="1" Height="1" Opacity="0" IsHitTestVisible="False"
+        <local:AnnouncementTextBlock x:Name="LiveRegion" Width="1" Height="1" Opacity="0" IsHitTestVisible="False"
                    AutomationProperties.LiveSetting="Polite"
-                   AutomationProperties.Name="状态播报" VerticalAlignment="Bottom" HorizontalAlignment="Left"/>
+                   VerticalAlignment="Bottom" HorizontalAlignment="Left"/>
     </Grid>
 </Window>
 

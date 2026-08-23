@@ -40,7 +40,7 @@ public sealed class PlaylistLoginHostTests
             services.Replace(ServiceDescriptor.Singleton<IPlaylistLoginWindowFactory>(sp =>
                 dialogs = new ControlledLoginWindowFactory(
                     sp.GetRequiredService<IPlaylistImportService>(),
-                    sp.GetRequiredService<IAccessibilityService>(),
+                    sp.GetRequiredService<IAccessibleAnnouncer>(),
                     sp.GetRequiredService<IDataService>(),
                     sp.GetRequiredService<MusicHttpClient>(),
                     sp.GetRequiredService<ILogger<WebLoginWindow>>())));
@@ -95,13 +95,13 @@ public sealed class PlaylistLoginHostTests
 
     private sealed class ControlledLoginWindowFactory(
         IPlaylistImportService service,
-        IAccessibilityService announcer,
+        IAccessibleAnnouncer announcer,
         IDataService data,
         MusicHttpClient http,
         ILogger<WebLoginWindow> logger) : IPlaylistLoginWindowFactory, IDisposable
     {
         public IPlaylistImportService Service => service;
-        public IAccessibilityService Announcer => announcer;
+        public IAccessibleAnnouncer Announcer => announcer;
         public IDataService Data => data;
         public MusicHttpClient Http => http;
         public ILogger<WebLoginWindow> Logger => logger;

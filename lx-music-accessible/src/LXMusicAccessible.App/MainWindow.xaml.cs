@@ -19,7 +19,7 @@ namespace LXMusicAccessible.App;
 
 public partial class MainWindow : Window
 {
-    private readonly IAccessibilityService _accessibilityService;
+    private readonly IAccessibleAnnouncer _accessibilityService;
     private readonly IMusicPlayerService _playerService;
     private ListBox? _playbackSourceList;
     private bool _autoPaging;
@@ -134,9 +134,6 @@ public partial class MainWindow : Window
     private ContextMenu _sourceContextMenu = null!;
     private readonly HashSet<ListBox> _externalSongLists = new();
 
-    private readonly System.Windows.Threading.DispatcherTimer _announceTimer =
-        new() { Interval = TimeSpan.FromMilliseconds(350) };
-    private string _pendingAnnounce = string.Empty;
     private readonly System.Windows.Threading.DispatcherTimer _positionTimer =
         new() { Interval = TimeSpan.FromMilliseconds(500) };
     private readonly System.Windows.Threading.DispatcherTimer _clockTimer =
@@ -144,7 +141,7 @@ public partial class MainWindow : Window
 
 
     public MainWindow(
-        IAccessibilityService accessibilityService,
+        IAccessibleAnnouncer accessibilityService,
         IMusicPlayerService playerService,
         IDataService dataService,
         IHotkeyManager hotkeyManager,
@@ -171,11 +168,13 @@ public partial class MainWindow : Window
         _windowFactory = windowFactory;
 
         InitializeComponent();
+        if (_accessibilityService is WpfAccessibleAnnouncer wpfAnnouncer)
+            wpfAnnouncer.Attach(LiveRegion);
+        _accessibilityService.SpeechEnabled = _voiceAnnouncementEnabled;
         PlaylistImportHost.Content = _playlistImportPanel;
         SetLyricsText("暂无歌词");
         StatusText.Text = "正在初始化...";
         InitializePlayMode();
-        _announceTimer.Tick += AnnounceTimer_Tick;
         _positionTimer.Tick += PositionTimer_Tick;
         _clockTimer.Tick += ClockTimer_Tick;
         AssignSongContextMenus();
@@ -242,47 +241,17 @@ public partial class MainWindow : Window
             try { Announce(msg); } catch { }
         }), System.Windows.Threading.DispatcherPriority.Background);
     }
-    /// <summary>
-    /// 无障碍播报（Prism 优先）：语音朗读可用时只走 Prism 朗读（避免读屏双读）；
-    /// 语音不可用/未开启时才写 UIA 实时区域交给读屏接管。
-    /// </summary>
-    private void Announce(string message)
+    private void Announce(
+        string message,
+        AnnouncementKind kind = AnnouncementKind.Status,
+        string? activityId = null,
+        AnnouncementSpeech speech = AnnouncementSpeech.FollowPreference)
     {
-        if (string.IsNullOrEmpty(message)) return;
-
-        try
-        {
-            bool handledByVoice = _voiceAnnouncementEnabled && _ttsService != null && _ttsService.IsAvailable;
-            _ = Dispatcher.BeginInvoke(new Action(() =>
-            {
-                StatusText.Text = message;
-                if (!handledByVoice)
-                {
-                    LiveRegion.Text = message;
-                    _lyricsWindow?.SetLiveRegion(message);
-                }
-            }), System.Windows.Threading.DispatcherPriority.Input);
-
-            if (handledByVoice)
-            {
-                Dispatcher.BeginInvoke(new Action(async () =>
-                {
-                    try { await _ttsService!.SpeakAsync(message); } catch { }
-                }), System.Windows.Threading.DispatcherPriority.Background);
-            }
-        }
-        catch { }
-    }
-
-    private void AnnounceTimer_Tick(object? sender, EventArgs e)
-    {
-        _announceTimer.Stop();
-        if (!string.IsNullOrEmpty(_pendingAnnounce))
-        {
-            var msg = _pendingAnnounce;
-            _pendingAnnounce = string.Empty;
-            Announce(msg);
-        }
+        if (string.IsNullOrWhiteSpace(message)) return;
+        _ = Dispatcher.BeginInvoke(
+            () => StatusText.Text = message,
+            System.Windows.Threading.DispatcherPriority.Input);
+        _accessibilityService.Announce(new AccessibleAnnouncement(message, kind, activityId, speech));
     }
 
 
@@ -962,6 +931,7 @@ public partial class MainWindow : Window
                 if (CloseBehaviorCombo != null)
                     SelectComboByTag(CloseBehaviorCombo, _hideToTrayOnAltF4 ? "hide" : "close");
                 _voiceAnnouncementEnabled = settings.EnableVoiceAnnouncement;
+                _accessibilityService.SpeechEnabled = _voiceAnnouncementEnabled;
             }
 
             // 加载本地收藏与在线收藏（歌单结构）
@@ -1047,6 +1017,7 @@ public partial class MainWindow : Window
     {
         if (!_settingsLoaded) return;
         _voiceAnnouncementEnabled = EnableVoiceAnnouncementCheckBox.IsChecked == true;
+        _accessibilityService.SpeechEnabled = _voiceAnnouncementEnabled;
         Announce(_voiceAnnouncementEnabled ? "已开启语音朗读提示" : "已关闭语音朗读提示");
     }
 
@@ -2461,32 +2432,15 @@ public partial class MainWindow : Window
         return string.IsNullOrWhiteSpace(result) ? "整张专辑" : result;
     }
 
-    /// <summary>歌词专用播报（Prism 优先）：语音朗读可用时只走 Prism，否则写实时区域交读屏，不覆盖状态栏</summary>
+    /// <summary>歌词作为高频进度播报，同一活动只保留最新一句。</summary>
     private void AnnounceLyric(string text)
     {
         if (string.IsNullOrEmpty(text)) return;
-        try
-        {
-            // 歌词朗读独立于“启用语音朗读提示”开关：由“自动朗读当前歌词”控制，TTS 可用即发声
-            bool handledByVoice = _ttsService != null && _ttsService.IsAvailable;
-            _ = Dispatcher.BeginInvoke(new Action(() =>
-            {
-                if (!handledByVoice)
-                {
-                    LiveRegion.Text = text;
-                    _lyricsWindow?.SetLiveRegion(text);
-                }
-            }), System.Windows.Threading.DispatcherPriority.Input);
-
-            if (handledByVoice)
-            {
-                Dispatcher.BeginInvoke(new Action(async () =>
-                {
-                    try { await _ttsService!.SpeakAsync(text); } catch { }
-                }), System.Windows.Threading.DispatcherPriority.Background);
-            }
-        }
-        catch { }
+        _accessibilityService.Announce(new AccessibleAnnouncement(
+            text,
+            AnnouncementKind.Progress,
+            "lyrics",
+            AnnouncementSpeech.Always));
     }
 
     /// <summary>朗读当前歌词行（进入歌词页时调用；无歌词则提示）</summary>
@@ -4485,21 +4439,7 @@ public partial class MainWindow : Window
         _deviceAnnouncePending = true;
         try
         {
-            bool handledByVoice = _voiceAnnouncementEnabled && _ttsService != null && _ttsService.IsAvailable;
-            _ = Dispatcher.BeginInvoke(new Action(() =>
-            {
-                StatusText.Text = message;
-                if (!handledByVoice)
-                {
-                    LiveRegion.Text = message;
-                    _lyricsWindow?.SetLiveRegion(message);
-                }
-            }), System.Windows.Threading.DispatcherPriority.Input);
-
-            if (handledByVoice)
-            {
-                try { await _ttsService!.SpeakQueuedAsync(message); } catch { }
-            }
+            Announce(message, AnnouncementKind.Status, "audio-device", AnnouncementSpeech.Queued);
             // 按文本长度估算朗读时长，期间暂停歌词朗读；无语音时也稍作停留，避免读屏实时区域被下一句歌词覆盖
             await Task.Delay(EstimateSpeakDurationMs(message));
         }
@@ -4585,9 +4525,10 @@ public partial class MainWindow : Window
         _playerService.SetVolume(Math.Clamp(volume, 0.0, 1.0));
         if (announce)
         {
-            _pendingAnnounce = $"音量 {_playerService.Volume * 100:0}%";
-            _announceTimer.Stop();
-            _announceTimer.Start();
+            Announce(
+                $"音量 {_playerService.Volume * 100:0}%",
+                AnnouncementKind.Progress,
+                "volume");
         }
     }
 
@@ -4734,7 +4675,6 @@ public partial class MainWindow : Window
             _lyricsWindow.Close();
         }
         base.OnClosed(e);
-        _announceTimer.Stop();
         _positionTimer.Stop();
         _clockTimer.Stop();
         SaveSettingsOnExit();

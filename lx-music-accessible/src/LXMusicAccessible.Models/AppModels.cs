@@ -40,31 +40,6 @@ public class AccessibilitySettings
 }
 
 /// <summary>
-/// 导航方向
-/// </summary>
-public enum NavigationDirection
-{
-    Up,
-    Down,
-    Left,
-    Right,
-    Next,
-    Previous
-}
-
-/// <summary>
-/// 焦点变化事件参数
-/// </summary>
-public class FocusChangedEventArgs : EventArgs
-{
-    public object? OldFocus { get; set; }
-    public object? NewFocus { get; set; }
-    public NavigationDirection Direction { get; set; }
-    public string? OldElementName { get; set; }
-    public string? NewElementName { get; set; }
-}
-
-/// <summary>
 /// 播放器状态变化事件参数
 /// </summary>
 public class PlayerStateChangedEventArgs : EventArgs

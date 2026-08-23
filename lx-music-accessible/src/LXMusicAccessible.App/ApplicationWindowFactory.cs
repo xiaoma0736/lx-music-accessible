@@ -5,7 +5,7 @@ using LXMusicAccessible.Services;
 namespace LXMusicAccessible.App;
 
 /// <summary>Creates runtime-dependent secondary windows from the Host-owned dependency graph.</summary>
-public sealed class ApplicationWindowFactory(IAccessibilityService announcer)
+public sealed class ApplicationWindowFactory(IAccessibleAnnouncer announcer)
 {
     public UserGuideWindow CreateUserGuide(Window? owner) =>
         WithOwner(new UserGuideWindow(announcer), owner);

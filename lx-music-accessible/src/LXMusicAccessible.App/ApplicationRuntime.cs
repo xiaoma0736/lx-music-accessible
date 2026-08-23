@@ -172,7 +172,7 @@ internal sealed class ProductionStartupInitializer(string dataDirectory) : IStar
         await services.GetRequiredService<DatabaseInitializer>().InitializeAsync();
 
         _ = services.GetRequiredService<IDataService>();
-        _ = services.GetRequiredService<IAccessibilityService>();
+        _ = services.GetRequiredService<IAccessibleAnnouncer>();
         _ = services.GetRequiredService<IMusicPlayerService>();
         _ = services.GetRequiredService<IMusicSourceService>();
         _ = services.GetRequiredService<IDownloadService>();

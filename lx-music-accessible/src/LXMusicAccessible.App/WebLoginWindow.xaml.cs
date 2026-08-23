@@ -21,13 +21,14 @@ namespace LXMusicAccessible.App;
 public partial class WebLoginWindow : Window
 {
     private readonly IPlaylistImportService _service;
-    private readonly IAccessibilityService _announce;
+    private readonly IAccessibleAnnouncer _announce;
     private readonly ILogger<WebLoginWindow> _logger;
     private readonly string _platform;
 
     private DispatcherTimer? _autoDetectTimer;
     private bool _checking;
     private bool _loginSucceeded;
+    private string _loginActivityId = string.Empty;
 
     /// <summary>登录成功后的账号昵称（供父窗口弹窗提示）</summary>
     public string? LastAccountName { get; private set; }
@@ -35,7 +36,7 @@ public partial class WebLoginWindow : Window
     public WebLoginWindow(
         string platform,
         IPlaylistImportService service,
-        IAccessibilityService announce,
+        IAccessibleAnnouncer announce,
         ILogger<WebLoginWindow> logger)
     {
         InitializeComponent();
@@ -48,10 +49,12 @@ public partial class WebLoginWindow : Window
         Closed += OnClosed;
     }
 
-    private void Announce(string message)
+    private void Announce(
+        string message,
+        AnnouncementKind kind = AnnouncementKind.Status,
+        string? activityId = null)
     {
-        try { _announce.Announce(message); }
-        catch { /* 播报失败不阻塞 */ }
+        _announce.Announce(new AccessibleAnnouncement(message, kind, activityId));
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -144,6 +147,7 @@ public partial class WebLoginWindow : Window
         {
             var cookie = await CollectCookiesAsync();
             if (!LooksLoggedIn(_platform, cookie)) return; // 尚未登录，继续等待
+            _loginActivityId = $"web-login:{Guid.NewGuid():N}";
             await TryLoginAsync(cookie, auto: true);
         }
         catch { /* 瞬时错误忽略，继续轮询 */ }
@@ -160,10 +164,11 @@ public partial class WebLoginWindow : Window
         if (_loginSucceeded) return;
         DoneBtn.IsEnabled = false;
         StopAutoDetect(); // 手动检测期间暂停自动检测，避免并发
+        _loginActivityId = $"web-login:{Guid.NewGuid():N}";
         var cookie = string.Empty;
         try
         {
-            Announce("正在检测登录Cookie并校验，请稍候。");
+            Announce("正在检测登录Cookie并校验，请稍候。", AnnouncementKind.Busy, _loginActivityId);
             cookie = await CollectCookiesAsync();
             if (string.IsNullOrEmpty(cookie))
             {
@@ -182,7 +187,7 @@ public partial class WebLoginWindow : Window
                 _logger.LogWarning("网页登录失败：{Diagnostic}",
                     LoginDiagnostics.CreateSafeSummary(_platform, cookie, LoginDiagnosticOutcome.Failure,
                         LoginDiagnosticError.LoginRejected, correlationId));
-                Announce(safeMessage);
+                Announce(safeMessage, AnnouncementKind.Error, _loginActivityId);
 
                 if (reportPath == null)
                 {
@@ -212,7 +217,9 @@ public partial class WebLoginWindow : Window
                 LoginDiagnostics.CreateSafeSummary(_platform, cookie, LoginDiagnosticOutcome.Exception,
                     LoginDiagnosticError.Unexpected, correlationId));
             Announce(LoginDiagnostics.CreateUserMessage(
-                LoginDiagnosticOutcome.Exception, LoginDiagnosticError.Unexpected, correlationId));
+                LoginDiagnosticOutcome.Exception, LoginDiagnosticError.Unexpected, correlationId),
+                AnnouncementKind.Error,
+                _loginActivityId);
         }
         finally
         {
@@ -253,12 +260,12 @@ public partial class WebLoginWindow : Window
         if (auto)
         {
             StatusText.Text = $"已自动检测到登录状态，登录成功：{acc.DisplayName}。正在关闭网页...";
-            Announce($"已自动检测到登录状态，Cookie获取成功，登录账号：{acc.DisplayName}。");
+            Announce($"已自动检测到登录状态，Cookie获取成功，登录账号：{acc.DisplayName}。", AnnouncementKind.Success, _loginActivityId);
         }
         else
         {
             StatusText.Text = $"Cookie获取成功，登录成功：{acc.DisplayName}。正在关闭网页...";
-            Announce($"Cookie获取成功，登录成功：{acc.DisplayName}。");
+            Announce($"Cookie获取成功，登录成功：{acc.DisplayName}。", AnnouncementKind.Success, _loginActivityId);
         }
         DialogResult = true; // 自动关闭网页
         return true;

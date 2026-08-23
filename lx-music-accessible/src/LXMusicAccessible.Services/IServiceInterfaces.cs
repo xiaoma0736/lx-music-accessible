@@ -5,40 +5,43 @@ using System.Windows.Input;
 
 namespace LXMusicAccessible.Services;
 
-/// <summary>
-/// 无障碍服务接口
-/// </summary>
-public interface IAccessibilityService
+/// <summary>通过标准 UI Automation 主通道播报动态状态。</summary>
+public interface IAccessibleAnnouncer
 {
-    /// <summary>
-    /// 发送语音提示
-    /// </summary>
-    void Announce(string message);
+    /// <summary>是否同时使用可选语音适配器；不影响 UI Automation 主通道。</summary>
+    bool SpeechEnabled { get; set; }
 
-    /// <summary>
-    /// 设置焦点到指定元素
-    /// </summary>
-    void SetFocus(System.Windows.FrameworkElement element);
+    /// <summary>提交一条带有优先级、合并键和语音策略的状态播报。</summary>
+    void Announce(AccessibleAnnouncement announcement);
+}
 
-    /// <summary>
-    /// 导航到指定方向
-    /// </summary>
-    void Navigate(NavigationDirection direction);
+/// <summary>可感知状态的语义。</summary>
+public enum AnnouncementKind
+{
+    Status,
+    Busy,
+    Progress,
+    Success,
+    Error
+}
 
-    /// <summary>
-    /// 焦点变化事件
-    /// </summary>
-    event EventHandler<FocusChangedEventArgs>? FocusChanged;
+/// <summary>可选 TTS 的使用方式。</summary>
+public enum AnnouncementSpeech
+{
+    FollowPreference,
+    Always,
+    Queued,
+    None
+}
 
-    /// <summary>
-    /// 获取当前焦点元素
-    /// </summary>
-    System.Windows.FrameworkElement? GetCurrentFocus();
-
-    /// <summary>
-    /// 验证焦点顺序
-    /// </summary>
-    bool ValidateFocusOrder();
+/// <summary>一条可访问状态；ActivityId 用于合并进度并保证终态只播报一次。</summary>
+public readonly record struct AccessibleAnnouncement(
+    string Text,
+    AnnouncementKind Kind = AnnouncementKind.Status,
+    string? ActivityId = null,
+    AnnouncementSpeech Speech = AnnouncementSpeech.FollowPreference)
+{
+    public static implicit operator AccessibleAnnouncement(string text) => new(text);
 }
 
 /// <summary>

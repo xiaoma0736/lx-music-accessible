@@ -59,7 +59,7 @@ public static class ApplicationHost
                 services.AddSingleton<ScriptNetworkClient>();
                 services.AddSingleton<ScriptMusicSource>();
 
-                services.AddSingleton<IAccessibilityService, AccessibilityService>();
+                services.AddSingleton<IAccessibleAnnouncer, WpfAccessibleAnnouncer>();
                 services.AddSingleton<IDataService>(sp =>
                     new DataService(sp.GetRequiredService<ILogger<DataService>>(), dataDir));
                 services.AddSingleton(sp => new DatabaseInitializer(
@@ -87,7 +87,7 @@ public static class ApplicationHost
 
                 services.AddSingleton(sp => new PlaylistImportView(
                     sp.GetRequiredService<IPlaylistImportService>(),
-                    sp.GetRequiredService<IAccessibilityService>(),
+                    sp.GetRequiredService<IAccessibleAnnouncer>(),
                     sp.GetRequiredService<IPlaylistLoginWindowFactory>()));
                 services.AddSingleton<ApplicationWindowFactory>();
                 services.AddSingleton<MainWindow>();

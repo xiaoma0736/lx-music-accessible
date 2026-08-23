@@ -16,7 +16,7 @@ internal interface IPlaylistLoginWindowFactory
 
 internal sealed class PlaylistLoginWindowFactory(
     IPlaylistImportService service,
-    IAccessibilityService announcer,
+    IAccessibleAnnouncer announcer,
     KugouQrLoginService kugouQrLogin,
     ILogger<WebLoginWindow> webLoginLogger) : IPlaylistLoginWindowFactory
 {

@@ -15,7 +15,7 @@ namespace LXMusicAccessible.App;
 public partial class PlaylistImportView : UserControl
 {
     private readonly IPlaylistImportService _service;
-    private readonly IAccessibilityService _announce;
+    private readonly IAccessibleAnnouncer _announce;
     private readonly IPlaylistLoginWindowFactory _loginWindows;
     private string _platform = "netease";
     private bool _loggedIn;
@@ -25,7 +25,7 @@ public partial class PlaylistImportView : UserControl
 
     internal PlaylistImportView(
         IPlaylistImportService service,
-        IAccessibilityService announce,
+        IAccessibleAnnouncer announce,
         IPlaylistLoginWindowFactory loginWindows)
     {
         InitializeComponent();
@@ -62,10 +62,12 @@ public partial class PlaylistImportView : UserControl
     /// <summary>歌曲预览列表（供主窗口全局歌曲操作识别）</summary>
     public ListBox SongList => PlaylistSongsList;
 
-    private void Announce(string message)
+    private void Announce(
+        string message,
+        AnnouncementKind kind = AnnouncementKind.Status,
+        string? activityId = null)
     {
-        try { _announce.Announce(message); }
-        catch { /* 播报失败不阻塞 */ }
+        _announce.Announce(new AccessibleAnnouncement(message, kind, activityId));
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -212,24 +214,27 @@ public partial class PlaylistImportView : UserControl
             return;
         }
         CookieSubmitBtn.IsEnabled = false;
+        var activityId = $"cookie-login:{Guid.NewGuid():N}";
         try
         {
-            Announce("正在校验 Cookie，请稍候。");
+            Announce("正在校验 Cookie，请稍候。", AnnouncementKind.Busy, activityId);
             var acc = await _service.LoginWithCookieAsync(_platform, cookie);
             if (acc == null)
             {
-                Announce("Cookie 无效或已过期，登录失败。请重新登录后复制最新 Cookie。");
+                Announce("Cookie 无效或已过期，登录失败。请重新登录后复制最新 Cookie。", AnnouncementKind.Error, activityId);
                 return;
             }
             CookieArea.Visibility = Visibility.Collapsed;
             await RefreshAccountUiAsync();
-            Announce($"登录成功：{acc.DisplayName}。按 Tab 到“获取我的歌单”按钮。");
+            Announce($"登录成功：{acc.DisplayName}。按 Tab 到“获取我的歌单”按钮。", AnnouncementKind.Success, activityId);
         }
         catch (Exception)
         {
             var correlationId = LoginDiagnostics.CreateCorrelationId();
             Announce(LoginDiagnostics.CreateUserMessage(
-                LoginDiagnosticOutcome.Exception, LoginDiagnosticError.LogoutFailed, correlationId));
+                LoginDiagnosticOutcome.Exception, LoginDiagnosticError.LogoutFailed, correlationId),
+                AnnouncementKind.Error,
+                activityId);
         }
         finally
         {
@@ -323,18 +328,22 @@ public partial class PlaylistImportView : UserControl
 
         ImportSelectedBtn.IsEnabled = false;
         LoadPlaylistsBtn.IsEnabled = false;
+        var activityId = $"playlist-import:{Guid.NewGuid():N}";
         try
         {
             foreach (var remote in selected)
             {
-                var result = await _service.ImportPlaylistAsync(_platform, remote, m => Announce(m));
-                Announce(result.ToString());
+                var result = await _service.ImportPlaylistAsync(
+                    _platform,
+                    remote,
+                    message => Announce(message, AnnouncementKind.Progress, activityId));
+                Announce(result.ToString(), AnnouncementKind.Progress, activityId);
             }
-            Announce("全部歌单导入完成，已保存到“在线收藏”，可切换到“播放列表”标签页查看。");
+            Announce("全部歌单导入完成，已保存到“在线收藏”，可切换到“播放列表”标签页查看。", AnnouncementKind.Success, activityId);
         }
         catch (Exception ex)
         {
-            Announce("导入失败：" + ex.Message);
+            Announce("导入失败：" + ex.Message, AnnouncementKind.Error, activityId);
         }
         finally
         {
@@ -420,14 +429,18 @@ public partial class PlaylistImportView : UserControl
             return;
         }
         ImportThisPlaylistBtn.IsEnabled = false;
+        var activityId = $"playlist-import:{Guid.NewGuid():N}";
         try
         {
-            var result = await _service.ImportPlaylistAsync(_platform, remote, m => Announce(m));
-            Announce(result.ToString());
+            var result = await _service.ImportPlaylistAsync(
+                _platform,
+                remote,
+                message => Announce(message, AnnouncementKind.Progress, activityId));
+            Announce(result.ToString(), AnnouncementKind.Success, activityId);
         }
         catch (Exception ex)
         {
-            Announce("导入失败：" + ex.Message);
+            Announce("导入失败：" + ex.Message, AnnouncementKind.Error, activityId);
         }
         finally
         {

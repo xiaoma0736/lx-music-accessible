@@ -107,6 +107,7 @@ public sealed class ApplicationRuntimeTests
     {
         var httpHandler = new RejectingHttpMessageHandler();
         var announcer = new RecordingAnnouncer();
+        var speech = new RecordingTtsAdapter();
         var audio = new RecordingAudioPlayer();
 
         return ApplicationHost.CreateForTesting(
@@ -119,8 +120,8 @@ public sealed class ApplicationRuntimeTests
                     new MusicHttpClient(sp.GetRequiredService<ILogger<MusicHttpClient>>(), httpHandler)));
                 services.Replace(ServiceDescriptor.Singleton(
                     new ScriptNetworkClient(httpHandler, ResolveFixtureAddressAsync)));
-                services.Replace(ServiceDescriptor.Singleton<IAccessibilityService>(announcer));
-                services.Replace(ServiceDescriptor.Singleton<ITtsService>(announcer));
+                services.Replace(ServiceDescriptor.Singleton<IAccessibleAnnouncer>(announcer));
+                services.Replace(ServiceDescriptor.Singleton<ITtsService>(speech));
                 services.Replace(ServiceDescriptor.Singleton<IAudioPlayer>(audio));
                 services.Replace(ServiceDescriptor.Singleton<IProcessLauncher>(new RecordingProcessLauncher()));
                 services.Replace(ServiceDescriptor.Singleton<IApplicationShell>(shell));
