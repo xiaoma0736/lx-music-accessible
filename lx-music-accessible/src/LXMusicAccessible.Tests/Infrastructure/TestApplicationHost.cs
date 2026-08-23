@@ -106,7 +106,11 @@ internal sealed class TestApplicationHost : IAsyncDisposable
         {
             if (host is not null)
             {
-                try { await host.StopAsync(); } catch { }
+                try { await host.StopAsync(); }
+                catch (Exception exception)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Test host stop failed: {exception.GetType().Name}");
+                }
                 await ApplicationHost.DisposeHostAsync(host);
             }
 

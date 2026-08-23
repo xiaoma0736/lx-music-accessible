@@ -555,7 +555,7 @@ public class KugouMusicService : IMusicApi
     }
 
     /// <summary>解析 rank/song 响应的 authors 字段（对象或数组）</summary>
-    private static string ParseAuthors(JsonElement song)
+    private string ParseAuthors(JsonElement song)
     {
         if (!song.TryGetProperty("authors", out var authors)) return "";
         try
@@ -577,7 +577,10 @@ public class KugouMusicService : IMusicApi
                 if (names.Count > 0) return string.Join("、", names);
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("酷狗作者字段解析失败: {ErrorType}", ex.GetType().Name);
+        }
         return "";
     }
 

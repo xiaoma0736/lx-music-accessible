@@ -90,7 +90,8 @@ public sealed class ZdsrSpeechService : ITtsService, IDisposable
     public void Stop()
     {
         if (!_available) return;
-        try { _stopSpeak!(); } catch { }
+        try { _stopSpeak!(); }
+        catch (Exception ex) { _logger.LogDebug("争渡停止朗读失败: ErrorType={ErrorType}", ex.GetType().Name); }
     }
 
     public void SetRate(double rate)

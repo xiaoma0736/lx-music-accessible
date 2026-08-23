@@ -86,7 +86,10 @@ public class QqPlaylistProvider : IPlaylistImportProvider
                 if (doc.RootElement.TryGetProperty("cookies", out var c) && c.ValueKind == JsonValueKind.String)
                     _http.SetCookies(QqUrl, c.GetString() ?? string.Empty, ".qq.com");
             }
-            catch { /* 损坏的旧数据，忽略 */ }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("QQ 音乐登录状态恢复失败: {ErrorType}", ex.GetType().Name);
+            }
         }
         return Task.CompletedTask;
     }

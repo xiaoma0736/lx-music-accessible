@@ -164,7 +164,10 @@ public sealed class ApplicationRuntime : IAsyncDisposable
         {
             await sourceService.InitializeScriptSourcesAsync(cancellationToken);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Expected: optional initialization ends with the owning startup operation.
+        }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Optional script source initialization failed");

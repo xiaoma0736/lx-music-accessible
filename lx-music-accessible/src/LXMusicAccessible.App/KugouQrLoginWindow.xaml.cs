@@ -4,6 +4,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Services;
+using Serilog;
 
 namespace LXMusicAccessible.App;
 
@@ -79,7 +80,10 @@ public partial class KugouQrLoginWindow : Window
             bmp.EndInit();
             QrImage.Source = bmp;
         }
-        catch { /* 图片解码失败忽略，用户可点刷新重试 */ }
+        catch (Exception ex)
+        {
+            Log.Warning("Kugou QR image decoding failed: ErrorType={ErrorType}", ex.GetType().Name);
+        }
     }
 
     private async Task PollOnceAsync()

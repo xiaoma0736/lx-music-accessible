@@ -95,7 +95,10 @@ public class KugouPlaylistProvider : IPlaylistImportProvider
                 if (doc.RootElement.TryGetProperty("token", out var t) && t.ValueKind == JsonValueKind.String)
                     _token = t.GetString() ?? _token;
             }
-            catch { /* 损坏的旧数据，忽略 */ }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("酷狗登录状态恢复失败: {ErrorType}", ex.GetType().Name);
+            }
         }
         return Task.CompletedTask;
     }

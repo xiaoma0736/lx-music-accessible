@@ -445,7 +445,11 @@ public class MusicHttpClient : IDisposable
                         cookie.Domain = cookieDomain;
                     _cookieContainer.Add(uri, cookie);
                 }
-                catch { /* 单条 Cookie 损坏时跳过，不影响其余 */ }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Cookie entry was rejected: Endpoint={Endpoint}, ErrorType={ErrorType}",
+                        GetSafeEndpoint(uri.AbsoluteUri), ex.GetType().Name);
+                }
             }
         }
         catch (Exception)

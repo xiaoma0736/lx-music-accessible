@@ -958,7 +958,12 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
 
             return await ReloadSourceAsync(s);
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Music source test failed: SourceId={SourceId}, ErrorType={ErrorType}",
+                s.Id, ex.GetType().Name);
+            return false;
+        }
     }
 
     /// <summary>只从已验证的持久化内容重新加载，绝不回源下载。</summary>

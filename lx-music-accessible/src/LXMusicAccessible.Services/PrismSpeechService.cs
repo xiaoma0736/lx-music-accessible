@@ -126,7 +126,8 @@ public class PrismSpeechService : ITtsService, IDisposable
     {
         if (_usePrism && _backend != IntPtr.Zero)
         {
-            try { PrismNative.prism_backend_stop(_backend); } catch { }
+            try { PrismNative.prism_backend_stop(_backend); }
+            catch (Exception ex) { _logger.LogDebug("Prism 停止朗读失败: ErrorType={ErrorType}", ex.GetType().Name); }
         }
         _sapiFallback.Stop();
     }
@@ -259,12 +260,14 @@ public class PrismSpeechService : ITtsService, IDisposable
     {
         if (_backend != IntPtr.Zero)
         {
-            try { PrismNative.prism_backend_free(_backend); } catch { }
+            try { PrismNative.prism_backend_free(_backend); }
+            catch (Exception ex) { _logger.LogDebug("Prism 释放后端失败: ErrorType={ErrorType}", ex.GetType().Name); }
             _backend = IntPtr.Zero;
         }
         if (_context != IntPtr.Zero)
         {
-            try { PrismNative.prism_shutdown(_context); } catch { }
+            try { PrismNative.prism_shutdown(_context); }
+            catch (Exception ex) { _logger.LogDebug("Prism 关闭上下文失败: ErrorType={ErrorType}", ex.GetType().Name); }
             _context = IntPtr.Zero;
         }
         _sapiFallback.Dispose();

@@ -68,7 +68,10 @@ public class NeteasePlaylistProvider : IPlaylistImportProvider
                 if (doc.RootElement.TryGetProperty("cookies", out var c) && c.ValueKind == JsonValueKind.String)
                     _http.SetCookies(NeteaseUrl, c.GetString() ?? string.Empty);
             }
-            catch { /* 损坏的旧数据，忽略 */ }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("网易云登录状态恢复失败: {ErrorType}", ex.GetType().Name);
+            }
         }
         return Task.CompletedTask;
     }

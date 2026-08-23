@@ -150,7 +150,11 @@ public partial class WebLoginWindow : Window
             _loginActivityId = $"web-login:{Guid.NewGuid():N}";
             await TryLoginAsync(cookie, auto: true);
         }
-        catch { /* 瞬时错误忽略，继续轮询 */ }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("网页登录轮询失败: Platform={Platform}, ErrorType={ErrorType}",
+                _platform, ex.GetType().Name);
+        }
         finally
         {
             _checking = false;
@@ -527,7 +531,11 @@ public partial class WebLoginWindow : Window
                     parts.Add($"{c.Name}={c.Value}");
                 }
             }
-            catch { /* 单个域失败忽略 */ }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("Cookie 域读取失败: Platform={Platform}, ErrorType={ErrorType}",
+                    _platform, ex.GetType().Name);
+            }
         }
     }
 

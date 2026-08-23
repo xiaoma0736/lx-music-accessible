@@ -12,6 +12,7 @@ using System.Collections.ObjectModel;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Runtime.InteropServices;
+using Serilog;
 
 namespace LXMusicAccessible.App;
 
@@ -179,7 +180,8 @@ public partial class MainWindow : Window
     {
         Dispatcher.BeginInvoke(new Action(() =>
         {
-            try { RefreshSourceList(); } catch { }
+            try { RefreshSourceList(); }
+            catch (Exception ex) { Log.Warning("Source list refresh failed: ErrorType={ErrorType}", ex.GetType().Name); }
         }), System.Windows.Threading.DispatcherPriority.Background);
     }
 
@@ -190,7 +192,8 @@ public partial class MainWindow : Window
         var msg = "音源更新提示：" + e.Log;
         Dispatcher.BeginInvoke(new Action(() =>
         {
-            try { Announce(msg); } catch { }
+            try { Announce(msg); }
+            catch (Exception ex) { Log.Warning("Script source update announcement failed: ErrorType={ErrorType}", ex.GetType().Name); }
         }), System.Windows.Threading.DispatcherPriority.Background);
     }
     private void Announce(
@@ -2115,7 +2118,11 @@ public partial class MainWindow : Window
                     var qs = await _musicSourceService!.GetQualitiesForSourceAsync(music.Source);
                     lines.Add($"来源支持品质：{(qs.Count > 0 ? string.Join("、", qs.Select(TranslateQuality)) : "未知")}");
                 }
-                catch { lines.Add("来源支持品质：未知"); }
+                catch (Exception ex)
+                {
+                    Log.Warning("Source quality lookup failed: ErrorType={ErrorType}", ex.GetType().Name);
+                    lines.Add("来源支持品质：未知");
+                }
             }
             if (!string.IsNullOrEmpty(music.Duration))
                 lines.Add($"时长：{music.Duration}");
@@ -2878,7 +2885,10 @@ public partial class MainWindow : Window
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Debug("Numpad keyboard hook event could not be decoded: ErrorType={ErrorType}", ex.GetType().Name);
+            }
         }
         return CallNextHookEx(_llKeyboardHook, nCode, wParam, lParam);
     }
@@ -2894,7 +2904,11 @@ public partial class MainWindow : Window
             _llKeyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, _llKeyboardProc,
                 GetModuleHandle(module?.ModuleName), 0);
         }
-        catch { _llKeyboardHook = IntPtr.Zero; }
+        catch (Exception ex)
+        {
+            Log.Warning("Numpad keyboard hook installation failed: ErrorType={ErrorType}", ex.GetType().Name);
+            _llKeyboardHook = IntPtr.Zero;
+        }
     }
 
     private void UninstallNumpadHook()
@@ -3181,7 +3195,10 @@ public partial class MainWindow : Window
             // 按文本长度估算朗读时长，期间暂停歌词朗读；无语音时也稍作停留，避免读屏实时区域被下一句歌词覆盖
             await Task.Delay(EstimateSpeakDurationMs(message));
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Warning("Audio device announcement failed: ErrorType={ErrorType}", ex.GetType().Name);
+        }
         finally
         {
             _lyrics.SpeechSuppressed = false;

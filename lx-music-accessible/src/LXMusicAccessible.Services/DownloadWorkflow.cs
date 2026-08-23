@@ -914,6 +914,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             }
             catch (IOException) when (File.Exists(candidate))
             {
+                // Another file claimed this suffix; continue to the next bounded candidate.
             }
         }
         throw new IOException("Too many conflicting download files.");
@@ -1027,13 +1028,10 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
 
     private static string GetExtension(string url, MediaTypeHeaderValue? contentType)
     {
-        try
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            var extension = Path.GetExtension(new Uri(url).AbsolutePath);
+            var extension = Path.GetExtension(uri.AbsolutePath);
             if (KnownAudioExtensions.Contains(extension)) return extension.ToLowerInvariant();
-        }
-        catch (UriFormatException)
-        {
         }
 
         var mediaType = contentType?.MediaType?.ToLowerInvariant() ?? string.Empty;

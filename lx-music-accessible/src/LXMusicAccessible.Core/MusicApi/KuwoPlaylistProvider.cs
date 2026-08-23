@@ -96,7 +96,10 @@ public class KuwoPlaylistProvider : IPlaylistImportProvider
                         _playlists = JsonSerializer.Deserialize<List<RemotePlaylist>>(json);
                 }
             }
-            catch { /* 损坏的旧数据，忽略 */ }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("酷我登录状态恢复失败: {ErrorType}", ex.GetType().Name);
+            }
         }
         return Task.CompletedTask;
     }

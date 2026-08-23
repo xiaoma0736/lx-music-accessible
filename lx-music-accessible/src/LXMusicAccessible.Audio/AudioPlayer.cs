@@ -328,7 +328,11 @@ public class AudioPlayer : IAudioPlayer
                     if (!info.IsEnabled || string.IsNullOrEmpty(info.Name)) continue;
                     list.Add(new OutputDeviceInfo { Index = i - 2, Name = info.Name });
                 }
-                catch { /* 单个设备枚举失败跳过 */ }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug("音频设备枚举失败: DeviceIndex={DeviceIndex}, ErrorType={ErrorType}",
+                        i, ex.GetType().Name);
+                }
             }
         }
         catch (Exception ex)

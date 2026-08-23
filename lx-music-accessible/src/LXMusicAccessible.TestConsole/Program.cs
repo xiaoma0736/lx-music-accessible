@@ -642,7 +642,8 @@ class Program
             catch (Exception ex) { Console.WriteLine($"  在线播放异常: {ex.Message}"); Check(false, "在线播放"); }
 
             player.Dispose();
-            try { File.Delete(wavPath); } catch { }
+            try { File.Delete(wavPath); }
+            catch (Exception ex) { Console.WriteLine($"  临时音频清理失败: {ex.GetType().Name}"); }
         }
         catch (Exception ex)
         {

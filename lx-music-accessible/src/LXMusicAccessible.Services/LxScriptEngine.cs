@@ -623,14 +623,9 @@ public class LxScriptEngine
             var value = p.GetString()!;
             if (value.Length > ((maxBytes + 2) / 3) * 4)
                 throw new ScriptResourceLimitException("crypto_limit_exceeded");
-            try
-            {
-                var bytes = Convert.FromBase64String(value);
-                if (bytes.Length > maxBytes)
-                    throw new ScriptResourceLimitException("crypto_limit_exceeded");
-                return bytes;
-            }
-            catch (FormatException) { }
+            var buffer = new byte[maxBytes];
+            if (Convert.TryFromBase64String(value, buffer, out var bytesWritten))
+                return buffer[..bytesWritten];
         }
         return Array.Empty<byte>();
     }
@@ -703,14 +698,22 @@ public class LxScriptEngine
     }
 
     /// <summary>RSA 无填充加密（对齐原版：左补零到 128 字节后 raw RSA），兼容任意公钥尺寸</summary>
-    private static byte[] RsaEncryptNoPadding(byte[] data, string keyPem)
+    private byte[] RsaEncryptNoPadding(byte[] data, string keyPem)
     {
         using var rsa = RSA.Create();
         var loaded = false;
-        try { rsa.ImportFromPem(keyPem); loaded = true; } catch { }
+        try { rsa.ImportFromPem(keyPem); loaded = true; }
+        catch (Exception ex) when (ex is ArgumentException or CryptographicException)
+        {
+            _logger.LogDebug("RSA PEM key parsing failed: {ErrorType}", ex.GetType().Name);
+        }
         if (!loaded)
         {
-            try { rsa.FromXmlString(keyPem); loaded = true; } catch { }
+            try { rsa.FromXmlString(keyPem); loaded = true; }
+            catch (Exception ex) when (ex is CryptographicException or System.Xml.XmlException)
+            {
+                _logger.LogDebug("RSA XML key parsing failed: {ErrorType}", ex.GetType().Name);
+            }
         }
         if (!loaded) throw new InvalidOperationException("invalid rsa key");
         var p = rsa.ExportParameters(false);
@@ -1053,7 +1056,7 @@ public class LxScriptEngine
     if (typeof parsed.body === 'string') { try { bodyVal = JSON.parse(parsed.body); } catch (e) { bodyVal = parsed.body; } }
     else { bodyVal = parsed.body; }
     var rawBytes = null;
-    if (parsed.bodyB64) { try { rawBytes = b64ToBytes(parsed.bodyB64); } catch (e) {} }
+    if (parsed.bodyB64) { try { rawBytes = b64ToBytes(parsed.bodyB64); } catch (e) { throw new Error('invalid response body encoding'); } }
     var resp = {
       status: parsed.status, statusCode: parsed.status,
       ok: parsed.status >= 200 && parsed.status < 300,
@@ -1108,7 +1111,8 @@ public class LxScriptEngine
       return new Promise(function (resolve, reject) {
         if (eventName === EVENT_NAMES.inited) { resolve(); return; }
         if (eventName === EVENT_NAMES.updateAlert) {
-          try { if (nativeUpdateAlert) nativeUpdateAlert(JSON.stringify(data || {})); } catch (e) {}
+          try { if (nativeUpdateAlert) nativeUpdateAlert(JSON.stringify(data || {})); }
+          catch (e) { reject(e); return; }
           resolve();
           return;
         }

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -197,11 +198,18 @@ static class Program
             {
                 if (string.Equals(Path.GetFileNameWithoutExtension(f), nameWithoutExt, StringComparison.Ordinal))
                 {
-                    try { File.Delete(f); } catch { }
+                    try { File.Delete(f); }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Shortcut cleanup failed: Operation=delete; ErrorType={ex.GetType().Name}");
+                    }
                 }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Shortcut cleanup failed: Operation=enumerate; ErrorType={ex.GetType().Name}");
+        }
     }
 
     /// <summary>写入“程序和功能”(HKCU) 卸载注册表项，卸载入口指向应用 exe 的 /uninstall 模式</summary>

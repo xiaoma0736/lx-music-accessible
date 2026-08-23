@@ -323,7 +323,10 @@ internal sealed class WpfDesktopIntegration : IDesktopIntegration
                 "已隐藏到系统托盘，音乐继续播放。双击托盘图标可恢复窗口。",
                 System.Windows.Forms.ToolTipIcon.Info);
         }
-        catch (InvalidOperationException) { }
+        catch (InvalidOperationException exception)
+        {
+            Debug.WriteLine($"Tray notification unavailable: {exception.GetType().Name}");
+        }
         return true;
     }
 

@@ -82,7 +82,10 @@ public partial class App : Application
                         Dispatcher.Invoke(() =>
                             _ = _desktopLifecycle.ExecuteAsync(DesktopCommand.Restore));
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        Log.Debug("Single-instance restore dispatch failed: ErrorType={ErrorType}", ex.GetType().Name);
+                    }
                 }
             }
         })
@@ -148,7 +151,11 @@ public partial class App : Application
                         return string.Equals(p.ProcessName, procName, StringComparison.OrdinalIgnoreCase)
                             && p.Id != System.Diagnostics.Process.GetCurrentProcess().Id;
                     }
-                    catch { return false; }
+                    catch (Exception ex)
+                    {
+                        Log.Debug("Uninstall process inspection failed: ErrorType={ErrorType}", ex.GetType().Name);
+                        return false;
+                    }
                 })
                 .ToList();
 
@@ -159,8 +166,10 @@ public partial class App : Application
                 if (r != MessageBoxResult.Yes) return;
                 foreach (var p in running)
                 {
-                    try { p.Kill(); } catch { }
-                    try { p.WaitForExit(3000); } catch { }
+                    try { p.Kill(); }
+                    catch (Exception ex) { Log.Warning("Uninstall could not stop process {ProcessId}: ErrorType={ErrorType}", p.Id, ex.GetType().Name); }
+                    try { p.WaitForExit(3000); }
+                    catch (Exception ex) { Log.Warning("Uninstall wait failed for process {ProcessId}: ErrorType={ErrorType}", p.Id, ex.GetType().Name); }
                 }
             }
 
@@ -228,11 +237,20 @@ public partial class App : Application
                 if (!Directory.Exists(folder)) continue;
                 foreach (var f in Directory.GetFiles(folder, pattern))
                 {
-                    try { File.Delete(f); } catch { }
+                    try { File.Delete(f); }
+                    catch (Exception ex)
+                    {
+                        Log.Warning("Shortcut cleanup failed: Operation={Operation}, FileName={FileName}, ErrorType={ErrorType}",
+                            "delete", Path.GetFileName(f), ex.GetType().Name);
+                    }
                 }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Warning("Shortcut cleanup failed: Operation={Operation}, ErrorType={ErrorType}",
+                "enumerate", ex.GetType().Name);
+        }
     }
 
     private static void DeleteUninstallRegistry()
@@ -242,7 +260,10 @@ public partial class App : Application
             Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(
                 @"Software\Microsoft\Windows\CurrentVersion\Uninstall\LxMusicAccessible", throwOnMissingSubKey: false);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Warning("Uninstall registration cleanup failed: ErrorType={ErrorType}", ex.GetType().Name);
+        }
     }
 
     private static bool DeleteUserData()
@@ -321,13 +342,17 @@ public partial class App : Application
         // Release the single-instance mutex and activation handle, and let the
         // activation-listener thread exit.
         _exiting = true;
-        try { _activateHandle?.Set(); } catch { }
-        try { _activateHandle?.Dispose(); } catch { }
+        try { _activateHandle?.Set(); }
+        catch (Exception ex) { Log.Debug("Activation handle signal failed during exit: ErrorType={ErrorType}", ex.GetType().Name); }
+        try { _activateHandle?.Dispose(); }
+        catch (Exception ex) { Log.Debug("Activation handle disposal failed during exit: ErrorType={ErrorType}", ex.GetType().Name); }
         _activateHandle = null;
         if (_singleInstanceMutex != null)
         {
-            try { _singleInstanceMutex.ReleaseMutex(); } catch { }
-            try { _singleInstanceMutex.Dispose(); } catch { }
+            try { _singleInstanceMutex.ReleaseMutex(); }
+            catch (Exception ex) { Log.Debug("Single-instance mutex release failed during exit: ErrorType={ErrorType}", ex.GetType().Name); }
+            try { _singleInstanceMutex.Dispose(); }
+            catch (Exception ex) { Log.Debug("Single-instance mutex disposal failed during exit: ErrorType={ErrorType}", ex.GetType().Name); }
             _singleInstanceMutex = null;
         }
 

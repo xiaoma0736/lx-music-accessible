@@ -113,11 +113,24 @@ try {
         throw "Static service locator or second container construction found."
     }
 
+    $emptyCatchFiles = @(
+        foreach ($sourceFile in $sourceFiles) {
+            $source = [System.IO.File]::ReadAllText($sourceFile.FullName)
+            if ($source -match '\bcatch\s*(?:\([^{}]*\))?\s*(?:when\s*\([^{}]*\))?\s*\{\s*\}') {
+                $sourceFile.FullName
+            }
+        }
+    )
+    if ($emptyCatchFiles.Count -gt 0) {
+        $emptyCatchFiles | ForEach-Object { Write-Host $_ }
+        throw "Empty catch block found. Record an expected fallback or a redacted failure."
+    }
+
     $mainWindowSource = Get-Content -Raw -LiteralPath (Join-Path $root "src\LXMusicAccessible.App\MainWindow.xaml.cs")
     if ($mainWindowSource -match '\bIServiceProvider\b') {
         throw "MainWindow must not hold or accept a general IServiceProvider."
     }
-    Write-Host "Host composition check passed ($($sourceFiles.Count) C# source files)."
+    Write-Host "Host composition and exception diagnostics checks passed ($($sourceFiles.Count) C# source files)."
 
     Write-Host "== 7/7 Clean release and installer verification =="
     & $releaseBuild

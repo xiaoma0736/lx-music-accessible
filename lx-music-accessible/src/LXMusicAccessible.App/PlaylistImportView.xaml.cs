@@ -4,6 +4,7 @@ using System.Windows.Input;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
+using Serilog;
 
 namespace LXMusicAccessible.App;
 
@@ -72,7 +73,10 @@ public partial class PlaylistImportView : UserControl
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         try { await _service.EnsureAccountsLoadedAsync(); }
-        catch { /* 忽略恢复失败 */ }
+        catch (Exception ex)
+        {
+            Log.Warning("Playlist account restoration failed: ErrorType={ErrorType}", ex.GetType().Name);
+        }
         await RefreshAccountUiAsync();
         // 不再在此处抢焦点：主窗口切到本标签时会统一把焦点放到 FirstFocusable（平台选择按钮），
         // 否则 TabControl 每次切到本页触发 Loaded，会把焦点抢到“获取我的歌单”按钮。

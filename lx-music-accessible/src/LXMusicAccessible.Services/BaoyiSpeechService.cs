@@ -88,7 +88,8 @@ public sealed class BaoyiSpeechService : ITtsService, IDisposable
     public void Stop()
     {
         if (!_available) return;
-        try { BoyCtrlStopSpeaking2(true, SlaveName); } catch { }
+        try { BoyCtrlStopSpeaking2(true, SlaveName); }
+        catch (Exception ex) { _logger.LogDebug("保益停止朗读失败: ErrorType={ErrorType}", ex.GetType().Name); }
     }
 
     public void SetRate(double rate)
@@ -108,7 +109,8 @@ public sealed class BaoyiSpeechService : ITtsService, IDisposable
     {
         if (_initialized)
         {
-            try { BoyCtrlUninitialize(); } catch { }
+            try { BoyCtrlUninitialize(); }
+            catch (Exception ex) { _logger.LogDebug("保益释放失败: ErrorType={ErrorType}", ex.GetType().Name); }
             _initialized = false;
         }
     }

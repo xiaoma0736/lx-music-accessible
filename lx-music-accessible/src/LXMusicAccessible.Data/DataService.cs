@@ -449,7 +449,10 @@ public class DatabaseInitializer
                         AddedDate = DateTime.Now.ToString("o")
                     });
             }
-            catch { /* 跳过无法解析的历史收藏 */ }
+            catch (JsonException ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Legacy favorite migration skipped invalid JSON: {ex.GetType().Name}");
+            }
         }
         if (order > 0)
             System.Diagnostics.Debug.WriteLine($"已迁移 {order} 条旧收藏到在线默认收藏");
@@ -540,11 +543,7 @@ public class DataService : IDataService
     }
 
     /// <summary>把标签列表序列化为数据库文本（JSON 数组）</summary>
-    private static string SerializeTags(List<string> tags)
-    {
-        try { return JsonSerializer.Serialize(tags ?? new List<string>()); }
-        catch { return string.Empty; }
-    }
+    private static string SerializeTags(List<string> tags) => JsonSerializer.Serialize(tags ?? []);
 
     public async Task<PlaylistSnapshotReplacement> ReplacePlaylistSnapshotAsync(
         Playlist playlist,
