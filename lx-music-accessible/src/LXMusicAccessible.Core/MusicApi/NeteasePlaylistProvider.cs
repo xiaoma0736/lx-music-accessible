@@ -206,9 +206,11 @@ public class NeteasePlaylistProvider : IPlaylistImportProvider
                 return (resp.Profile.UserId.ToString(), resp.Profile.Nickname ?? string.Empty);
             return null;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "网易云登录状态校验失败");
+            _logger.LogError("网易云登录状态校验失败：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary(PlatformId, string.Empty, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
             return null;
         }
     }

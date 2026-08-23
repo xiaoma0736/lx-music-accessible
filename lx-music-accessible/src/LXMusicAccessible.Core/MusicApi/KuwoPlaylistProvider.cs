@@ -62,9 +62,11 @@ public class KuwoPlaylistProvider : IPlaylistImportProvider
         {
             return Task.FromResult<AccountInfo?>(BuildAccountInfo());
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogWarning(ex, "酷我 Cookie 登录失败");
+            _logger.LogWarning("酷我 Cookie 登录失败：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary(PlatformId, cleaned, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
             _http.ClearCookies();
             return Task.FromResult<AccountInfo?>(null);
         }
@@ -200,9 +202,11 @@ public class KuwoPlaylistProvider : IPlaylistImportProvider
             }
             return result.Count > 0 ? result : null;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogWarning(ex, "酷我 nplserver 获取用户歌单失败: uid={Uid}", _uid);
+            _logger.LogWarning("酷我 nplserver 获取用户歌单失败：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary(PlatformId, string.Empty, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
             return null;
         }
     }

@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
 
@@ -208,9 +209,11 @@ public partial class PlaylistImportView : UserControl
             await RefreshAccountUiAsync();
             Announce($"登录成功：{acc.DisplayName}。按 Tab 到“获取我的歌单”按钮。");
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Announce("Cookie 登录失败：" + ex.Message);
+            var correlationId = LoginDiagnostics.CreateCorrelationId();
+            Announce(LoginDiagnostics.CreateUserMessage(
+                LoginDiagnosticOutcome.Exception, LoginDiagnosticError.LogoutFailed, correlationId));
         }
         finally
         {
@@ -226,9 +229,11 @@ public partial class PlaylistImportView : UserControl
         {
             await _service.LogoutAsync(_platform);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Announce("退出登录失败：" + ex.Message);
+            var correlationId = LoginDiagnostics.CreateCorrelationId();
+            Announce(LoginDiagnostics.CreateUserMessage(
+                LoginDiagnosticOutcome.Exception, LoginDiagnosticError.Unexpected, correlationId));
             return;
         }
         _playlists.Clear();

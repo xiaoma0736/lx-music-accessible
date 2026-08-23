@@ -132,10 +132,13 @@ public partial class KugouQrLoginWindow : Window
             Announce($"登录成功：{acc.DisplayName}。");
             DialogResult = true;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            StatusText.Text = "登录失败：" + ex.Message;
-            Announce("登录失败：" + ex.Message);
+            var correlationId = LoginDiagnostics.CreateCorrelationId();
+            var message = LoginDiagnostics.CreateUserMessage(
+                LoginDiagnosticOutcome.Exception, LoginDiagnosticError.Unexpected, correlationId);
+            StatusText.Text = message;
+            Announce(message);
             _succeeded = false;
         }
     }

@@ -65,9 +65,11 @@ public class KugouPlaylistProvider : IPlaylistImportProvider
         {
             await GetMyPlaylistsAsync();
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogWarning(ex, "酷狗 Cookie 已具备登录凭据，但歌单校验接口异常，继续完成登录");
+            _logger.LogWarning("酷狗 Cookie 已具备登录凭据，但歌单校验接口异常，继续完成登录：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary(PlatformId, cleaned, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
         }
         return BuildAccountInfo();
     }
@@ -145,8 +147,8 @@ public class KugouPlaylistProvider : IPlaylistImportProvider
                 throw new InvalidOperationException("获取歌单失败：网络异常");
             if (resp.TryGetProperty("error_code", out var ec) && ec.ValueKind == System.Text.Json.JsonValueKind.Number && ec.GetInt32() != 0)
             {
-                var snippet = resp.GetRawText().Length > 250 ? resp.GetRawText()[..250] : resp.GetRawText();
-                _logger.LogWarning("酷狗云歌单接口返回 error_code={Code}，userid={Uid} tokenLen={TokenLen}：{Resp}", ec.GetInt32(), _uid, _token?.Length ?? 0, snippet);
+                _logger.LogWarning("酷狗云歌单接口返回 error_code={Code}，tokenLen={TokenLen}",
+                    ec.GetInt32(), _token?.Length ?? 0);
                 throw new InvalidOperationException("酷狗登录已失效，请重新粘贴Cookie登录");
             }
             var lists = FindPlaylistArray(resp);
@@ -168,9 +170,11 @@ public class KugouPlaylistProvider : IPlaylistImportProvider
             }
         }
         catch (InvalidOperationException) { throw; }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogWarning(ex, "酷狗拉取我的歌单失败 type={Type}", type);
+            _logger.LogWarning("酷狗拉取我的歌单失败 type={Type}：{Diagnostic}", type,
+                LoginDiagnostics.CreateSafeSummary(PlatformId, string.Empty, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
         }
         return result;
     }

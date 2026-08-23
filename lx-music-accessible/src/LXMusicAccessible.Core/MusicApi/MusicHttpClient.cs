@@ -65,7 +65,7 @@ public class MusicHttpClient : IDisposable
                 fullUrl += $"?{queryString}";
             }
 
-            _logger.LogInformation("GET请求: {Url}", fullUrl);
+            _logger.LogInformation("GET请求: {Endpoint}", GetSafeEndpoint(fullUrl));
 
             var request = new HttpRequestMessage(HttpMethod.Get, fullUrl);
             if (headers != null)
@@ -80,12 +80,12 @@ public class MusicHttpClient : IDisposable
             response.EnsureSuccessStatusCode();
 
             var content = await response.Content.ReadAsStringAsync();
-            _logger.LogInformation("GET请求成功: {Url}, 返回数据长度: {Length}", fullUrl, content.Length);
+            _logger.LogInformation("GET请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(fullUrl), content.Length);
             return content;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "GET请求失败: {Url}", url);
+            _logger.LogError("GET请求失败: {Endpoint}, ErrorCode=HttpRequestFailed", GetSafeEndpoint(url));
             throw;
         }
     }
@@ -97,7 +97,7 @@ public class MusicHttpClient : IDisposable
     {
         try
         {
-            _logger.LogInformation("GET请求: {Url}", url);
+            _logger.LogInformation("GET请求: {Endpoint}", GetSafeEndpoint(url));
             
             var request = new HttpRequestMessage(HttpMethod.Get, url);
             if (headers != null)
@@ -114,12 +114,12 @@ public class MusicHttpClient : IDisposable
             var content = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<T>(content, _jsonOptions);
             
-            _logger.LogInformation("GET请求成功: {Url}, 返回数据长度: {Length}", url, content.Length);
+            _logger.LogInformation("GET请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(url), content.Length);
             return result;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "GET请求失败: {Url}", url);
+            _logger.LogError("GET请求失败: {Endpoint}, ErrorCode=HttpRequestFailed", GetSafeEndpoint(url));
             throw;
         }
     }
@@ -131,7 +131,7 @@ public class MusicHttpClient : IDisposable
     {
         try
         {
-            _logger.LogInformation("POST请求: {Url}", url);
+            _logger.LogInformation("POST请求: {Endpoint}", GetSafeEndpoint(url));
             
             var request = new HttpRequestMessage(HttpMethod.Post, url);
             if (headers != null)
@@ -154,12 +154,12 @@ public class MusicHttpClient : IDisposable
             var content = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<T>(content, _jsonOptions);
             
-            _logger.LogInformation("POST请求成功: {Url}, 返回数据长度: {Length}", url, content.Length);
+            _logger.LogInformation("POST请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(url), content.Length);
             return result;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "POST请求失败: {Url}", url);
+            _logger.LogError("POST请求失败: {Endpoint}, ErrorCode=HttpRequestFailed", GetSafeEndpoint(url));
             throw;
         }
     }
@@ -171,7 +171,7 @@ public class MusicHttpClient : IDisposable
     {
         try
         {
-            _logger.LogInformation("POST表单请求: {Url}", url);
+            _logger.LogInformation("POST表单请求: {Endpoint}", GetSafeEndpoint(url));
             
             var request = new HttpRequestMessage(HttpMethod.Post, url);
             if (headers != null)
@@ -190,12 +190,12 @@ public class MusicHttpClient : IDisposable
             var content = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<T>(content, _jsonOptions);
             
-            _logger.LogInformation("POST表单请求成功: {Url}, 返回数据长度: {Length}", url, content.Length);
+            _logger.LogInformation("POST表单请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(url), content.Length);
             return result;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "POST表单请求失败: {Url}", url);
+            _logger.LogError("POST表单请求失败: {Endpoint}, ErrorCode=HttpRequestFailed", GetSafeEndpoint(url));
             throw;
         }
     }
@@ -211,7 +211,7 @@ public class MusicHttpClient : IDisposable
     {
         try
         {
-            _logger.LogInformation("weapi POST: {Url}", url);
+            _logger.LogInformation("weapi POST: {Endpoint}", GetSafeEndpoint(url));
 
             var crypto = NeteaseCrypto.Weapi(data);
 
@@ -226,9 +226,9 @@ public class MusicHttpClient : IDisposable
             var content = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "weapi POST 失败: {Url}", url);
+            _logger.LogError("weapi POST 失败: {Endpoint}, ErrorCode=HttpRequestFailed", GetSafeEndpoint(url));
             throw;
         }
     }
@@ -241,7 +241,7 @@ public class MusicHttpClient : IDisposable
         try
         {
             var url = "http://interface.music.163.com/eapi/batch";
-            _logger.LogInformation("eapi POST: {Path}", path);
+            _logger.LogInformation("eapi POST: {Endpoint}", GetSafeEndpoint(path));
 
             var crypto = NeteaseCrypto.Eapi(path, data);
 
@@ -256,9 +256,9 @@ public class MusicHttpClient : IDisposable
             var content = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "eapi POST 失败: {Path}", path);
+            _logger.LogError("eapi POST 失败: {Endpoint}, ErrorCode=HttpRequestFailed", GetSafeEndpoint(path));
             throw;
         }
     }
@@ -286,9 +286,9 @@ public class MusicHttpClient : IDisposable
             var content = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "linuxapi POST 失败");
+            _logger.LogError("linuxapi POST 失败: ErrorCode=HttpRequestFailed");
             throw;
         }
     }
@@ -300,7 +300,7 @@ public class MusicHttpClient : IDisposable
     {
         try
         {
-            _logger.LogInformation("JSON POST: {Url}", url);
+            _logger.LogInformation("JSON POST: {Endpoint}", GetSafeEndpoint(url));
 
             var request = new HttpRequestMessage(HttpMethod.Post, url);
             AddCommonHeaders(request, headers);
@@ -314,9 +314,9 @@ public class MusicHttpClient : IDisposable
             var content = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "JSON POST 失败: {Url}", url);
+            _logger.LogError("JSON POST 失败: {Endpoint}, ErrorCode=HttpRequestFailed", GetSafeEndpoint(url));
             throw;
         }
     }
@@ -328,7 +328,7 @@ public class MusicHttpClient : IDisposable
     {
         try
         {
-            _logger.LogInformation("RAW JSON POST: {Url}", url);
+            _logger.LogInformation("RAW JSON POST: {Endpoint}", GetSafeEndpoint(url));
 
             var request = new HttpRequestMessage(HttpMethod.Post, url);
             AddCommonHeaders(request, headers);
@@ -341,9 +341,9 @@ public class MusicHttpClient : IDisposable
             var content = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "RAW JSON POST 失败: {Url}", url);
+            _logger.LogError("RAW JSON POST 失败: {Endpoint}, ErrorCode=HttpRequestFailed", GetSafeEndpoint(url));
             throw;
         }
     }
@@ -382,9 +382,9 @@ public class MusicHttpClient : IDisposable
                 catch { /* 单条 Cookie 损坏时跳过，不影响其余 */ }
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogWarning(ex, "设置 Cookie 失败: {Uri}", uri);
+            _logger.LogWarning("设置 Cookie 失败: {Endpoint}, ErrorCode=CookieWriteFailed", GetSafeEndpoint(uri.AbsoluteUri));
         }
     }
 
@@ -396,9 +396,9 @@ public class MusicHttpClient : IDisposable
         {
             return _cookieContainer.GetCookieHeader(uri);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogWarning(ex, "读取 Cookie 失败: {Uri}", uri);
+            _logger.LogWarning("读取 Cookie 失败: {Endpoint}, ErrorCode=CookieReadFailed", GetSafeEndpoint(uri.AbsoluteUri));
             return string.Empty;
         }
     }
@@ -428,6 +428,17 @@ public class MusicHttpClient : IDisposable
     public void SetUserAgent(string userAgent)
     {
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+    }
+
+    private static string GetSafeEndpoint(string url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            var port = uri.IsDefaultPort ? string.Empty : $":{uri.Port}";
+            return $"{uri.Scheme}://{uri.IdnHost}{port}";
+        }
+
+        return "relative";
     }
 
     /// <summary>

@@ -2,10 +2,11 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
+using LXMusicAccessible.Core.MusicApi;
+using LXMusicAccessible.Data;
 using LXMusicAccessible.Services;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using System.Text;
 using LXMusicAccessible.Models;
 
 namespace LXMusicAccessible.App;
@@ -66,10 +67,15 @@ public partial class WebLoginWindow : Window
             Announce($"正在打开{GetPlatformName(_platform)}登录页面，请稍候。");
             StartAutoDetect();
         }
-        catch (Exception ex)
+        catch (Exception)
         {
+            var correlationId = LoginDiagnostics.CreateCorrelationId();
             StatusText.Text = "网页组件初始化失败";
-            Announce($"网页登录组件初始化失败：{ex.Message}。请改用粘贴Cookie登录。");
+            _logger.LogWarning("网页登录组件初始化失败：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary(_platform, string.Empty,
+                    LoginDiagnosticOutcome.Exception, LoginDiagnosticError.BrowserUnavailable, correlationId));
+            Announce(LoginDiagnostics.CreateUserMessage(
+                LoginDiagnosticOutcome.Exception, LoginDiagnosticError.BrowserUnavailable, correlationId));
         }
     }
 
@@ -150,10 +156,11 @@ public partial class WebLoginWindow : Window
         if (_loginSucceeded) return;
         DoneBtn.IsEnabled = false;
         StopAutoDetect(); // 手动检测期间暂停自动检测，避免并发
+        var cookie = string.Empty;
         try
         {
             Announce("正在检测登录Cookie并校验，请稍候。");
-            var cookie = await CollectCookiesAsync();
+            cookie = await CollectCookiesAsync();
             if (string.IsNullOrEmpty(cookie))
             {
                 Announce("尚未获取到登录Cookie，请确认已在页面中完成登录后再试。");
@@ -162,24 +169,46 @@ public partial class WebLoginWindow : Window
             var ok = await TryLoginAsync(cookie, auto: false);
             if (!ok)
             {
-                var missing = GetMissingRequiredCookies(_platform, cookie);
-                var msg = missing.Length > 0
-                    ? $"Cookie 校验失败，缺少关键Cookie：{string.Join("、", missing)}。"
-                    : "Cookie 校验失败，Cookie 不完整或已失效。";
-                var hint = missing.Length > 0
-                    ? "请确认已在页面中完成平台登录，并已建立平台会话后再试。"
-                    : "请确认已在页面中完成登录后再试。";
-                var reportPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cookie调试报告.txt");
-                WriteCookieDebugReport(_platform, cookie, success: false, msg + hint);
-                Announce(msg + hint);
-                MessageBox.Show(this,
-                    msg + "\n\n" + hint + "\n\n采集到的 Cookie 详情已写入程序目录下的 Cookie调试报告.txt，可发给开发者排查。",
-                    "获取Cookie失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                var correlationId = LoginDiagnostics.CreateCorrelationId();
+                var reportPath = LoginDiagnosticReportStore.Write(
+                    System.IO.Path.Combine(AppDataPaths.ResolveDataDir(), "logs"), _platform, cookie,
+                    LoginDiagnosticOutcome.Failure, LoginDiagnosticError.LoginRejected, correlationId);
+                var safeMessage = LoginDiagnostics.CreateUserMessage(
+                    LoginDiagnosticOutcome.Failure, LoginDiagnosticError.LoginRejected, correlationId);
+                _logger.LogWarning("网页登录失败：{Diagnostic}",
+                    LoginDiagnostics.CreateSafeSummary(_platform, cookie, LoginDiagnosticOutcome.Failure,
+                        LoginDiagnosticError.LoginRejected, correlationId));
+                Announce(safeMessage);
+
+                if (reportPath == null)
+                {
+                    MessageBox.Show(this, safeMessage + "\n\n诊断报告保存失败。",
+                        "获取Cookie失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                else
+                {
+                    var delete = MessageBox.Show(this,
+                        safeMessage + $"\n\n诊断报告已保存到：\n{reportPath}" +
+                        "\n\n报告不应包含 Cookie、令牌、授权头或其他凭据。是否立即删除该报告？",
+                        "获取Cookie失败", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+                    if (delete == MessageBoxResult.Yes && !LoginDiagnosticReportStore.Delete(reportPath))
+                        MessageBox.Show(this,
+                            $"报告删除失败，请在文件资源管理器中手动删除：\n{reportPath}",
+                            "删除诊断报告失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Announce("获取Cookie失败：" + ex.Message);
+            var correlationId = LoginDiagnostics.CreateCorrelationId();
+            LoginDiagnosticReportStore.Write(
+                System.IO.Path.Combine(AppDataPaths.ResolveDataDir(), "logs"), _platform, cookie,
+                LoginDiagnosticOutcome.Exception, LoginDiagnosticError.Unexpected, correlationId);
+            _logger.LogWarning("网页登录异常：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary(_platform, cookie, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, correlationId));
+            Announce(LoginDiagnostics.CreateUserMessage(
+                LoginDiagnosticOutcome.Exception, LoginDiagnosticError.Unexpected, correlationId));
         }
         finally
         {
@@ -204,21 +233,14 @@ public partial class WebLoginWindow : Window
             var remote = ToRemotePlaylists(br);
             acc = await _service.LoginWithBrowserResultAsync(_platform, cookie, br?.DisplayName, remote);
             if (acc != null && br != null && !br.Ok && remote == null)
-                _logger.LogWarning("酷我登录成功但未能在页面内获取个人歌单，接口探测结果：{Results}",
-                    br.Results == null ? "(无)" : string.Join(" | ", br.Results.Select(r => $"{r.Path}:{r.Status}:{(r.Err ?? (r.Body ?? "")[..Math.Min(60, (r.Body ?? "").Length)])}")));
+                _logger.LogWarning("酷我登录成功但未能在页面内获取个人歌单，接口状态：{Statuses}",
+                    br.Results == null ? "(无)" : string.Join(",", br.Results.Select(r => r.Status?.ToString() ?? "unknown")));
         }
         else
         {
             acc = await _service.LoginWithCookieAsync(_platform, cookie);
         }
-        if (acc == null)
-        {
-            var names = GetCookieNames(cookie);
-            var missing = GetMissingRequiredCookies(_platform, cookie);
-            var missingText = missing.Length > 0 ? "，缺少关键Cookie：" + string.Join("、", missing) : "，Cookie不完整或已失效";
-            _logger.LogWarning("网页登录Cookie校验失败，平台={Platform}，采集到Cookie：{Names}{Missing}", _platform, names, missingText);
-            return false;
-        }
+        if (acc == null) return false;
 
         _loginSucceeded = true;
         LastAccountName = acc.DisplayName;
@@ -294,9 +316,11 @@ public partial class WebLoginWindow : Window
             _logger.LogWarning("酷我页面内拉取个人歌单超时");
             return null;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogWarning(ex, "酷我页面内拉取个人歌单失败");
+            _logger.LogWarning("酷我页面内拉取个人歌单失败：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary(_platform, string.Empty, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
             return null;
         }
     }
@@ -441,9 +465,11 @@ public partial class WebLoginWindow : Window
         // 来源2：CookieManager 按域名（与来源1合并，避免任一来源遗漏关键登录令牌）
         await CollectFromCookieManagerAsync(parts, seen);
 
-        _logger.LogInformation("网页登录采集到 {Count} 个 Cookie：{Names}",
-            parts.Count, string.Join(", ", parts.Select(p => p.Contains('=') ? p[..p.IndexOf('=')] : p)));
-        return string.Join("; ", parts);
+        var cookie = string.Join("; ", parts);
+        _logger.LogInformation("网页登录 Cookie 采集完成：{Diagnostic}",
+            LoginDiagnostics.CreateSafeSummary(_platform, cookie, LoginDiagnosticOutcome.Success,
+                LoginDiagnosticError.None, LoginDiagnostics.CreateCorrelationId()));
+        return cookie;
     }
 
     private async Task CollectFromDevToolsAsync(List<string> parts, HashSet<string> seen)
@@ -467,9 +493,11 @@ public partial class WebLoginWindow : Window
                 parts.Add($"{name}={value}");
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogWarning(ex, "DevTools 获取 Cookie 失败");
+            _logger.LogWarning("DevTools 获取 Cookie 失败：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary(_platform, string.Empty, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.CookieCollectionFailed, LoginDiagnostics.CreateCorrelationId()));
         }
     }
 
@@ -515,33 +543,6 @@ public partial class WebLoginWindow : Window
         return string.Empty;
     }
 
-    /// <summary>各平台校验登录必需的关键 Cookie 名称（用于诊断）</summary>
-    private static string[] GetRequiredCookieNames(string platform) => platform switch
-    {
-        "netease" => new[] { "MUSIC_U" },
-        "qq" => new[] { "uin", "qm_keyst", "qqmusic_key" },
-        "kg" => new[] { "KugooID", "t" },
-        "kw" => new[] { "userid", "websid" },
-        _ => Array.Empty<string>()
-    };
-
-    /// <summary>从 Cookie 字符串中找出缺失的关键 Cookie 名称（用于诊断提示）</summary>
-    private static string[] GetMissingRequiredCookies(string platform, string cookie)
-    {
-        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var part in cookie.Split(';', StringSplitOptions.TrimEntries))
-        {
-            var eq = part.IndexOf('=');
-            if (eq <= 0) continue;
-            var name = part[..eq].Trim();
-            if (!values.ContainsKey(name))
-                values[name] = part[(eq + 1)..].Trim();
-        }
-        return GetRequiredCookieNames(platform)
-            .Where(r => !values.TryGetValue(r, out var v) || string.IsNullOrEmpty(v))
-            .ToArray();
-    }
-
     /// <summary>快速判断 Cookie 是否已呈现“已登录”特征（避免未登录时频繁联网校验）</summary>
     private static bool LooksLoggedIn(string platform, string cookie)
     {
@@ -579,42 +580,6 @@ public partial class WebLoginWindow : Window
         }
 
         return string.Empty;
-    }
-
-    private static string GetCookieNames(string cookie) =>
-        string.Join(", ", cookie.Split(';', StringSplitOptions.TrimEntries)
-            .Select(p => p.Contains('=') ? p[..p.IndexOf('=')].Trim() : string.Empty)
-            .Where(n => !string.IsNullOrEmpty(n)));
-
-    /// <summary>把采集到的 Cookie 详情写入程序目录下的调试报告，便于排查登录问题</summary>
-    private void WriteCookieDebugReport(string platform, string cookie, bool success, string detail)
-    {
-        try
-        {
-            var file = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cookie调试报告.txt");
-            var sb = new StringBuilder();
-            sb.AppendLine("=== 落雪音乐网页登录 Cookie 调试报告 ===");
-            sb.AppendLine($"时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine($"平台：{GetPlatformName(platform)}");
-            sb.AppendLine($"结果：{(success ? "成功" : "失败")} {detail}");
-            sb.AppendLine();
-            sb.AppendLine("采集到的 Cookie：");
-            foreach (var part in cookie.Split(';', StringSplitOptions.TrimEntries))
-            {
-                if (string.IsNullOrEmpty(part)) continue;
-                var eq = part.IndexOf('=');
-                if (eq <= 0) { sb.AppendLine("  " + part); continue; }
-                var name = part[..eq].Trim();
-                var value = part[(eq + 1)..].Trim();
-                var preview = value.Length > 24 ? value[..24] + "..." : value;
-                sb.AppendLine($"  {name} = [{value.Length}字符] {preview}");
-            }
-            sb.AppendLine();
-            var missing = GetMissingRequiredCookies(platform, cookie);
-            sb.AppendLine($"缺少的关键Cookie：{(missing.Length > 0 ? string.Join("、", missing) : "无")}");
-            System.IO.File.WriteAllText(file, sb.ToString(), System.Text.Encoding.UTF8);
-        }
-        catch { /* 写报告失败不影响主流程 */ }
     }
 
     // ============ 辅助 ============

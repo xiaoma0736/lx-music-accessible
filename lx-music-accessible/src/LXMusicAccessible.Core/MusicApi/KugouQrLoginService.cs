@@ -86,7 +86,7 @@ public class KugouQrLoginService
             var root = doc.RootElement;
             if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
             {
-                _logger.LogWarning("酷狗获取二维码失败：{Resp}", resp.Length > 200 ? resp[..200] : resp);
+                _logger.LogWarning("酷狗获取二维码失败：ErrorCode=InvalidResponse");
                 return null;
             }
             var key = GetString(data, "qrcode");
@@ -94,9 +94,11 @@ public class KugouQrLoginService
             if (string.IsNullOrEmpty(key)) return null;
             return new KugouQrKeyResult { QrKey = key, QrImage = img };
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "酷狗获取二维码异常");
+            _logger.LogError("酷狗获取二维码异常：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary("kg", string.Empty, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
             return null;
         }
     }
@@ -136,9 +138,11 @@ public class KugouQrLoginService
             if (result.Status == 0)
                 result.Error = "二维码已过期";
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogError(ex, "酷狗轮询扫码状态异常");
+            _logger.LogError("酷狗轮询扫码状态异常：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary("kg", string.Empty, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
             result.Error = "网络异常";
         }
         return result;

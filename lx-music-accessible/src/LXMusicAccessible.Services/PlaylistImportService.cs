@@ -91,9 +91,9 @@ public class PlaylistImportService : IPlaylistImportService
                     await p.LoadAccountAsync(acc);
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                _logger.LogError(ex, "恢复账号 {Platform} 失败", p.PlatformId);
+                _logger.LogError("恢复账号 {Platform} 失败，ErrorCode=AccountRestoreFailed", p.PlatformId);
             }
         }
     }

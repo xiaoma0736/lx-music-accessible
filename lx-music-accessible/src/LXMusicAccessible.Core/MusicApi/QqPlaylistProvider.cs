@@ -63,9 +63,11 @@ public class QqPlaylistProvider : IPlaylistImportProvider
         {
             await GetMyPlaylistsAsync();
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogWarning(ex, "QQ Cookie 已具备登录密钥，但歌单校验接口异常，继续完成登录");
+            _logger.LogWarning("QQ Cookie 已具备登录密钥，但歌单校验接口异常，继续完成登录：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary(PlatformId, cleaned, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
         }
         return BuildAccountInfo();
     }
@@ -145,20 +147,19 @@ public class QqPlaylistProvider : IPlaylistImportProvider
             }, DefaultHeaders);
 
             var root = JsonDocument.Parse(response).RootElement;
-            var snippet = response.Length > 300 ? response[..300] : response;
             if (!root.TryGetProperty("req_0", out var req0))
             {
-                _logger.LogWarning("QQ 创建歌单响应缺少 req_0：{Resp}", snippet);
+                _logger.LogWarning("QQ 创建歌单响应缺少 req_0");
                 return result;
             }
             if (req0.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.Number && code.GetInt32() != 0)
             {
-                _logger.LogWarning("QQ 创建歌单接口返回错误 code={Code}：{Resp}", code.GetInt32(), snippet);
+                _logger.LogWarning("QQ 创建歌单接口返回错误 code={Code}", code.GetInt32());
                 throw new InvalidOperationException("QQ 登录已失效，请重新登录");
             }
             if (!req0.TryGetProperty("data", out var data))
             {
-                _logger.LogWarning("QQ 创建歌单响应缺少 data：{Resp}", snippet);
+                _logger.LogWarning("QQ 创建歌单响应缺少 data");
                 return result;
             }
 
@@ -180,9 +181,11 @@ public class QqPlaylistProvider : IPlaylistImportProvider
             }
         }
         catch (InvalidOperationException) { throw; }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogWarning(ex, "QQ 拉取创建歌单失败");
+            _logger.LogWarning("QQ 拉取创建歌单失败：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary(PlatformId, string.Empty, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
         }
         return result;
     }
@@ -224,20 +227,19 @@ public class QqPlaylistProvider : IPlaylistImportProvider
                 }, DefaultHeaders);
 
                 var root = JsonDocument.Parse(response).RootElement;
-                var snippet = response.Length > 300 ? response[..300] : response;
                 if (!root.TryGetProperty("req_0", out var req0))
                 {
-                    _logger.LogWarning("QQ 收藏歌单响应缺少 req_0：{Resp}", snippet);
+                    _logger.LogWarning("QQ 收藏歌单响应缺少 req_0");
                     break;
                 }
                 if (req0.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.Number && code.GetInt32() != 0)
                 {
-                    _logger.LogWarning("QQ 收藏歌单接口返回错误 code={Code}：{Resp}", code.GetInt32(), snippet);
+                    _logger.LogWarning("QQ 收藏歌单接口返回错误 code={Code}", code.GetInt32());
                     break;
                 }
                 if (!req0.TryGetProperty("data", out var data))
                 {
-                    _logger.LogWarning("QQ 收藏歌单响应缺少 data：{Resp}", snippet);
+                    _logger.LogWarning("QQ 收藏歌单响应缺少 data");
                     break;
                 }
 
@@ -263,9 +265,11 @@ public class QqPlaylistProvider : IPlaylistImportProvider
                 if (!hasMore || page.Count == 0) break;
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.LogWarning(ex, "QQ 拉取收藏歌单失败");
+            _logger.LogWarning("QQ 拉取收藏歌单失败：{Diagnostic}",
+                LoginDiagnostics.CreateSafeSummary(PlatformId, string.Empty, LoginDiagnosticOutcome.Exception,
+                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
         }
         return result;
     }
