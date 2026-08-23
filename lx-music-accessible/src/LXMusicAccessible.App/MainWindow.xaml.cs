@@ -50,6 +50,7 @@ public partial class MainWindow : Window
     private ILyricService? _lyricService;
     private IDownloadService? _downloadService;
     private IDataStorageService? _dataStorageService;
+    private IProcessLauncher? _processLauncher;
     private string _defaultQuality = "128k";
     private string _defaultDownloadQuality = "128k";
     private string _currentPlayingQuality = "128k"; // 最近一次播放使用的音质（查看歌曲详情用）
@@ -209,6 +210,7 @@ public partial class MainWindow : Window
             DownloadTaskList.ItemsSource = _downloadService.Tasks;
             _downloadService.TaskCompleted += DownloadService_TaskCompleted;
             _dataStorageService = services.GetRequiredService<IDataStorageService>();
+            _processLauncher = services.GetRequiredService<IProcessLauncher>();
 
             SetupEventHandlers();
             InstallNumpadHook();
@@ -3346,7 +3348,7 @@ public partial class MainWindow : Window
                 UseShellExecute = false,
                 WorkingDirectory = System.IO.Path.GetDirectoryName(playerPath) ?? string.Empty
             };
-            System.Diagnostics.Process.Start(psi);
+            _processLauncher!.Start(psi);
             Announce($"已调用第三方播放器播放：{music.Title}，{music.Artist}");
         }
         catch (Exception ex)
@@ -3549,7 +3551,7 @@ public partial class MainWindow : Window
         try
         {
             Directory.CreateDirectory(dir);
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true });
+            _processLauncher!.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true });
             Announce($"已打开下载文件夹 {dir}");
         }
         catch (Exception ex) { Announce($"打开文件夹失败：{ex.Message}"); }

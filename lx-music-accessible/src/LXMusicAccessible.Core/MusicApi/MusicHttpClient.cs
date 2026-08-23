@@ -7,19 +7,34 @@ namespace LXMusicAccessible.Core.MusicApi;
 /// <summary>
 /// HTTP瀹㈡埛绔湇鍔★紝鐢ㄤ簬闊充箰API璋冪敤
 /// </summary>
-public class MusicHttpClient
+public class MusicHttpClient : IDisposable
 {
     private readonly HttpClient _httpClient;
-    private readonly HttpClientHandler _handler;
-    private readonly CookieContainer _cookieContainer = new();
+    private readonly CookieContainer _cookieContainer;
     private readonly ILogger<MusicHttpClient> _logger;
     private readonly JsonSerializerOptions _jsonOptions;
 
     public MusicHttpClient(ILogger<MusicHttpClient> logger)
+        : this(logger, CreateDefaultTransport())
     {
-        _logger = logger;
-        _handler = new HttpClientHandler { UseCookies = true, CookieContainer = _cookieContainer };
-        _httpClient = new HttpClient(_handler);
+    }
+
+    private MusicHttpClient(
+        ILogger<MusicHttpClient> logger,
+        (HttpMessageHandler Handler, CookieContainer Cookies) transport)
+        : this(logger, transport.Handler, transport.Cookies)
+    {
+    }
+
+    public MusicHttpClient(
+        ILogger<MusicHttpClient> logger,
+        HttpMessageHandler handler,
+        CookieContainer? cookieContainer = null)
+    {
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        ArgumentNullException.ThrowIfNull(handler);
+        _cookieContainer = cookieContainer ?? new CookieContainer();
+        _httpClient = new HttpClient(handler);
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
         
         _jsonOptions = new JsonSerializerOptions
@@ -28,6 +43,12 @@ public class MusicHttpClient
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false
         };
+    }
+
+    private static (HttpMessageHandler Handler, CookieContainer Cookies) CreateDefaultTransport()
+    {
+        var cookies = new CookieContainer();
+        return (new HttpClientHandler { UseCookies = true, CookieContainer = cookies }, cookies);
     }
 
     /// <summary>

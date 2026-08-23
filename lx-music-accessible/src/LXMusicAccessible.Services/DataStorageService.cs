@@ -46,10 +46,16 @@ public class LocalFileDataStorageService : IDataStorageService
     private readonly JsonSerializerOptions _jsonOptions;
 
     public LocalFileDataStorageService()
+        : this(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "LXMusicAccessible"))
     {
-        // 创建应用数据目录
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        _appDataPath = Path.Combine(appData, "LXMusicAccessible");
+    }
+
+    public LocalFileDataStorageService(string appDataPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(appDataPath);
+        _appDataPath = Path.GetFullPath(appDataPath);
         Directory.CreateDirectory(_appDataPath);
 
         _historyFilePath = Path.Combine(_appDataPath, "search_history.json");

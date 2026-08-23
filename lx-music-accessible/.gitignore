@@ -32,6 +32,7 @@ _script_inspect/
 发布*/
 
 # Test output
+artifacts/
 *_out.txt
 *_test*.txt
 

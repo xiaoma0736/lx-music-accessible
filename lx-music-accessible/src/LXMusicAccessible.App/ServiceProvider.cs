@@ -58,6 +58,7 @@ public static class ServiceProvider
         services.AddSingleton<IMusicPlayerService, MusicPlayerService>();
         services.AddSingleton<ITtsService, RoutingTtsService>();
         services.AddSingleton<IHotkeyManager, HotkeyManagerService>();
+        services.AddSingleton<IProcessLauncher, SystemProcessLauncher>();
         var dataDir = AppDataPaths.ResolveDataDir();
         services.AddSingleton<IDataService>(sp => new DataService(sp.GetRequiredService<ILogger<DataService>>(), dataDir));
         services.AddSingleton<IDataStorageService, LocalFileDataStorageService>();

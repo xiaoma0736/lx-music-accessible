@@ -4,13 +4,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Serilog;
 using System.Windows;
 using LXMusicAccessible.Services;
 using LXMusicAccessible.Data;
-using LXMusicAccessible.Audio;
-using LXMusicAccessible.Core.MusicApi;
 
 namespace LXMusicAccessible.App;
 
@@ -144,52 +141,8 @@ public partial class App : Application
 
             Log.Information("应用程序启动");
 
-            // 配置服务
-            _host = Host.CreateDefaultBuilder()
-                .ConfigureServices((context, services) =>
-                {
-                    // 注册Core服务
-                    services.AddSingleton<MusicHttpClient>();
-                    services.AddSingleton<NeteaseMusicService>();
-                    services.AddSingleton<QqMusicService>();
-                    services.AddSingleton<KugouMusicService>();
-                    services.AddSingleton<KuwoMusicService>();
-                    services.AddSingleton<MiguMusicService>();
-                    services.AddSingleton<ScriptMusicSource>();
-                    
-                    // 注册服务
-                    services.AddSingleton<IAccessibilityService, AccessibilityService>();
-                    services.AddSingleton<IDataService>(sp =>
-                        new DataService(sp.GetRequiredService<ILogger<DataService>>(), dataDir));
-                    
-                    // 注册数据库
-                    services.AddSingleton(sp => new DatabaseInitializer(
-                        sp.GetRequiredService<ILogger<DatabaseInitializer>>(), dataDir));
-                    
-                    // 注册音频播放
-                    services.AddSingleton<IAudioPlayer, AudioPlayer>();
-                    services.AddSingleton<IMusicPlayerService, MusicPlayerService>();
-                    
-                    // 注册音源管理
-                    services.AddSingleton<IMusicSourceService, MusicSourceService>();
-                    
-                    // 注册下载服务
-                    services.AddSingleton<IDownloadService, DownloadService>();
-                    
-                    // 注册歌词服务
-                    services.AddSingleton<ILyricService, LyricService>();
-                    services.AddSingleton<LxScriptEngine>();
-                    
-                    // 注册TTS服务
-                    services.AddSingleton<ITtsService, RoutingTtsService>(); // 语音后端自动路由：保益→争渡→Prism→SAPI
-                    
-                    // 注册搜索历史等本地文件数据存储
-                    services.AddSingleton<IDataStorageService, LocalFileDataStorageService>();
-                    
-                    // 注册快捷键管理
-                    services.AddSingleton<IHotkeyManager, HotkeyManagerService>();
-                })
-                .Build();
+            // Use the same service graph as the automated Host fixture.
+            _host = ApplicationHost.CreateBuilder(dataDir).Build();
 
             await _host.StartAsync();
             Log.Information("服务已启动");

@@ -1,0 +1,69 @@
+name: Windows quality gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - remediation/audit-2026-08
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore src/LXMusicAccessible.sln
+
+      - name: Build Release
+        run: dotnet build src/LXMusicAccessible.sln --configuration Release --no-restore
+
+      - name: Run offline tests
+        env:
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+          ALL_PROXY: http://127.0.0.1:9
+          NO_PROXY: ""
+        run: >-
+          dotnet test src/LXMusicAccessible.sln
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=tests.trx"
+          --results-directory artifacts/test-results
+
+      - name: Require discovered tests
+        shell: pwsh
+        run: |
+          $resultFiles = @(Get-ChildItem -LiteralPath artifacts/test-results -Filter *.trx -Recurse)
+          if ($resultFiles.Count -eq 0) {
+            throw "No test result files were produced."
+          }
+
+          $executed = 0
+          foreach ($resultFile in $resultFiles) {
+            [xml]$result = Get-Content -Raw -LiteralPath $resultFile.FullName
+            $counters = Select-Xml -Xml $result -XPath "//*[local-name()='Counters']" |
+              Select-Object -First 1
+            if ($null -ne $counters) {
+              $executed += [int]$counters.Node.executed
+            }
+          }
+
+          if ($executed -lt 1) {
+            throw "The test run discovered zero tests."
+          }
+
+          Write-Host "Executed tests: $executed"
