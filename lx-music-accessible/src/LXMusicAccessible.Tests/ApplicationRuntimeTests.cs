@@ -162,7 +162,9 @@ public sealed class ApplicationRuntimeTests
 
             Directory.CreateDirectory(directory);
             events.Add("data-directory");
-            await services.GetRequiredService<DatabaseInitializer>().InitializeAsync();
+            var migration = await services.GetRequiredService<DatabaseInitializer>().InitializeAsync();
+            if (!migration.Succeeded)
+                throw new InvalidOperationException(migration.Message);
             events.Add("database");
             _ = services.GetRequiredService<IDataService>();
             _ = services.GetRequiredService<IMusicSourceService>();

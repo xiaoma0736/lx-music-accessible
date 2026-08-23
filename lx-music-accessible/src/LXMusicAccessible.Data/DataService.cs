@@ -6,11 +6,20 @@ using System.Text.Json;
 
 namespace LXMusicAccessible.Data;
 
+public sealed record DatabaseMigrationResult(
+    bool Succeeded,
+    int PreviousVersion,
+    int CurrentVersion,
+    int OrphansRemoved,
+    string? BackupPath,
+    string Message);
+
 /// <summary>
 /// 数据库初始化器
 /// </summary>
 public class DatabaseInitializer
 {
+    private const int CurrentSchemaVersion = 1;
     private readonly ILogger<DatabaseInitializer> _logger;
     private readonly string _dataDir;
     private const string DbFileName = "lxmusic.db";
@@ -21,25 +30,91 @@ public class DatabaseInitializer
         _dataDir = dataDir;
     }
 
-    public async Task InitializeAsync()
+    public async Task<DatabaseMigrationResult> InitializeAsync()
+    {
+        var dbFilePath = Path.Combine(_dataDir, DbFileName);
+        var existedBeforeMigration = File.Exists(dbFilePath);
+        var previousVersion = 0;
+        var orphansRemoved = 0;
+        string? backupPath = null;
+
+        try
+        {
+            Directory.CreateDirectory(_dataDir);
+            if (existedBeforeMigration)
+            {
+                previousVersion = await ReadSchemaVersionAsync(dbFilePath);
+                if (previousVersion > CurrentSchemaVersion)
+                    throw new InvalidOperationException(
+                        $"Database schema version {previousVersion} is newer than supported version {CurrentSchemaVersion}.");
+
+                if (previousVersion < CurrentSchemaVersion)
+                    backupPath = await CreateBackupAsync(dbFilePath, previousVersion);
+            }
+
+            if (previousVersion < CurrentSchemaVersion)
+            {
+                await using var migrationConnection = await OpenMigrationConnectionAsync(dbFilePath);
+                await InitializeSchemaAsync(migrationConnection);
+                orphansRemoved = await NormalizePlaylistItemsAsync(migrationConnection);
+                await migrationConnection.ExecuteAsync($"PRAGMA user_version = {CurrentSchemaVersion}");
+                await EnableAndVerifyForeignKeysAsync(migrationConnection);
+                await VerifyIntegrityAsync(migrationConnection);
+            }
+            else
+            {
+                await using var connection = await SqliteDatabaseConnection.OpenAsync(dbFilePath);
+                await VerifyIntegrityAsync(connection);
+            }
+
+            return new DatabaseMigrationResult(
+                true,
+                previousVersion,
+                CurrentSchemaVersion,
+                orphansRemoved,
+                backupPath,
+                previousVersion == CurrentSchemaVersion
+                    ? "Database schema is current and integrity checks passed."
+                    : "Database migration and integrity checks passed.");
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                if (backupPath is not null)
+                    RestoreBackup(backupPath, dbFilePath);
+                else if (!existedBeforeMigration)
+                    DeleteDatabaseFiles(dbFilePath);
+            }
+            catch (Exception restoreException)
+            {
+                _logger.LogCritical(restoreException, "Database restore failed; backup retained at {BackupPath}", backupPath);
+                return new DatabaseMigrationResult(
+                    false,
+                    previousVersion,
+                    previousVersion,
+                    0,
+                    backupPath,
+                    $"Database migration failed ({ex.GetType().Name}) and automatic restore failed ({restoreException.GetType().Name}). The backup was retained.");
+            }
+
+            _logger.LogError(ex, "Database migration failed");
+            return new DatabaseMigrationResult(
+                false,
+                previousVersion,
+                previousVersion,
+                0,
+                backupPath,
+                backupPath is null
+                    ? $"Database initialization failed: {ex.Message}"
+                    : $"Database migration failed and the previous database was restored from backup: {ex.Message}");
+        }
+    }
+
+    private async Task InitializeSchemaAsync(SqliteConnection connection)
     {
         try
         {
-            var appDataPath = _dataDir;
-
-            if (!Directory.Exists(appDataPath))
-            {
-                Directory.CreateDirectory(appDataPath);
-            }
-
-            var dbFilePath = Path.Combine(appDataPath, DbFileName);
-            var connectionString = $"Data Source={dbFilePath}";
-
-            _logger.LogInformation("数据库路径: {Path}", dbFilePath);
-
-            using var connection = new SqliteConnection(connectionString);
-            await connection.OpenAsync();
-
             // 创建表
             await CreateTablesAsync(connection);
 
@@ -91,9 +166,6 @@ public class DatabaseInitializer
                 await connection.ExecuteAsync("ALTER TABLE PlaylistItems ADD COLUMN MusicSource TEXT");
                 _logger.LogInformation("已为 PlaylistItems 表添加 MusicSource 列");
             }
-            await connection.ExecuteAsync(@"
-                CREATE UNIQUE INDEX IF NOT EXISTS IX_PlaylistItems_UniqueSong
-                ON PlaylistItems(PlaylistId, MusicId, MusicSource)");
 
             // 迁移：确保默认本地/在线歌单存在，并把旧 FavoriteSongs 表数据幂等迁入在线“默认收藏”
             await EnsureDefaultPlaylistsAsync(connection);
@@ -105,6 +177,103 @@ public class DatabaseInitializer
         {
             _logger.LogError(ex, "数据库初始化失败");
             throw;
+        }
+    }
+
+    private static async Task<int> NormalizePlaylistItemsAsync(SqliteConnection connection)
+    {
+        await connection.ExecuteAsync("DROP INDEX IF EXISTS IX_PlaylistItems_UniqueSong");
+
+        await connection.ExecuteAsync(@"
+            UPDATE PlaylistItems
+            SET MusicId = COALESCE(
+                    NULLIF(MusicId, ''),
+                    CASE WHEN json_valid(MusicData) THEN NULLIF(json_extract(MusicData, '$.Id'), '') END,
+                    Id),
+                MusicSource = COALESCE(
+                    NULLIF(MusicSource, ''),
+                    CASE WHEN json_valid(MusicData) THEN NULLIF(json_extract(MusicData, '$.Source'), '') END,
+                    'Local')");
+
+        await connection.ExecuteAsync(@"
+            DELETE FROM PlaylistItems
+            WHERE rowid NOT IN (
+                SELECT MIN(rowid)
+                FROM PlaylistItems
+                GROUP BY PlaylistId, MusicId, MusicSource)");
+
+        var orphansRemoved = await connection.ExecuteAsync(@"
+            DELETE FROM PlaylistItems
+            WHERE NOT EXISTS (
+                SELECT 1 FROM Playlists WHERE Playlists.Id = PlaylistItems.PlaylistId)");
+
+        await connection.ExecuteAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_PlaylistItems_UniqueSong
+            ON PlaylistItems(PlaylistId, MusicId, MusicSource)");
+        return orphansRemoved;
+    }
+
+    private static async Task<int> ReadSchemaVersionAsync(string dbFilePath)
+    {
+        await using var connection = await SqliteDatabaseConnection.OpenAsync(dbFilePath);
+        return await connection.QuerySingleAsync<int>("PRAGMA user_version");
+    }
+
+    private static async Task<string> CreateBackupAsync(string dbFilePath, int previousVersion)
+    {
+        var backupPath = $"{dbFilePath}.pre-v{previousVersion}-{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.bak";
+        await using var source = await SqliteDatabaseConnection.OpenAsync(dbFilePath);
+        await using var destination = await SqliteDatabaseConnection.OpenAsync(backupPath);
+        source.BackupDatabase(destination);
+        return backupPath;
+    }
+
+    private static async Task<SqliteConnection> OpenMigrationConnectionAsync(string dbFilePath)
+    {
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = dbFilePath,
+            ForeignKeys = false
+        }.ToString());
+        await connection.OpenAsync();
+        return connection;
+    }
+
+    private static async Task EnableAndVerifyForeignKeysAsync(SqliteConnection connection)
+    {
+        await connection.ExecuteAsync("PRAGMA foreign_keys = ON");
+        if (await connection.QuerySingleAsync<int>("PRAGMA foreign_keys") != 1)
+            throw new InvalidOperationException("SQLite foreign key enforcement could not be enabled.");
+    }
+
+    private static async Task VerifyIntegrityAsync(SqliteConnection connection)
+    {
+        var violations = (await connection.QueryAsync<string>("PRAGMA foreign_key_check")).ToList();
+        if (violations.Count != 0)
+            throw new InvalidOperationException(
+                $"Database foreign key validation found {violations.Count} violation(s).");
+    }
+
+    private static void RestoreBackup(string backupPath, string dbFilePath)
+    {
+        SqliteConnection.ClearAllPools();
+        DeleteSidecarFiles(dbFilePath);
+        File.Copy(backupPath, dbFilePath, overwrite: true);
+    }
+
+    private static void DeleteDatabaseFiles(string dbFilePath)
+    {
+        SqliteConnection.ClearAllPools();
+        DeleteSidecarFiles(dbFilePath);
+        if (File.Exists(dbFilePath)) File.Delete(dbFilePath);
+    }
+
+    private static void DeleteSidecarFiles(string dbFilePath)
+    {
+        foreach (var suffix in new[] { "-wal", "-shm", "-journal" })
+        {
+            var path = dbFilePath + suffix;
+            if (File.Exists(path)) File.Delete(path);
         }
     }
 
@@ -289,6 +458,31 @@ public class DatabaseInitializer
 /// <summary>
 /// 数据服务
 /// </summary>
+internal static class SqliteDatabaseConnection
+{
+    public static async Task<SqliteConnection> OpenAsync(string dbFilePath)
+    {
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = dbFilePath,
+            ForeignKeys = true
+        }.ToString());
+
+        try
+        {
+            await connection.OpenAsync();
+            if (await connection.QuerySingleAsync<int>("PRAGMA foreign_keys") != 1)
+                throw new InvalidOperationException("SQLite foreign key enforcement is disabled.");
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
+    }
+}
+
 public class DataService : IDataService
 {
     private readonly ILogger<DataService> _logger;
@@ -301,17 +495,10 @@ public class DataService : IDataService
         _dataDir = dataDir;
     }
 
-    private string GetConnectionString()
-    {
-        var dbFilePath = Path.Combine(_dataDir, DbFileName);
-        return $"Data Source={dbFilePath}";
-    }
-
     private async Task<SqliteConnection> GetConnectionAsync()
     {
-        var connection = new SqliteConnection(GetConnectionString());
-        await connection.OpenAsync();
-        return connection;
+        return await SqliteDatabaseConnection.OpenAsync(
+            Path.Combine(_dataDir, DbFileName));
     }
 
     /// <summary>把数据库中的 Tags 文本解析为标签列表（空/无效返回空列表；兼容逗号分隔旧格式）</summary>
@@ -342,9 +529,20 @@ public class DataService : IDataService
         using var connection = await GetConnectionAsync();
         
         await connection.ExecuteAsync(@"
-            INSERT OR REPLACE INTO Playlists 
+            INSERT INTO Playlists
             (Id, Name, Description, Tags, Type, IsLocal, CreatedDate, ModifiedDate, Source, RemoteId, IsSnapshot)
-            VALUES (@Id, @Name, @Description, @Tags, @Type, @IsLocal, @CreatedDate, @ModifiedDate, @Source, @RemoteId, @IsSnapshot)",
+            VALUES (@Id, @Name, @Description, @Tags, @Type, @IsLocal, @CreatedDate, @ModifiedDate, @Source, @RemoteId, @IsSnapshot)
+            ON CONFLICT(Id) DO UPDATE SET
+                Name = excluded.Name,
+                Description = excluded.Description,
+                Tags = excluded.Tags,
+                Type = excluded.Type,
+                IsLocal = excluded.IsLocal,
+                CreatedDate = excluded.CreatedDate,
+                ModifiedDate = excluded.ModifiedDate,
+                Source = excluded.Source,
+                RemoteId = excluded.RemoteId,
+                IsSnapshot = excluded.IsSnapshot",
             new
             {
                 Id = playlist.Id,
@@ -406,7 +604,8 @@ public class DataService : IDataService
         
         var settingsJson = JsonSerializer.Serialize(settings);
         await connection.ExecuteAsync(
-            "INSERT OR REPLACE INTO Settings (Key, Value) VALUES (@Key, @Value)",
+            @"INSERT INTO Settings (Key, Value) VALUES (@Key, @Value)
+              ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value",
             new { Key = "UserSettings", Value = settingsJson }
         );
     }
@@ -448,9 +647,22 @@ public class DataService : IDataService
             foreach (var source in sources)
             {
                 await connection.ExecuteAsync(@"
-                INSERT OR REPLACE INTO MusicSources 
+                INSERT INTO MusicSources
                 (Id, Name, Version, ScriptUrl, ScriptContent, IsEnabled, Priority, AddedDate, LastUpdateDate, Type, IsDefault, TrustState, ContentSha256)
-                VALUES (@Id, @Name, @Version, @ScriptUrl, @ScriptContent, @IsEnabled, @Priority, @AddedDate, @LastUpdateDate, @Type, @IsDefault, @TrustState, @ContentSha256)",
+                VALUES (@Id, @Name, @Version, @ScriptUrl, @ScriptContent, @IsEnabled, @Priority, @AddedDate, @LastUpdateDate, @Type, @IsDefault, @TrustState, @ContentSha256)
+                ON CONFLICT(Id) DO UPDATE SET
+                    Name = excluded.Name,
+                    Version = excluded.Version,
+                    ScriptUrl = excluded.ScriptUrl,
+                    ScriptContent = excluded.ScriptContent,
+                    IsEnabled = excluded.IsEnabled,
+                    Priority = excluded.Priority,
+                    AddedDate = excluded.AddedDate,
+                    LastUpdateDate = excluded.LastUpdateDate,
+                    Type = excluded.Type,
+                    IsDefault = excluded.IsDefault,
+                    TrustState = excluded.TrustState,
+                    ContentSha256 = excluded.ContentSha256",
                     new
                     {
                         Id = source.Id,
@@ -597,14 +809,20 @@ public class DataService : IDataService
         var itemId = Guid.NewGuid().ToString();
         
         await connection.ExecuteAsync(@"
-            INSERT OR REPLACE INTO PlaylistItems 
-            (Id, PlaylistId, MusicData, OrderNum, AddedDate)
-            VALUES (@Id, @PlaylistId, @MusicData, @OrderNum, @AddedDate)",
+            INSERT INTO PlaylistItems
+            (Id, PlaylistId, MusicData, MusicId, MusicSource, OrderNum, AddedDate)
+            VALUES (@Id, @PlaylistId, @MusicData, @MusicId, @MusicSource, @OrderNum, @AddedDate)
+            ON CONFLICT(PlaylistId, MusicId, MusicSource) DO UPDATE SET
+                MusicData = excluded.MusicData,
+                OrderNum = excluded.OrderNum,
+                AddedDate = excluded.AddedDate",
             new
             {
                 Id = itemId,
                 PlaylistId = playlistId,
                 MusicData = musicJson,
+                MusicId = string.IsNullOrEmpty(music.Id) ? music.PlayUrl ?? itemId : music.Id,
+                MusicSource = string.IsNullOrEmpty(music.Source) ? "Local" : music.Source,
                 OrderNum = orderNum,
                 AddedDate = DateTime.Now
             });
@@ -864,8 +1082,14 @@ public class DataService : IDataService
         // 明文字段加密后再落盘；AuthData 为空时加密空串，避免数据库残留明文
         var encrypted = SecureStore.Protect(account.AuthData ?? string.Empty);
         await connection.ExecuteAsync(@"
-            INSERT OR REPLACE INTO Accounts (Platform, DisplayName, Uid, EncryptedAuth, LoginTime, ExpireTime)
-            VALUES (@Platform, @DisplayName, @Uid, @EncryptedAuth, @LoginTime, @ExpireTime)",
+            INSERT INTO Accounts (Platform, DisplayName, Uid, EncryptedAuth, LoginTime, ExpireTime)
+            VALUES (@Platform, @DisplayName, @Uid, @EncryptedAuth, @LoginTime, @ExpireTime)
+            ON CONFLICT(Platform) DO UPDATE SET
+                DisplayName = excluded.DisplayName,
+                Uid = excluded.Uid,
+                EncryptedAuth = excluded.EncryptedAuth,
+                LoginTime = excluded.LoginTime,
+                ExpireTime = excluded.ExpireTime",
             new
             {
                 Platform = account.Platform,
@@ -929,7 +1153,8 @@ public class DataService : IDataService
         else
         {
             await connection.ExecuteAsync(
-                "INSERT OR REPLACE INTO Settings (Key, Value) VALUES (@Key, @Value)",
+                @"INSERT INTO Settings (Key, Value) VALUES (@Key, @Value)
+                  ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value",
                 new { Key = key, Value = value });
         }
     }

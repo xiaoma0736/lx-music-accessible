@@ -83,7 +83,9 @@ internal sealed class TestApplicationHost : IAsyncDisposable
                 .Build();
 
             await host.StartAsync();
-            await host.Services.GetRequiredService<DatabaseInitializer>().InitializeAsync();
+            var migration = await host.Services.GetRequiredService<DatabaseInitializer>().InitializeAsync();
+            if (!migration.Succeeded)
+                throw new InvalidOperationException(migration.Message);
 
             return new TestApplicationHost(
                 host,

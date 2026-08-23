@@ -169,7 +169,9 @@ internal sealed class ProductionStartupInitializer(string dataDirectory) : IStar
         }
 
         Directory.CreateDirectory(Path.Combine(dataDirectory, "logs"));
-        await services.GetRequiredService<DatabaseInitializer>().InitializeAsync();
+        var migration = await services.GetRequiredService<DatabaseInitializer>().InitializeAsync();
+        if (!migration.Succeeded)
+            throw new InvalidOperationException(migration.Message);
 
         _ = services.GetRequiredService<IDataService>();
         _ = services.GetRequiredService<IAccessibleAnnouncer>();
