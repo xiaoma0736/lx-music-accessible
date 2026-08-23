@@ -885,76 +885,6 @@ public class DataService : IDataService
         return result;
     }
  
-    public async Task DeleteMusicSourcesAsync(List<string> ids)
-    {
-        if (ids == null || ids.Count == 0) return;
-        _logger.LogInformation("删除 {Count} 条音源", ids.Count);
-        using var connection = await GetConnectionAsync();
-        foreach (var id in ids)
-        {
-            await connection.ExecuteAsync("DELETE FROM MusicSources WHERE Id = @Id", new { Id = id });
-        }
-    }
-
-    public async Task SavePlayHistoryAsync(MusicInfo music)
-    {
-        _logger.LogInformation("保存播放历史: {Title}", music.Title);
-        
-        using var connection = await GetConnectionAsync();
-        
-        var musicJson = JsonSerializer.Serialize(music);
-        await connection.ExecuteAsync(@"
-            INSERT INTO PlayHistory (MusicData, PlayedDate)
-            VALUES (@MusicData, @PlayedDate)",
-            new
-            {
-                MusicData = musicJson,
-                PlayedDate = DateTime.Now.ToString("o")
-            });
-            
-        // 保持历史记录在合理范围内
-        await connection.ExecuteAsync(@"
-            DELETE FROM PlayHistory 
-            WHERE Id NOT IN (
-                SELECT Id FROM PlayHistory 
-                ORDER BY PlayedDate DESC 
-                LIMIT 100
-            )");
-    }
-
-    public async Task<List<MusicInfo>> GetPlayHistoryAsync(int count = 50)
-    {
-        _logger.LogInformation("获取播放历史");
-        
-        using var connection = await GetConnectionAsync();
-        
-        var history = await connection.QueryAsync<string>(@"
-            SELECT MusicData 
-            FROM PlayHistory 
-            ORDER BY PlayedDate DESC 
-            LIMIT @Count",
-            new { Count = count });
-            
-        var result = new List<MusicInfo>();
-        foreach (var musicJson in history)
-        {
-            try
-            {
-                var music = JsonSerializer.Deserialize<MusicInfo>(musicJson);
-                if (music != null)
-                {
-                    result.Add(music);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "解析播放历史失败");
-            }
-        }
-        
-        return result;
-    }
-    
     public async Task SavePlaylistItemAsync(string playlistId, MusicInfo music, int orderNum)
     {
         _logger.LogInformation("保存播放列表项目: {PlaylistId} - {Title}", playlistId, music.Title);
@@ -1015,15 +945,6 @@ public class DataService : IDataService
         }
         
         return result;
-    }
-    
-    public async Task DeletePlaylistItemAsync(string itemId)
-    {
-        _logger.LogInformation("删除播放列表项目: {ItemId}", itemId);
-        
-        using var connection = await GetConnectionAsync();
-        
-        await connection.ExecuteAsync("DELETE FROM PlaylistItems WHERE Id = @Id", new { Id = itemId });
     }
     
     public async Task ClearPlaylistItemsAsync(string playlistId)

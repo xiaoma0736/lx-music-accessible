@@ -82,8 +82,8 @@ internal sealed class TestApplicationHost : IAsyncDisposable
                     services.Replace(ServiceDescriptor.Singleton<ITtsService>(speech));
                     services.Replace(ServiceDescriptor.Singleton<IProcessLauncher>(processLauncher));
                     services.Replace(ServiceDescriptor.Singleton<IAudioPlayer>(audioPlayer));
-                    services.Replace(ServiceDescriptor.Singleton<IDataStorageService>(
-                        new LocalFileDataStorageService(Path.Combine(dataDirectory, "file-storage"))));
+                    services.Replace(ServiceDescriptor.Singleton(
+                        new LocalSearchHistoryStore(Path.Combine(dataDirectory, "file-storage"))));
                     configureServices?.Invoke(services);
                 })
                 .Build();

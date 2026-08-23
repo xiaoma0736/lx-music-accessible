@@ -90,14 +90,15 @@ public static class ApplicationHost
                 services.AddSingleton<MusicSourceService>();
                 services.AddSingleton<IMusicSourceService>(sp => sp.GetRequiredService<MusicSourceService>());
                 services.AddSingleton<IMusicBrowseSource>(sp => sp.GetRequiredService<MusicSourceService>());
+                services.AddSingleton(_ =>
+                    new LocalSearchHistoryStore(Path.Combine(dataDir, "file-storage")));
                 services.AddSingleton<MusicBrowseWorkflow>();
+                services.AddSingleton<SavedPlaylistWorkflow>();
                 services.AddSingleton<IDownloadWorkflow, DownloadWorkflow>();
                 services.AddSingleton<ILyricService, LyricService>();
                 services.AddSingleton<LyricsWorkflow>();
                 services.AddSingleton<LxScriptEngine>();
                 services.AddSingleton<ITtsService, RoutingTtsService>();
-                services.AddSingleton<IDataStorageService>(_ =>
-                    new LocalFileDataStorageService(Path.Combine(dataDir, "file-storage")));
                 services.AddSingleton<SettingsWorkflow>();
                 services.AddSingleton<IProcessLauncher, SystemProcessLauncher>();
 

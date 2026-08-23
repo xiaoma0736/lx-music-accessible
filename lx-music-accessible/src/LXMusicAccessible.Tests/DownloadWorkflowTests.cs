@@ -256,6 +256,26 @@ public sealed class DownloadWorkflowTests
         Assert.False(File.Exists(target.Value));
     }
 
+    [Fact]
+    public async Task External_player_launch_is_owned_by_the_download_workflow()
+    {
+        await using var harness = new DownloadHarness();
+        var player = Path.Combine(harness.Root, "player.exe");
+        var audio = Path.Combine(harness.Root, "song.mp3");
+        await File.WriteAllTextAsync(player, "fixture");
+        await File.WriteAllTextAsync(audio, "fixture");
+
+        var result = await harness.Workflow.PlayExternallyAsync(new(
+            player,
+            new MusicInfo { Id = "local", Title = "Song", Source = "Local", PlayUrl = audio },
+            "128k"));
+
+        Assert.True(result.Succeeded);
+        var invocation = Assert.Single(harness.ProcessLauncher.Invocations);
+        Assert.Equal(player, invocation.FileName);
+        Assert.Contains(audio, invocation.Arguments, StringComparison.Ordinal);
+    }
+
     private static HttpResponseMessage AudioResponse(int size)
     {
         var bytes = new byte[Math.Max(size, 4)];
@@ -323,13 +343,15 @@ public sealed class DownloadWorkflowTests
             _background = new BackgroundWorkHost(NullLogger<BackgroundWorkHost>.Instance);
             Source = new ControlledDownloadSource();
             Announcer = new RecordingAnnouncer();
+            ProcessLauncher = new RecordingProcessLauncher();
             Workflow = new DownloadWorkflow(
                 NullLogger<DownloadWorkflow>.Instance,
                 Source,
                 _client,
                 _background,
                 Announcer,
-                Path.Combine(Root, "temporary"));
+                Path.Combine(Root, "temporary"),
+                ProcessLauncher);
             Workflow.ApplyPreferences(new(true, DownloadNameOrder.ArtistTitle, true));
         }
 
@@ -338,6 +360,7 @@ public sealed class DownloadWorkflowTests
         public RejectingHttpMessageHandler Http { get; }
         public ControlledDownloadSource Source { get; }
         public RecordingAnnouncer Announcer { get; }
+        public RecordingProcessLauncher ProcessLauncher { get; }
         public DownloadWorkflow Workflow { get; }
         public int ActiveBackgroundWork => _background.ActiveCount;
 

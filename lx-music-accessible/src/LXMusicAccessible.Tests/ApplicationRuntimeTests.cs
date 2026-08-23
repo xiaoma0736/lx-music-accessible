@@ -264,7 +264,7 @@ public sealed class ApplicationRuntimeTests
         public ApplicationShutdownSnapshot CaptureAndBlock()
         {
             events.Add("shutdown-capture");
-            return new(new SettingsEditState(0, new UserSettings()), Array.Empty<MusicSource>());
+            return new(new SettingsEditState(0, new UserSettings()));
         }
 
         public Task PersistAsync(

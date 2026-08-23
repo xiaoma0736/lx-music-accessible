@@ -90,6 +90,26 @@ public sealed record SearchBrowseSnapshot(
     bool HasMore,
     string Query);
 
+public sealed record PlaylistBrowseSnapshot(
+    Playlist Playlist,
+    IReadOnlyList<MusicInfo> Items,
+    int Page,
+    int TotalItems);
+
+public sealed record RankingBrowseSnapshot(
+    Ranking Ranking,
+    IReadOnlyList<MusicInfo> Items,
+    int Page,
+    int TotalItems);
+
+public readonly record struct SearchHistoryNavigation(bool Handled, string Text);
+
+public sealed record BrowsePlaybackContinuation(
+    PlaybackQueueOrigin Origin,
+    SearchBrowseSnapshot? Search = null,
+    PlaylistBrowseSnapshot? Playlist = null,
+    RankingBrowseSnapshot? Ranking = null);
+
 /// <summary>
 /// Owns online search/browse selection, cancellation, latest-wins commits and announcements.
 /// UI callers only render returned data and apply the returned focus target.
@@ -103,26 +123,38 @@ public sealed class MusicBrowseWorkflow
     private readonly IMusicBrowseSource _source;
     private readonly BackgroundWorkHost _backgroundWork;
     private readonly IAccessibleAnnouncer _announcer;
+    private readonly IPlaybackCoordinator _playback;
+    private readonly LocalSearchHistoryStore _historyStore;
     private readonly ILogger<MusicBrowseWorkflow> _logger;
     private long _revision;
     private long _activitySequence;
     private SearchRequest _search = new(string.Empty, "song", "all");
     private SearchBrowseSnapshot _searchSnapshot = new([], 0, 0, false, string.Empty);
+    private List<SearchHistory> _history = [];
+    private int _historyIndex = -1;
+    private string _historyDraft = string.Empty;
     private string _categorySource = "netease";
     private PlaylistCategory? _category;
     private Playlist? _playlist;
+    private PlaylistBrowseSnapshot? _playlistSnapshot;
     private string _rankingSource = "netease";
     private Ranking? _ranking;
+    private RankingBrowseSnapshot? _rankingSnapshot;
+    private bool _continuingPlayback;
 
     public MusicBrowseWorkflow(
         IMusicBrowseSource source,
         BackgroundWorkHost backgroundWork,
         IAccessibleAnnouncer announcer,
+        IPlaybackCoordinator playback,
+        LocalSearchHistoryStore historyStore,
         ILogger<MusicBrowseWorkflow> logger)
     {
         _source = source;
         _backgroundWork = backgroundWork;
         _announcer = announcer;
+        _playback = playback;
+        _historyStore = historyStore;
         _logger = logger;
     }
 
@@ -134,6 +166,156 @@ public sealed class MusicBrowseWorkflow
             {
                 return _searchSnapshot with { Items = _searchSnapshot.Items.ToArray() };
             }
+        }
+    }
+
+    public PlaylistBrowseSnapshot? CurrentPlaylistPage
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _playlistSnapshot is null
+                    ? null
+                    : _playlistSnapshot with { Items = _playlistSnapshot.Items.ToArray() };
+            }
+        }
+    }
+
+    public RankingBrowseSnapshot? CurrentRankingPage
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _rankingSnapshot is null
+                    ? null
+                    : _rankingSnapshot with { Items = _rankingSnapshot.Items.ToArray() };
+            }
+        }
+    }
+
+    public async Task LoadSearchHistoryAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var loaded = await _historyStore.LoadAsync(cancellationToken);
+            lock (_gate)
+            {
+                _history = loaded
+                    .Where(item => !string.IsNullOrWhiteSpace(item.Keyword))
+                    .GroupBy(item => item.Keyword, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.OrderByDescending(item => item.SearchTime).First())
+                    .OrderByDescending(item => item.SearchTime)
+                    .Take(20)
+                    .ToList();
+                ResetHistoryNavigation();
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning("Search history load failed: {ErrorType}", exception.GetType().Name);
+        }
+    }
+
+    public SearchHistoryNavigation NavigateSearchHistory(string currentText, int step)
+    {
+        lock (_gate)
+        {
+            if (_history.Count == 0) return new(false, currentText);
+            if (step > 0)
+            {
+                if (_historyIndex < 0)
+                {
+                    _historyDraft = currentText;
+                    _historyIndex = 0;
+                }
+                else if (_historyIndex < _history.Count - 1)
+                {
+                    _historyIndex++;
+                }
+                return new(true, _history[_historyIndex].Keyword);
+            }
+
+            if (_historyIndex < 0) return new(false, currentText);
+            if (_historyIndex > 0)
+            {
+                _historyIndex--;
+                return new(true, _history[_historyIndex].Keyword);
+            }
+
+            _historyIndex = -1;
+            var draft = _historyDraft;
+            _historyDraft = string.Empty;
+            return new(true, draft);
+        }
+    }
+
+    public async Task RecordSearchAsync(string keyword, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(keyword)) return;
+        var normalized = keyword.Trim();
+        IReadOnlyList<SearchHistory> snapshot;
+        lock (_gate)
+        {
+            _history.RemoveAll(item => string.Equals(item.Keyword, normalized, StringComparison.OrdinalIgnoreCase));
+            _history.Insert(0, new SearchHistory { Keyword = normalized, SearchTime = DateTime.Now });
+            if (_history.Count > 20) _history.RemoveRange(20, _history.Count - 20);
+            ResetHistoryNavigation();
+            snapshot = _history.ToArray();
+        }
+        await SaveHistoryAsync(snapshot, cancellationToken);
+    }
+
+    public async Task<string?> DeleteSearchHistoryAsync(string currentText, CancellationToken cancellationToken = default)
+    {
+        string? target;
+        IReadOnlyList<SearchHistory> snapshot;
+        lock (_gate)
+        {
+            target = _historyIndex >= 0 && _historyIndex < _history.Count
+                ? _history[_historyIndex].Keyword
+                : _history.FirstOrDefault(item => string.Equals(item.Keyword, currentText?.Trim(), StringComparison.OrdinalIgnoreCase))?.Keyword;
+            if (string.IsNullOrWhiteSpace(target)) return null;
+            _history.RemoveAll(item => string.Equals(item.Keyword, target, StringComparison.OrdinalIgnoreCase));
+            ResetHistoryNavigation();
+            snapshot = _history.ToArray();
+        }
+        await SaveHistoryAsync(snapshot, cancellationToken);
+        return target;
+    }
+
+    public async Task<bool> ClearSearchHistoryAsync(CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<SearchHistory> previous;
+        lock (_gate)
+        {
+            if (_history.Count == 0) return false;
+            previous = _history.ToArray();
+            _history.Clear();
+            ResetHistoryNavigation();
+        }
+        try
+        {
+            await _historyStore.ClearAsync(cancellationToken);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            lock (_gate)
+            {
+                if (_history.Count == 0) _history = previous.ToList();
+            }
+            throw;
+        }
+        catch (Exception exception)
+        {
+            lock (_gate)
+            {
+                if (_history.Count == 0) _history = previous.ToList();
+            }
+            _logger.LogWarning("Search history clear failed: {ErrorType}", exception.GetType().Name);
+            return false;
         }
     }
 
@@ -149,10 +331,14 @@ public sealed class MusicBrowseWorkflow
 
     public BrowseSelection SelectSearch(string query, string searchType, string sourceId) =>
         Select(
-            () => _search = new(
-                query?.Trim() ?? string.Empty,
-                string.IsNullOrWhiteSpace(searchType) ? "song" : searchType,
-                string.IsNullOrWhiteSpace(sourceId) ? "all" : sourceId),
+            () =>
+            {
+                _search = new(
+                    query?.Trim() ?? string.Empty,
+                    string.IsNullOrWhiteSpace(searchType) ? "song" : searchType,
+                    string.IsNullOrWhiteSpace(sourceId) ? "all" : sourceId);
+                _searchSnapshot = new([], 0, 0, false, _search.Query);
+            },
             string.IsNullOrWhiteSpace(query)
                 ? "请输入搜索关键词"
                 : $"已选择搜索关键词：{query.Trim()}，按 Enter 或搜索按钮开始搜索");
@@ -172,6 +358,7 @@ public sealed class MusicBrowseWorkflow
                 _categorySource = RequireId(sourceId);
                 _category = null;
                 _playlist = null;
+                _playlistSnapshot = null;
             },
             $"已选择歌单音源：{displayName ?? sourceId}，按 Enter 或刷新按钮加载分类");
 
@@ -181,12 +368,17 @@ public sealed class MusicBrowseWorkflow
             {
                 _category = category;
                 _playlist = null;
+                _playlistSnapshot = null;
             },
             category is null ? "未选择歌单分类" : $"已选择分类：{category.Name}，按 Enter 加载歌单");
 
     public BrowseSelection SelectPlaylist(Playlist? playlist) =>
         Select(
-            () => _playlist = playlist,
+            () =>
+            {
+                _playlist = playlist;
+                _playlistSnapshot = null;
+            },
             playlist is null ? "未选择歌单" : $"已选择歌单：{playlist.Name}，按 Enter 加载歌曲");
 
     public BrowseSelection SelectRankingSource(string sourceId, string? displayName = null) =>
@@ -195,12 +387,17 @@ public sealed class MusicBrowseWorkflow
             {
                 _rankingSource = RequireId(sourceId);
                 _ranking = null;
+                _rankingSnapshot = null;
             },
             $"已选择排行榜音源：{displayName ?? sourceId}，按 Enter 或刷新按钮加载排行榜");
 
     public BrowseSelection SelectRanking(Ranking? ranking) =>
         Select(
-            () => _ranking = ranking,
+            () =>
+            {
+                _ranking = ranking;
+                _rankingSnapshot = null;
+            },
             ranking is null ? "未选择排行榜" : $"已选择排行榜：{ranking.Name}，按 Enter 加载歌曲");
 
     public Task<BrowseResult<SearchBrowseSnapshot>> ActivateSearchAsync(bool reset = true)
@@ -327,7 +524,12 @@ public sealed class MusicBrowseWorkflow
                 BrowsePageSize,
                 cancellationToken),
             result => result.Items.Count == 0 ? "该歌单暂无歌曲" : $"已加载 {result.Items.Count} 首歌单歌曲",
-            BrowseFocusTarget.CategorySongs);
+            BrowseFocusTarget.CategorySongs,
+            result => _playlistSnapshot = new(
+                playlist,
+                result.Items.ToArray(),
+                Math.Max(1, page),
+                result.TotalItems));
     }
 
     public Task<BrowseResult<PagedResult<MusicInfo>>> ActivateSavedPlaylistAsync(Playlist playlist)
@@ -374,7 +576,104 @@ public sealed class MusicBrowseWorkflow
                 BrowsePageSize,
                 cancellationToken),
             result => result.Items.Count == 0 ? "该排行榜暂无歌曲" : $"已加载 {result.Items.Count} 首排行榜歌曲",
-            BrowseFocusTarget.RankingSongs);
+            BrowseFocusTarget.RankingSongs,
+            result => _rankingSnapshot = new(
+                ranking,
+                result.Items.ToArray(),
+                Math.Max(1, page),
+                result.TotalItems));
+    }
+
+    public async Task<BrowsePlaybackContinuation?> ContinuePlaybackAsync(PlaybackQueueOrigin origin)
+    {
+        lock (_gate)
+        {
+            if (_continuingPlayback) return null;
+            _continuingPlayback = true;
+        }
+
+        try
+        {
+            return origin switch
+            {
+                PlaybackQueueOrigin.Search => await ContinueSearchPlaybackAsync(),
+                PlaybackQueueOrigin.Category => await ContinuePlaylistPlaybackAsync(),
+                PlaybackQueueOrigin.Ranking => await ContinueRankingPlaybackAsync(),
+                _ => null
+            };
+        }
+        finally
+        {
+            lock (_gate) _continuingPlayback = false;
+        }
+    }
+
+    private async Task<BrowsePlaybackContinuation?> ContinueSearchPlaybackAsync()
+    {
+        var before = CurrentSearch;
+        if (!before.HasMore) return null;
+        var result = await ActivateSearchAsync(reset: false);
+        if (!result.Succeeded || result.Value is null || result.Value.Items.Count <= before.Items.Count)
+            return null;
+        var selection = result.Value.Items[before.Items.Count];
+        await _playback.PlayAsync(new(
+            result.Value.Items,
+            selection,
+            _playback.DefaultQuality,
+            PlaybackQueueOrigin.Search));
+        return new(PlaybackQueueOrigin.Search, Search: result.Value);
+    }
+
+    private async Task<BrowsePlaybackContinuation?> ContinuePlaylistPlaybackAsync()
+    {
+        var before = CurrentPlaylistPage;
+        if (before is null || !HasNextPage(before.TotalItems, before.Page, before.Items.Count)) return null;
+        var result = await ActivatePlaylistAsync(before.Page + 1);
+        var page = CurrentPlaylistPage;
+        if (!result.Succeeded || page is null || page.Items.Count == 0) return null;
+        _announcer.Announce(new($"已自动翻页到第 {page.Page} 页，继续播放"));
+        await _playback.PlayAsync(new(
+            page.Items,
+            page.Items[0],
+            _playback.DefaultQuality,
+            PlaybackQueueOrigin.Category));
+        return new(PlaybackQueueOrigin.Category, Playlist: page);
+    }
+
+    private async Task<BrowsePlaybackContinuation?> ContinueRankingPlaybackAsync()
+    {
+        var before = CurrentRankingPage;
+        if (before is null || !HasNextPage(before.TotalItems, before.Page, before.Items.Count)) return null;
+        var result = await ActivateRankingAsync(before.Page + 1);
+        var page = CurrentRankingPage;
+        if (!result.Succeeded || page is null || page.Items.Count == 0) return null;
+        _announcer.Announce(new($"已自动翻页到第 {page.Page} 页，继续播放"));
+        await _playback.PlayAsync(new(
+            page.Items,
+            page.Items[0],
+            _playback.DefaultQuality,
+            PlaybackQueueOrigin.Ranking));
+        return new(PlaybackQueueOrigin.Ranking, Ranking: page);
+    }
+
+    private static bool HasNextPage(int totalItems, int page, int loadedCount) =>
+        totalItems > 0 ? page * BrowsePageSize < totalItems : loadedCount >= BrowsePageSize;
+
+    private async Task SaveHistoryAsync(
+        IReadOnlyList<SearchHistory> history,
+        CancellationToken cancellationToken)
+    {
+        try { await _historyStore.SaveAsync(history, cancellationToken); }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning("Search history save failed: {ErrorType}", exception.GetType().Name);
+        }
+    }
+
+    private void ResetHistoryNavigation()
+    {
+        _historyIndex = -1;
+        _historyDraft = string.Empty;
     }
 
     private BrowseSelection Select(Action update, string description)

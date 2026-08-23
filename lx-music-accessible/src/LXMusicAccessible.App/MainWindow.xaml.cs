@@ -8,9 +8,6 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using LXMusicAccessible.Services;
 using LXMusicAccessible.Models;
-using LXMusicAccessible.Data;
-using System.IO;
-using System.Text.Json;
 using System.Collections.ObjectModel;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -23,28 +20,19 @@ public partial class MainWindow : Window
     private readonly IAccessibleAnnouncer _accessibilityService;
     private readonly IPlaybackCoordinator _playback;
     private readonly IAudioPlaybackControl _playerService;
-    private bool _autoPaging;
-    private readonly IDataService _dataService;
     private readonly SettingsWorkflow _settingsWorkflow;
     private readonly ITtsService _ttsService;
     private readonly IMusicSourceService _musicSourceService;
     private readonly LyricsWorkflow _lyrics;
     private readonly IDownloadWorkflow _downloads;
-    private readonly IDataStorageService _dataStorageService;
-    private readonly IProcessLauncher _processLauncher;
+    private readonly SavedPlaylistWorkflow _savedPlaylists;
     private readonly PlaylistImportView _playlistImportPanel;
     private readonly ApplicationWindowFactory _windowFactory;
     private readonly DesktopLifecycleWorkflow _desktopLifecycle;
     private readonly MusicBrowseWorkflow _browseWorkflow;
-    private SettingsEditState _settingsState;
     private bool _shutdownBlocked;
-    private string _defaultQuality = "128k";
-    private string _defaultDownloadQuality = "128k";
-    private string _currentPlayingQuality = "128k"; // 最近一次播放使用的音质（查看歌曲详情用）
-    private bool _voiceAnnouncementEnabled = true;
     private bool _settingsLoaded = false;
     private bool _suppressPlaybackSettingChanges;
-    private bool _hideToTrayOnAltF4 = false;
     private ObservableCollection<HotkeySettingItem> _hotkeySettingItems = new();
     private HotkeySettingItem? _recordingHotkeyItem;
     private bool _hotkeyConflictDialogOpen;
@@ -91,21 +79,6 @@ public partial class MainWindow : Window
     private bool _searchShowingAlbumDetail;
     private int _searchSelectedIndexBeforeAlbum = 0; // 打开专辑前搜索结果的光标位置（返回时恢复）
 
-    // 搜索历史状态
-    private List<SearchHistory> _searchHistory = new();
-    private int _searchHistoryIndex = -1;
-    private string _searchHistoryDraft = string.Empty;
-    private const int MaxSearchHistory = 20;
-
-    // 分页状态
-    private int _categoryCurrentPage = 1;
-    private int _categoryTotalItems = 0;
-    private Playlist? _categorySelectedPlaylist;
-
-    private int _rankingCurrentPage = 1;
-    private int _rankingTotalItems = 0;
-    private Ranking? _rankingSelected;
-
     private LyricsWindow? _lyricsWindow;
 
     private ContextMenu _sourceContextMenu = null!;
@@ -121,14 +94,12 @@ public partial class MainWindow : Window
         IAccessibleAnnouncer accessibilityService,
         IPlaybackCoordinator playback,
         IAudioPlaybackControl playerService,
-        IDataService dataService,
         SettingsWorkflow settingsWorkflow,
         ITtsService ttsService,
         IMusicSourceService musicSourceService,
         LyricsWorkflow lyrics,
         IDownloadWorkflow downloads,
-        IDataStorageService dataStorageService,
-        IProcessLauncher processLauncher,
+        SavedPlaylistWorkflow savedPlaylists,
         PlaylistImportView playlistImportPanel,
         ApplicationWindowFactory windowFactory,
         DesktopLifecycleWorkflow desktopLifecycle,
@@ -137,15 +108,12 @@ public partial class MainWindow : Window
         _accessibilityService = accessibilityService;
         _playback = playback;
         _playerService = playerService;
-        _dataService = dataService;
         _settingsWorkflow = settingsWorkflow;
-        _settingsState = settingsWorkflow.Current;
         _ttsService = ttsService;
         _musicSourceService = musicSourceService;
         _lyrics = lyrics;
         _downloads = downloads;
-        _dataStorageService = dataStorageService;
-        _processLauncher = processLauncher;
+        _savedPlaylists = savedPlaylists;
         _playlistImportPanel = playlistImportPanel;
         _windowFactory = windowFactory;
         _desktopLifecycle = desktopLifecycle;
@@ -155,8 +123,9 @@ public partial class MainWindow : Window
         _desktopLifecycle.Attach(this);
         if (_accessibilityService is WpfAccessibleAnnouncer wpfAnnouncer)
             wpfAnnouncer.Attach(LiveRegion);
-        _accessibilityService.SpeechEnabled = _voiceAnnouncementEnabled;
+        _accessibilityService.SpeechEnabled = true;
         PlaylistImportHost.Content = _playlistImportPanel;
+        AttachSongListCapabilities(_playlistImportPanel.SongList);
         StatusText.Text = "正在初始化...";
         InitializePlayMode();
         _positionTimer.Tick += PositionTimer_Tick;
@@ -184,7 +153,7 @@ public partial class MainWindow : Window
         _ = LoadSettingsAsync();
         _browseWorkflow.SelectCategorySource(GetComboTag(CategorySourceCombo, "netease"));
         _browseWorkflow.SelectRankingSource(GetComboTag(RankingSourceCombo, "netease"));
-        _ = LoadSearchHistoryAsync();
+        _ = _browseWorkflow.LoadSearchHistoryAsync();
         RefreshSourceList();
     }
 
@@ -324,7 +293,9 @@ public partial class MainWindow : Window
         if ((e.Key == Key.F4 || e.SystemKey == Key.F4) && (Keyboard.Modifiers & ModifierKeys.Alt) != 0)
         {
             e.Handled = true;
-            _ = _desktopLifecycle.ExecuteAsync(DesktopCommand.AltF4, _hideToTrayOnAltF4);
+            _ = _desktopLifecycle.ExecuteAsync(
+                DesktopCommand.AltF4,
+                string.Equals(GetComboTag(CloseBehaviorCombo, "close"), "hide", StringComparison.OrdinalIgnoreCase));
             return;
         }
 
@@ -710,12 +681,10 @@ public partial class MainWindow : Window
 
     private async Task LoadSettingsAsync()
     {
-        if (_dataService == null) return;
         try
         {
             var handle = new WindowInteropHelper(this).Handle;
-            _settingsState = await _settingsWorkflow.LoadAsync(handle);
-            var settings = _settingsState.Settings;
+            var settings = (await _settingsWorkflow.LoadAsync(handle)).Settings;
             if (settings != null)
             {
                 ApplyVolume(settings.DefaultVolume, announce: false);
@@ -724,18 +693,16 @@ public partial class MainWindow : Window
                 RepeatPlayCheckBox.IsChecked = settings.LoopMode;
                 EnableScreenReaderCheckBox.IsChecked = settings.EnableScreenReader;
                 EnableVoiceAnnouncementCheckBox.IsChecked = settings.EnableVoiceAnnouncement;
-                _defaultQuality = string.IsNullOrEmpty(settings.DefaultPlayQuality) ? "128k" : settings.DefaultPlayQuality;
-                SelectComboByTag(DefaultQualityCombo, _defaultQuality);
-                _defaultDownloadQuality = string.IsNullOrEmpty(settings.DefaultDownloadQuality) ? "128k" : settings.DefaultDownloadQuality;
-                SelectComboByTag(DownloadQualityCombo, _defaultDownloadQuality);
+                var defaultQuality = string.IsNullOrEmpty(settings.DefaultPlayQuality) ? "128k" : settings.DefaultPlayQuality;
+                SelectComboByTag(DefaultQualityCombo, defaultQuality);
+                SelectComboByTag(DownloadQualityCombo,
+                    string.IsNullOrEmpty(settings.DefaultDownloadQuality) ? "128k" : settings.DefaultDownloadQuality);
                 var savedDownloadPath = settings.DownloadPath?.Trim();
-                DownloadPathBox.Text = string.IsNullOrWhiteSpace(savedDownloadPath) || !IsValidDirectoryPath(savedDownloadPath)
-                    ? GetEffectiveDownloadDir()
-                    : savedDownloadPath;
+                DownloadPathBox.Text = _downloads.ResolveDownloadDirectory(savedDownloadPath);
                 DownloadLyricCheckBox.IsChecked = settings.DownloadLyric;
                 DownloadNameQualityCheckBox.IsChecked = settings.DownloadNameIncludeQuality;
                 SelectComboByTag(DownloadNameOrderCombo, settings.DownloadNameOrder.ToString());
-                DataDirBox.Text = AppDataPaths.ResolveDataDir();
+                DataDirBox.Text = _settingsWorkflow.DataDirectory;
                 if (ThirdPartyPlayerPathBox != null)
                     ThirdPartyPlayerPathBox.Text = settings.ThirdPartyPlayerPath ?? string.Empty;
                 _lyrics.ApplySettings(
@@ -748,18 +715,16 @@ public partial class MainWindow : Window
                 _playback.Mode = settings.ShuffleMode
                     ? PlayMode.Shuffle
                     : settings.LoopMode ? PlayMode.Loop : PlayMode.Sequential;
-                _playback.DefaultQuality = _defaultQuality;
+                _playback.DefaultQuality = defaultQuality;
                 UpdatePlayModeDisplay();
 
-                _hideToTrayOnAltF4 = settings.HideToTrayOnAltF4;
                 if (CloseBehaviorCombo != null)
-                    SelectComboByTag(CloseBehaviorCombo, _hideToTrayOnAltF4 ? "hide" : "close");
-                _voiceAnnouncementEnabled = settings.EnableVoiceAnnouncement;
-                _accessibilityService.SpeechEnabled = _voiceAnnouncementEnabled;
+                    SelectComboByTag(CloseBehaviorCombo, settings.HideToTrayOnAltF4 ? "hide" : "close");
+                _accessibilityService.SpeechEnabled = settings.EnableVoiceAnnouncement;
             }
 
             // 加载本地收藏与在线收藏（歌单结构）
-            _ = LoadFavoriteSongsAsync();
+            _ = LoadOnlinePlaylistsAsync();
 
             // 语音设置：朗读语音 + 语速（自动路由后端）
             LoadVoiceSettings(settings);
@@ -815,20 +780,12 @@ public partial class MainWindow : Window
             _ttsService.SetVoice(voiceId);
     }
 
-    private void CloseBehaviorCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_settingsLoaded) return;
-        _hideToTrayOnAltF4 = string.Equals(GetComboTag(CloseBehaviorCombo, "close"), "hide", StringComparison.OrdinalIgnoreCase);
-    }
-
     private void DefaultQualityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_settingsLoaded) return;
         var q = GetComboTag(DefaultQualityCombo, "128k");
         if (string.IsNullOrEmpty(q)) return;
-        _defaultQuality = q;
-        if (_playerService != null)
-            _playback.DefaultQuality = q;
+        _playback.DefaultQuality = q;
     }
 
     private void SpeechRateCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -842,9 +799,9 @@ public partial class MainWindow : Window
     private void VoiceAnnouncementCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         if (!_settingsLoaded) return;
-        _voiceAnnouncementEnabled = EnableVoiceAnnouncementCheckBox.IsChecked == true;
-        _accessibilityService.SpeechEnabled = _voiceAnnouncementEnabled;
-        Announce(_voiceAnnouncementEnabled ? "已开启语音朗读提示" : "已关闭语音朗读提示");
+        var enabled = EnableVoiceAnnouncementCheckBox.IsChecked == true;
+        _accessibilityService.SpeechEnabled = enabled;
+        Announce(enabled ? "已开启语音朗读提示" : "已关闭语音朗读提示");
     }
 
     private void LyricAnnounceCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -881,11 +838,10 @@ public partial class MainWindow : Window
     {
         var folderDialog = new System.Windows.Forms.FolderBrowserDialog { Description = "选择歌曲下载目录" };
         var current = GetEffectiveDownloadDir();
-        if (Directory.Exists(current)) folderDialog.SelectedPath = current;
+        folderDialog.SelectedPath = current;
         if (folderDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
         {
             DownloadPathBox.Text = folderDialog.SelectedPath;
-            try { Directory.CreateDirectory(folderDialog.SelectedPath); } catch { }
             Announce($"下载目录已设置为 {folderDialog.SelectedPath}");
         }
     }
@@ -917,22 +873,9 @@ public partial class MainWindow : Window
             if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
             var selectedParent = dlg.SelectedPath?.Trim();
             if (string.IsNullOrEmpty(selectedParent)) return;
-            var current = AppDataPaths.ResolveDataDir();
-            var targetCandidate = Path.GetFullPath(Path.Combine(selectedParent, AppDataPaths.DefaultDirName));
-            if (string.Equals(Path.GetFullPath(selectedParent), Path.GetFullPath(current), StringComparison.OrdinalIgnoreCase)
-                || string.Equals(targetCandidate, Path.GetFullPath(current), StringComparison.OrdinalIgnoreCase))
-            {
-                Announce("已选择当前数据目录");
-                return;
-            }
-            var ownedDirectory = AppDataPaths.CreateOwnedDataDirectory(selectedParent);
-            var target = ownedDirectory.Path;
-            // Copy (not move) the existing database and logs so the old location
-            // is retained as a backup; takes full effect after restart.
-            MigrateDataDir(current, target);
-            AppDataPaths.WriteDataDirPointer(target);
-            DataDirBox.Text = target;
-            Announce("数据目录已设置，请重启应用后完全生效");
+            var result = _settingsWorkflow.ChangeDataDirectory(selectedParent);
+            DataDirBox.Text = result.Path;
+            Announce(result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
         }
         catch (Exception ex)
         {
@@ -941,70 +884,13 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Copy the database and log files from the old data dir into the new one.</summary>
-    private static void MigrateDataDir(string from, string to)
-    {
-        try
-        {
-            var srcDb = Path.Combine(from, "lxmusic.db");
-            if (File.Exists(srcDb))
-                File.Copy(srcDb, Path.Combine(to, "lxmusic.db"), overwrite: false);
-        }
-        catch { }
-        try
-        {
-            var srcLogs = Path.Combine(from, "logs");
-            if (Directory.Exists(srcLogs))
-            {
-                var destLogs = Path.Combine(to, "logs");
-                Directory.CreateDirectory(destLogs);
-                foreach (var f in Directory.GetFiles(srcLogs))
-                {
-                    try { File.Copy(f, Path.Combine(destLogs, Path.GetFileName(f)), overwrite: false); }
-                    catch { }
-                }
-            }
-        }
-        catch { }
-    }
-
-
     /// <summary>当前生效的下载目录（设置优先，非法/不可用的路径自动回退到服务默认值）</summary>
     private string GetEffectiveDownloadDir()
-    {
-        if (!string.IsNullOrWhiteSpace(DownloadPathBox?.Text))
-        {
-            var saved = DownloadPathBox.Text.Trim();
-            if (IsValidDirectoryPath(saved))
-                return saved;
-        }
-        var def = _downloads.GetDefaultDownloadDirectory();
-        return IsValidDirectoryPath(def) ? def
-            : Path.Combine(AppDataPaths.DefaultDataDir, "downloads");
-    }
-
-    /// <summary>判断是否为合法的绝对目录路径（含根目录、不含非法字符，?/* 一并拒绝）</summary>
-    private static bool IsValidDirectoryPath(string path)
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(path)) return false;
-            var root = Path.GetPathRoot(path);
-            if (string.IsNullOrEmpty(root)) return false; // 非绝对路径
-            if (path.IndexOfAny(Path.GetInvalidPathChars()) >= 0) return false;
-            if (path.IndexOfAny(new[] { '?', '*' }) >= 0) return false;
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+        => _downloads.ResolveDownloadDirectory(DownloadPathBox?.Text);
 
     /// <summary>把下载设置应用到下载服务（立即生效，影响之后的下载任务）</summary>
     private void ApplyDownloadSettings()
     {
-        _defaultDownloadQuality = GetComboTag(DownloadQualityCombo, "128k");
         var orderTag = GetComboTag(DownloadNameOrderCombo, "ArtistTitle");
         _downloads.ApplyPreferences(new DownloadPreferences(
             DownloadLyricCheckBox?.IsChecked ?? true,
@@ -1017,8 +903,6 @@ public partial class MainWindow : Window
     private void DownloadSetting_Changed(object sender, RoutedEventArgs e) => ApplyDownloadSettings();
 
     private void DownloadNameOrderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyDownloadSettings();
-
-    private void DownloadQualityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyDownloadSettings();
 
     /// <summary>载入朗读语音/语速设置并应用到 TTS 服务</summary>
     private void LoadVoiceSettings(UserSettings? settings)
@@ -1104,7 +988,10 @@ public partial class MainWindow : Window
             settings.CustomHotkeys = _settingsWorkflow.GetHotkeys().ToList();
             settings.OutputDeviceIndex = _playerService.CurrentOutputDeviceIndex;
             settings.LyricOffsets = new Dictionary<string, int>(_lyrics.GetOffsetsSnapshot());
-            settings.HideToTrayOnAltF4 = _hideToTrayOnAltF4;
+            settings.HideToTrayOnAltF4 = string.Equals(
+                GetComboTag(CloseBehaviorCombo, "close"),
+                "hide",
+                StringComparison.OrdinalIgnoreCase);
             settings.Playback = new PlaybackSessionState
             {
                 CurrentMusic = _playback.CurrentMusic is null
@@ -1117,9 +1004,6 @@ public partial class MainWindow : Window
         });
         if (!edit.Accepted)
             throw new InvalidOperationException(string.Join(" ", edit.Errors));
-        _settingsState = edit.State;
-        var sources = CloneForShutdown(_musicSourceService.GetAllSources());
-
         _shutdownBlocked = true;
         IsEnabled = false;
         _positionTimer.Stop();
@@ -1131,23 +1015,8 @@ public partial class MainWindow : Window
         _playback.QueueCompleted -= PlayerService_QueueCompleted;
         _desktopLifecycle.PrepareForShutdown();
 
-        return new ApplicationShutdownSnapshot(_settingsState, sources);
+        return new ApplicationShutdownSnapshot(edit.State);
     }
-
-    internal async Task PersistShutdownAsync(
-        ApplicationShutdownSnapshot snapshot,
-        CancellationToken cancellationToken)
-    {
-        var saved = await _settingsWorkflow.SaveAsync(snapshot.Settings, cancellationToken);
-        if (!saved.Succeeded)
-            throw new InvalidOperationException($"Settings persistence failed: {saved.ErrorType}");
-        await _dataService.SaveMusicSourcesAsync(snapshot.Sources.ToList(), cancellationToken);
-        _settingsState = snapshot.Settings;
-    }
-
-    private static T CloneForShutdown<T>(T value) =>
-        JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value))
-        ?? throw new InvalidOperationException("Shutdown state could not be captured.");
 
     private static MusicInfo CapturePlaybackMusic(MusicInfo music) => new()
     {
@@ -1189,7 +1058,7 @@ public partial class MainWindow : Window
                 query,
                 searchType,
                 GetComboTag(SearchSourceCombo, "all"));
-            await AddSearchHistoryAsync(query);
+            await _browseWorkflow.RecordSearchAsync(query);
             await LoadSearchMoreAsync(reset: true);
         }
         else
@@ -1247,140 +1116,34 @@ public partial class MainWindow : Window
     /// <summary>浏览搜索历史：step=+1 上翻（更早记录），step=-1 下翻（更新记录）。返回是否处理了按键。</summary>
     private bool BrowseSearchHistory(int step)
     {
-        if (_searchHistory.Count == 0) return false;
-
-        if (step > 0) // 上光标：查看更早的记录
-        {
-            if (_searchHistoryIndex < 0)
-            {
-                // 首次上翻：保存当前输入为草稿，定位到最新一条
-                _searchHistoryDraft = SearchBox.Text ?? "";
-                _searchHistoryIndex = 0;
-            }
-            else if (_searchHistoryIndex < _searchHistory.Count - 1)
-            {
-                _searchHistoryIndex++;
-            }
-            ShowHistoryEntry();
-            return true;
-        }
-        else // 下光标：回到更新的记录/草稿
-        {
-            if (_searchHistoryIndex < 0)
-                return false; // 未在浏览历史，不拦截（交给光标移动）
-            if (_searchHistoryIndex > 0)
-            {
-                _searchHistoryIndex--;
-                ShowHistoryEntry();
-            }
-            else
-            {
-                // 已到最新一条，再下翻恢复草稿
-                _searchHistoryIndex = -1;
-                SearchBox.Text = _searchHistoryDraft;
-                _searchHistoryDraft = "";
-                if (SearchBox.Text.Length > 0) SearchBox.CaretIndex = SearchBox.Text.Length;
-                // 不再语音播报“回到当前输入”，交给读屏朗读搜索框内容
-            }
-            return true;
-        }
+        var navigation = _browseWorkflow.NavigateSearchHistory(SearchBox.Text ?? string.Empty, step);
+        if (!navigation.Handled) return false;
+        SearchBox.Text = navigation.Text;
+        SearchBox.CaretIndex = navigation.Text.Length;
+        return true;
     }
 
-    /// <summary>在搜索框显示当前历史记录并播报</summary>
-    private void ShowHistoryEntry()
-    {
-        if (_searchHistoryIndex < 0 || _searchHistoryIndex >= _searchHistory.Count) return;
-        var kw = _searchHistory[_searchHistoryIndex].Keyword;
-        SearchBox.Text = kw;
-        // 光标置于末尾且不整段选中，避免全选状态干扰读屏左右光标逐字朗读
-        SearchBox.CaretIndex = kw.Length;
-        // 不再语音播报“搜索历史 N/M”，避免与读屏朗读搜索框内容打架（读屏会自然读出更新后的关键词）
-    }
-
-    /// <summary>加载搜索历史（去重、按时间倒序、最多 20 条）</summary>
-    private async Task LoadSearchHistoryAsync()
-    {
-        try
-        {
-            if (_dataStorageService == null) return;
-            var history = await _dataStorageService.LoadSearchHistoryAsync();
-            _searchHistory = history
-                .Where(h => !string.IsNullOrWhiteSpace(h.Keyword))
-                .GroupBy(h => h.Keyword, StringComparer.OrdinalIgnoreCase)
-                .Select(g => g.OrderByDescending(h => h.SearchTime).First())
-                .OrderByDescending(h => h.SearchTime)
-                .Take(MaxSearchHistory)
-                .ToList();
-            _searchHistoryIndex = -1;
-            _searchHistoryDraft = "";
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"加载搜索历史失败: {ex.Message}");
-        }
-    }
-
-    /// <summary>记录一条搜索历史（去重、置顶、最多 20 条并持久化）</summary>
-    private async Task AddSearchHistoryAsync(string keyword)
-    {
-        if (string.IsNullOrWhiteSpace(keyword) || _dataStorageService == null) return;
-        _searchHistory.RemoveAll(h => string.Equals(h.Keyword, keyword, StringComparison.OrdinalIgnoreCase));
-        _searchHistory.Insert(0, new SearchHistory { Keyword = keyword.Trim(), SearchTime = DateTime.Now });
-        if (_searchHistory.Count > MaxSearchHistory)
-            _searchHistory = _searchHistory.Take(MaxSearchHistory).ToList();
-        _searchHistoryIndex = -1;
-        _searchHistoryDraft = "";
-        await PersistSearchHistoryAsync();
-    }
-
-    /// <summary>删除当前搜索历史记录（浏览中的记录或与当前输入匹配的记录）。返回是否删除了记录。</summary>
     private bool DeleteCurrentSearchHistory()
     {
-        if (_dataStorageService == null || _searchHistory.Count == 0) return false;
-
-        string? target = null;
-        if (_searchHistoryIndex >= 0 && _searchHistoryIndex < _searchHistory.Count)
-            target = _searchHistory[_searchHistoryIndex].Keyword;
-        else
-        {
-            var text = SearchBox.Text?.Trim();
-            target = _searchHistory.FirstOrDefault(h =>
-                string.Equals(h.Keyword, text, StringComparison.OrdinalIgnoreCase))?.Keyword;
-        }
-        if (string.IsNullOrEmpty(target)) return false;
-
-        _searchHistory.RemoveAll(h => string.Equals(h.Keyword, target, StringComparison.OrdinalIgnoreCase));
-        _searchHistoryIndex = -1;
-        _searchHistoryDraft = "";
-        _ = PersistSearchHistoryAsync();
-        Announce($"已删除搜索记录：{target}");
+        _ = DeleteCurrentSearchHistoryAsync();
         return true;
     }
 
-    /// <summary>清空全部搜索历史</summary>
+    private async Task DeleteCurrentSearchHistoryAsync()
+    {
+        var deleted = await _browseWorkflow.DeleteSearchHistoryAsync(SearchBox.Text ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(deleted)) Announce($"已删除搜索记录：{deleted}");
+    }
+
     private bool ClearAllSearchHistory()
     {
-        if (_dataStorageService == null) return false;
-        _searchHistory.Clear();
-        _searchHistoryIndex = -1;
-        _searchHistoryDraft = "";
-        _ = _dataStorageService.ClearSearchHistoryAsync();
-        Announce("已清空全部搜索记录");
+        _ = ClearAllSearchHistoryAsync();
         return true;
     }
 
-    /// <summary>持久化当前搜索历史到本地文件</summary>
-    private async Task PersistSearchHistoryAsync()
+    private async Task ClearAllSearchHistoryAsync()
     {
-        if (_dataStorageService == null) return;
-        try
-        {
-            await _dataStorageService.SaveSearchHistoryAsync(new ObservableCollection<SearchHistory>(_searchHistory));
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"保存搜索历史失败: {ex.Message}");
-        }
+        if (await _browseWorkflow.ClearSearchHistoryAsync()) Announce("已清空全部搜索记录");
     }
 
     private void SearchClearButton_Click(object sender, RoutedEventArgs e)
@@ -1409,15 +1172,19 @@ public partial class MainWindow : Window
         if (music.Id == PagePrevId)
         {
             if (list == SearchResultsList) { Announce("结果已累积显示，请用向上方向键或 Home 回到前面。"); }
-            else if (list == CategorySongsList && _categorySelectedPlaylist != null) await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage - 1, applyFocus: false);
-            else if (list == RankingSongsList && _rankingSelected != null) await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage - 1, applyFocus: false);
+            else if (list == CategorySongsList && _browseWorkflow.CurrentPlaylistPage is { } playlistPage)
+                await LoadCategoryPlaylistDetailAsync(playlistPage.Playlist, playlistPage.Page - 1, applyFocus: false);
+            else if (list == RankingSongsList && _browseWorkflow.CurrentRankingPage is { } rankingPage)
+                await LoadRankingDetailAsync(rankingPage.Ranking, rankingPage.Page - 1, applyFocus: false);
             return;
         }
         if (music.Id == PageNextId)
         {
             if (list == SearchResultsList) await LoadSearchMoreAsync();
-            else if (list == CategorySongsList && _categorySelectedPlaylist != null) await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage + 1, applyFocus: false);
-            else if (list == RankingSongsList && _rankingSelected != null) await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage + 1, applyFocus: false);
+            else if (list == CategorySongsList && _browseWorkflow.CurrentPlaylistPage is { } playlistPage)
+                await LoadCategoryPlaylistDetailAsync(playlistPage.Playlist, playlistPage.Page + 1, applyFocus: false);
+            else if (list == RankingSongsList && _browseWorkflow.CurrentRankingPage is { } rankingPage)
+                await LoadRankingDetailAsync(rankingPage.Ranking, rankingPage.Page + 1, applyFocus: false);
             return;
         }
         // 搜索“加载更多”伪条目：继续累积加载
@@ -1524,7 +1291,6 @@ public partial class MainWindow : Window
     {
         var selection = _browseWorkflow.SelectCategory(CategoryList.SelectedItem as PlaylistCategory);
         StatusText.Text = selection.Description;
-        _categorySelectedPlaylist = null;
     }
 
     private async Task LoadCategoryPlaylistsAsync(
@@ -1536,9 +1302,6 @@ public partial class MainWindow : Window
         if (!result.Succeeded || result.Value is null
             || !_browseWorkflow.IsCurrent(result.Revision)) return;
 
-        _categoryCurrentPage = 1;
-        _categorySelectedPlaylist = null;
-        _categoryTotalItems = 0;
         CategorySongsList.ItemsSource = null;
         CategoryPageInfo.Text = "第 1 页";
         CategoryPlaylistsListBox.ItemsSource = result.Value.Items;
@@ -1548,8 +1311,7 @@ public partial class MainWindow : Window
 
     private void CategoryPlaylistsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        _categorySelectedPlaylist = CategoryPlaylistsListBox.SelectedItem as Playlist;
-        var selection = _browseWorkflow.SelectPlaylist(_categorySelectedPlaylist);
+        var selection = _browseWorkflow.SelectPlaylist(CategoryPlaylistsListBox.SelectedItem as Playlist);
         StatusText.Text = selection.Description;
     }
 
@@ -1563,9 +1325,6 @@ public partial class MainWindow : Window
         if (!result.Succeeded || result.Value is null
             || !_browseWorkflow.IsCurrent(result.Revision)) return;
 
-        _categorySelectedPlaylist = playlist;
-        _categoryCurrentPage = page;
-        _categoryTotalItems = result.Value.TotalItems;
         var totalPages = EstimateTotalPages(result.Value.TotalItems, 20, page, result.Value.Items.Count);
         CategorySongsList.ItemsSource = AppendPageNav(result.Value.Items, page, totalPages);
         CategoryPageInfo.Text = $"第 {page}/{totalPages} 页";
@@ -1637,16 +1396,18 @@ public partial class MainWindow : Window
 
     private async void CategoryPrevPageBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_categorySelectedPlaylist == null || _categoryCurrentPage <= 1) return;
-        await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage - 1, applyFocus: false);
+        var current = _browseWorkflow.CurrentPlaylistPage;
+        if (current is null || current.Page <= 1) return;
+        await LoadCategoryPlaylistDetailAsync(current.Playlist, current.Page - 1, applyFocus: false);
     }
 
     private async void CategoryNextPageBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_categorySelectedPlaylist == null) return;
-        var totalPages = Math.Max(1, (int)Math.Ceiling(_categoryTotalItems / 20.0));
-        if (_categoryCurrentPage >= totalPages) return;
-        await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage + 1, applyFocus: false);
+        var current = _browseWorkflow.CurrentPlaylistPage;
+        if (current is null) return;
+        var totalPages = EstimateTotalPages(current.TotalItems, 20, current.Page, current.Items.Count);
+        if (current.Page >= totalPages) return;
+        await LoadCategoryPlaylistDetailAsync(current.Playlist, current.Page + 1, applyFocus: false);
     }
     // ==================== 排行榜 ====================
 
@@ -1665,8 +1426,7 @@ public partial class MainWindow : Window
 
     private void RankingList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        _rankingSelected = RankingList.SelectedItem as Ranking;
-        var selection = _browseWorkflow.SelectRanking(_rankingSelected);
+        var selection = _browseWorkflow.SelectRanking(RankingList.SelectedItem as Ranking);
         StatusText.Text = selection.Description;
     }
 
@@ -1680,9 +1440,6 @@ public partial class MainWindow : Window
         if (!result.Succeeded || result.Value is null
             || !_browseWorkflow.IsCurrent(result.Revision)) return;
 
-        _rankingSelected = ranking;
-        _rankingCurrentPage = page;
-        _rankingTotalItems = result.Value.TotalItems;
         var totalPages = EstimateTotalPages(result.Value.TotalItems, 20, page, result.Value.Items.Count);
         RankingSongsList.ItemsSource = AppendPageNav(result.Value.Items, page, totalPages);
         RankingPageInfo.Text = $"第 {page}/{totalPages} 页";
@@ -1744,16 +1501,18 @@ public partial class MainWindow : Window
 
     private async void RankingPrevPageBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_rankingSelected == null || _rankingCurrentPage <= 1) return;
-        await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage - 1, applyFocus: false);
+        var current = _browseWorkflow.CurrentRankingPage;
+        if (current is null || current.Page <= 1) return;
+        await LoadRankingDetailAsync(current.Ranking, current.Page - 1, applyFocus: false);
     }
 
     private async void RankingNextPageBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_rankingSelected == null) return;
-        var totalPages = Math.Max(1, (int)Math.Ceiling(_rankingTotalItems / 20.0));
-        if (_rankingCurrentPage >= totalPages) return;
-        await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage + 1, applyFocus: false);
+        var current = _browseWorkflow.CurrentRankingPage;
+        if (current is null) return;
+        var totalPages = EstimateTotalPages(current.TotalItems, 20, current.Page, current.Items.Count);
+        if (current.Page >= totalPages) return;
+        await LoadRankingDetailAsync(current.Ranking, current.Page + 1, applyFocus: false);
     }
 
     // ==================== 播放歌曲 ====================
@@ -1761,8 +1520,7 @@ public partial class MainWindow : Window
     private async Task PlayMusicAsync(MusicInfo music, string? quality = null, ListBox? sourceList = null)
     {
         if (music == null) return;
-        var q = string.IsNullOrEmpty(quality) ? _defaultQuality : quality;
-        _currentPlayingQuality = q; // 记录本次播放音质，供"查看歌曲详情"展示
+        var q = string.IsNullOrEmpty(quality) ? _playback.DefaultQuality : quality;
         Announce($"正在播放：{music.Title}，{music.Artist}");
         var queue = sourceList is null ? new List<MusicInfo> { music } : GetListSongs(sourceList);
         var result = await _playback.PlayAsync(new PlaybackRequest(
@@ -1796,113 +1554,38 @@ public partial class MainWindow : Window
     // ==================== 自动翻页续播 ====================
 
     /// <summary>当前播放队列已播完（自动连播/手动下一首到列表末尾）：对分页列表自动加载下一页并续播</summary>
-    private void PlayerService_QueueCompleted(object? sender, PlaybackQueueCompletedEventArgs e)
-    {
-        Dispatcher.BeginInvoke(new Action(() => ContinuePlayToNextPage(e.Origin)),
-            System.Windows.Threading.DispatcherPriority.Background);
-    }
-
-    /// <summary>根据播放来源列表自动翻页续播；非分页列表（播放列表/收藏/本地）队列播完即停</summary>
-    private void ContinuePlayToNextPage(PlaybackQueueOrigin origin)
-    {
-        if (_autoPaging) return; // 已在自动翻页加载中，忽略重复触发（防连按“下一首”导致重复翻页）
-        if (origin == PlaybackQueueOrigin.Search)
-        {
-            if (_browseWorkflow.CurrentSearch.HasMore)
-            {
-                _autoPaging = true;
-                _ = ContinueSearchPageAsync();
-            }
-        }
-        else if (origin == PlaybackQueueOrigin.Category && _categorySelectedPlaylist != null)
-        {
-            var totalPages = EstimateTotalPages(_categoryTotalItems, 20, _categoryCurrentPage, GetListSongs(CategorySongsList).Count);
-            if (_categoryCurrentPage < totalPages)
-            {
-                _autoPaging = true;
-                _ = ContinueCategoryPageAsync();
-            }
-        }
-        else if (origin == PlaybackQueueOrigin.Ranking && _rankingSelected != null)
-        {
-            var totalPages = EstimateTotalPages(_rankingTotalItems, 20, _rankingCurrentPage, GetListSongs(RankingSongsList).Count);
-            if (_rankingCurrentPage < totalPages)
-            {
-                _autoPaging = true;
-                _ = ContinueRankingPageAsync();
-            }
-        }
-    }
-
-    /// <summary>自动加载搜索下一页并续播（下一页加载失败/页未前进时不再重播，避免失败后反复重播同一首）</summary>
-    private async Task ContinueSearchPageAsync()
+    private async void PlayerService_QueueCompleted(object? sender, PlaybackQueueCompletedEventArgs e)
     {
         try
         {
-            var before = _browseWorkflow.CurrentSearch;
-            if (!before.HasMore)
-                return; // 无更多结果（LoadSearchMoreAsync 已在最后一批播报过，避免重复提示）
-            await LoadSearchMoreAsync(applyFocus: false);
-            var after = _browseWorkflow.CurrentSearch;
-            if (after.Items.Count <= before.Items.Count) return; // 未新增，不重播
-            var newFirst = after.Items[before.Items.Count];
-            await PlayMusicAsync(newFirst, null, SearchResultsList);
+            var continuation = await _browseWorkflow.ContinuePlaybackAsync(e.Origin);
+            if (continuation is null) return;
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (continuation.Search is not null)
+                    RenderSearchResults(null, continuation.Search);
+                if (continuation.Playlist is not null)
+                {
+                    var page = continuation.Playlist;
+                    var totalPages = EstimateTotalPages(page.TotalItems, 20, page.Page, page.Items.Count);
+                    CategorySongsList.ItemsSource = AppendPageNav(page.Items, page.Page, totalPages);
+                    CategoryPageInfo.Text = $"第 {page.Page}/{totalPages} 页";
+                }
+                if (continuation.Ranking is not null)
+                {
+                    var page = continuation.Ranking;
+                    var totalPages = EstimateTotalPages(page.TotalItems, 20, page.Page, page.Items.Count);
+                    RankingSongsList.ItemsSource = AppendPageNav(page.Items, page.Page, totalPages);
+                    RankingPageInfo.Text = $"第 {page.Page}/{totalPages} 页";
+                }
+            });
         }
-        finally
+        catch (Exception exception)
         {
-            _autoPaging = false;
+            System.Diagnostics.Debug.WriteLine($"自动翻页失败: {exception.GetType().Name}");
         }
     }
 
-    /// <summary>自动加载分类歌单下一页并续播（下一页加载失败/页未前进时不再重播）</summary>
-    private async Task ContinueCategoryPageAsync()
-    {
-        try
-        {
-            var next = _categoryCurrentPage + 1;
-            Announce($"已自动翻页到第 {next} 页，继续播放");
-            var beforeId = GetListSongs(CategorySongsList).FirstOrDefault()?.Id;
-            await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist!, next, applyFocus: false);
-            var afterId = GetListSongs(CategorySongsList).FirstOrDefault()?.Id;
-            if (string.IsNullOrEmpty(afterId) || string.Equals(afterId, beforeId, StringComparison.OrdinalIgnoreCase))
-                return;
-            PlayFirstSongOf(CategorySongsList);
-        }
-        finally
-        {
-            _autoPaging = false;
-        }
-    }
-
-    /// <summary>自动加载排行榜下一页并续播（下一页加载失败/页未前进时不再重播）</summary>
-    private async Task ContinueRankingPageAsync()
-    {
-        try
-        {
-            var next = _rankingCurrentPage + 1;
-            Announce($"已自动翻页到第 {next} 页，继续播放");
-            var beforeId = GetListSongs(RankingSongsList).FirstOrDefault()?.Id;
-            await LoadRankingDetailAsync(_rankingSelected!, next, applyFocus: false);
-            var afterId = GetListSongs(RankingSongsList).FirstOrDefault()?.Id;
-            if (string.IsNullOrEmpty(afterId) || string.Equals(afterId, beforeId, StringComparison.OrdinalIgnoreCase))
-                return;
-            PlayFirstSongOf(RankingSongsList);
-        }
-        finally
-        {
-            _autoPaging = false;
-        }
-    }
-
-    /// <summary>播放分页列表当前页的第一首歌曲（自动翻页续播用），并以此为新播放队列</summary>
-    private void PlayFirstSongOf(ListBox list)
-    {
-        var songs = GetListSongs(list);
-        if (songs.Count == 0) return;
-        _ = PlayMusicAsync(songs[0], null, list);
-    }
-
-    /// <summary>播放成功后的界面刷新（标题/歌手/专辑/播放按钮/内部列表）</summary>
     private void UpdatePlayingUI(MusicInfo music)
     {
         if (music == null) return;
@@ -1993,65 +1676,44 @@ public partial class MainWindow : Window
             ExecuteHotkeyAction(localHotkey.ActionId);
         return true;
     }
-    private List<Playlist> _onlinePlaylists = new();
-    private Playlist? _selectedOnlinePlaylist;
-
     // ==================== 在线收藏 ====================
 
     private async Task LoadOnlinePlaylistsAsync()
     {
-        if (_dataService == null || OnlinePlaylistList == null) return;
-        try
-        {
-            _onlinePlaylists = await _dataService.GetFavoritePlaylistsAsync(local: false);
-            OnlinePlaylistList.ItemsSource = _onlinePlaylists;
-            if (OnlinePlaylistList.SelectedItem == null)
-            {
-                var def = _onlinePlaylists.FirstOrDefault(p => p.Type == PlaylistType.System) ?? _onlinePlaylists.FirstOrDefault();
-                if (def != null) OnlinePlaylistList.SelectedItem = def;
-            }
-        }
-        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"加载在线歌单失败: {ex.Message}"); }
+        var result = await _savedPlaylists.LoadAsync();
+        RenderSavedPlaylists(result.Snapshot);
     }
 
     private async Task<BrowseFocusTarget> ActivateOnlinePlaylistAsync(Playlist playlist)
     {
-        if (playlist == null) return BrowseFocusTarget.KeepCurrent;
-        // 快照歌单（从平台导入的个人歌单）：优先读取本地已存歌曲，离线可播
-        var stored = await _dataService!.GetPlaylistItemsAsync(playlist.Id);
-        if (!string.Equals(_selectedOnlinePlaylist?.Id, playlist.Id, StringComparison.Ordinal))
-            return BrowseFocusTarget.KeepCurrent;
-        if (stored.Count > 0 || playlist.IsSnapshot)
-        {
-            FavoriteSongsList.ItemsSource = null;
-            FavoriteSongsList.ItemsSource = stored;
-            FavoriteCountText.Text = $"共 {stored.Count} 首";
-            Announce($"已加载 {stored.Count} 首收藏歌曲", AnnouncementKind.Success);
-            return BrowseFocusTarget.SavedPlaylistSongs;
-        }
-        if (!string.IsNullOrEmpty(playlist.RemoteId))
-        {
-            var result = await _browseWorkflow.ActivateSavedPlaylistAsync(playlist);
-            if (!result.Succeeded || result.Value is null
-                || !_browseWorkflow.IsCurrent(result.Revision)
-                || !string.Equals(_selectedOnlinePlaylist?.Id, playlist.Id, StringComparison.Ordinal))
-            {
-                return BrowseFocusTarget.KeepCurrent;
-            }
-            FavoriteSongsList.ItemsSource = result.Value.Items;
-            FavoriteCountText.Text = $"共 {result.Value.Items.Count} 首";
-            return result.FocusTarget;
-        }
+        _savedPlaylists.Select(playlist);
+        var result = await _savedPlaylists.ActivateAsync();
+        RenderSavedPlaylists(result.Snapshot);
+        if (!string.IsNullOrWhiteSpace(result.Message))
+            Announce(result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
+        return result.FocusTarget;
+    }
 
-        FavoriteSongsList.ItemsSource = Array.Empty<MusicInfo>();
-        FavoriteCountText.Text = "共 0 首";
-        return BrowseFocusTarget.SavedPlaylistSongs;
+    private void RenderSavedPlaylists(SavedPlaylistSnapshot snapshot)
+    {
+        OnlinePlaylistList.SelectionChanged -= OnlinePlaylistList_SelectionChanged;
+        try
+        {
+            OnlinePlaylistList.ItemsSource = snapshot.Playlists;
+            OnlinePlaylistList.SelectedItem = snapshot.Playlists.FirstOrDefault(item =>
+                item.Id == snapshot.Selected?.Id);
+        }
+        finally
+        {
+            OnlinePlaylistList.SelectionChanged += OnlinePlaylistList_SelectionChanged;
+        }
+        FavoriteSongsList.ItemsSource = snapshot.Songs;
+        FavoriteCountText.Text = $"共 {snapshot.Songs.Count} 首";
     }
 
     private void OnlinePlaylistList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        _selectedOnlinePlaylist = OnlinePlaylistList.SelectedItem as Playlist;
-        var selection = _browseWorkflow.SelectPlaylist(_selectedOnlinePlaylist);
+        var selection = _savedPlaylists.Select(OnlinePlaylistList.SelectedItem as Playlist);
         StatusText.Text = selection.Description;
         FavoriteSongsList.ItemsSource = null;
         FavoriteCountText.Text = "按 Enter 加载歌曲";
@@ -2064,101 +1726,62 @@ public partial class MainWindow : Window
             ApplyBrowseFocus(await ActivateOnlinePlaylistAsync(playlist));
             e.Handled = true;
         }
-        else if (e.Key == Key.Delete && OnlinePlaylistList.SelectedItem is Playlist p)
+        else if (e.Key == Key.Delete && OnlinePlaylistList.SelectedItem is Playlist deletedPlaylist)
         {
-            _ = DeleteOnlinePlaylistAsync(p);
+            await DeleteOnlinePlaylistAsync(deletedPlaylist);
             e.Handled = true;
         }
     }
 
     private async Task DeleteOnlinePlaylistAsync(Playlist playlist)
     {
-        if (playlist == null || _dataService == null) return;
-        if (playlist.Type == PlaylistType.System) { Announce("默认收藏歌单不能删除"); return; }
-        var result = MessageBox.Show($"确定删除在线歌单“{playlist.Name}”吗？", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (result != MessageBoxResult.Yes) return;
-        await _dataService.DeletePlaylistAsync(playlist.Id);
-        await LoadOnlinePlaylistsAsync();
-        Announce($"已删除在线歌单：{playlist.Name}");
+        if (playlist.Type == PlaylistType.System)
+        {
+            Announce("默认收藏歌单不能删除");
+            return;
+        }
+        var confirmation = MessageBox.Show(
+            $"确定删除在线歌单“{playlist.Name}”吗？",
+            "确认删除",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirmation != MessageBoxResult.Yes) return;
+        _savedPlaylists.Select(playlist);
+        ApplySavedPlaylistResult(await _savedPlaylists.DeleteSelectedAsync());
     }
 
     private async void NewOnlinePlaylistBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_dataService == null) return;
         var dialog = new TextInputDialog("新建在线歌单", "歌单名称：", "");
         if (dialog.ShowDialog() != true) return;
-        var name = dialog.Value?.Trim();
-        if (string.IsNullOrEmpty(name)) { Announce("歌单名称不能为空"); return; }
-        var playlist = new Playlist
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = name,
-            Description = "在线收藏歌单",
-            Type = PlaylistType.User,
-            IsLocal = false
-        };
-        await _dataService.SavePlaylistAsync(playlist);
-        await LoadOnlinePlaylistsAsync();
-        OnlinePlaylistList.SelectedItem = _onlinePlaylists.FirstOrDefault(p => p.Id == playlist.Id);
-        Announce($"已创建在线歌单：{name}");
+        ApplySavedPlaylistResult(await _savedPlaylists.CreateAsync(dialog.Value ?? string.Empty));
     }
 
     private async void RenameOnlinePlaylistBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedOnlinePlaylist == null || _dataService == null) { Announce("请先选择在线歌单"); return; }
-        var dialog = new TextInputDialog("重命名在线歌单", "歌单名称：", _selectedOnlinePlaylist.Name);
+        var selected = _savedPlaylists.Current.Selected;
+        if (selected is null)
+        {
+            Announce("请先选择在线歌单");
+            return;
+        }
+        var dialog = new TextInputDialog("重命名在线歌单", "歌单名称：", selected.Name);
         if (dialog.ShowDialog() != true) return;
-        var name = dialog.Value?.Trim();
-        if (string.IsNullOrEmpty(name)) { Announce("名称不能为空"); return; }
-        await _dataService.RenamePlaylistAsync(_selectedOnlinePlaylist.Id, name);
-        _selectedOnlinePlaylist.Name = name;
-        OnlinePlaylistList.ItemsSource = null;
-        OnlinePlaylistList.ItemsSource = _onlinePlaylists;
-        Announce($"在线歌单已重命名为：{name}");
+        ApplySavedPlaylistResult(await _savedPlaylists.RenameSelectedAsync(dialog.Value ?? string.Empty));
     }
 
     private void DeleteOnlinePlaylistBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedOnlinePlaylist != null) _ = DeleteOnlinePlaylistAsync(_selectedOnlinePlaylist);
-        else Announce("请先选择要删除的在线歌单");
+        var selected = _savedPlaylists.Current.Selected;
+        if (selected is null) Announce("请先选择要删除的在线歌单");
+        else _ = DeleteOnlinePlaylistAsync(selected);
     }
 
-    /// <summary>加载在线收藏（旧接口兼容：加载在线歌单并选中默认歌单）</summary>
-    private async Task LoadFavoriteSongsAsync() => await LoadOnlinePlaylistsAsync();
+    private async Task AddFavoriteSongsAsync(IEnumerable<MusicInfo> songs) =>
+        ApplySavedPlaylistResult(await _savedPlaylists.AddSongsAsync(songs));
 
-    /// <summary>把网络歌曲添加到当前选中的在线歌单（默认“默认收藏”）</summary>
-    private async Task AddFavoriteSongsAsync(IEnumerable<MusicInfo> songs)
-    {
-        if (_dataService == null) return;
-        if (_selectedOnlinePlaylist == null)
-            _selectedOnlinePlaylist = await _dataService.GetOrCreateDefaultPlaylistAsync(local: false);
-        var list = songs.Where(s => s != null
-            && !string.Equals(s.Source, "Local", StringComparison.OrdinalIgnoreCase)).ToList();
-        if (list.Count == 0) { Announce("本地歌曲无需收藏，请收藏网络歌曲"); return; }
-        var addition = await _dataService.AddSongsToPlaylistAsync(_selectedOnlinePlaylist!.Id, list);
-        await LoadOnlinePlaylistsAsync();
-        if (_selectedOnlinePlaylist != null)
-            OnlinePlaylistList.SelectedItem = _onlinePlaylists.FirstOrDefault(p => p.Id == _selectedOnlinePlaylist.Id);
-        if (addition.AddedCount == 0)
-        {
-            Announce($"所选歌曲已在在线收藏中：{_selectedOnlinePlaylist!.Name}");
-        }
-        else
-        {
-            var duplicateMessage = addition.SkippedCount == 0
-                ? string.Empty
-                : $"，跳过 {addition.SkippedCount} 首重复歌曲";
-            Announce($"已添加 {addition.AddedCount} 首歌曲到在线收藏：{_selectedOnlinePlaylist!.Name}{duplicateMessage}");
-        }
-    }
-
-    private async Task RemoveFavoriteSongAsync(MusicInfo music)
-    {
-        if (_dataService == null || music == null || _selectedOnlinePlaylist == null) return;
-        await _dataService.RemoveSongFromPlaylistAsync(_selectedOnlinePlaylist.Id, music);
-        await ActivateOnlinePlaylistAsync(_selectedOnlinePlaylist);
-        Announce($"已从{_selectedOnlinePlaylist.Name}移除：{music.Title}");
-    }
+    private async Task RemoveFavoriteSongAsync(MusicInfo music) =>
+        ApplySavedPlaylistResult(await _savedPlaylists.RemoveSongAsync(music));
 
     private async void FavoriteSongsList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
@@ -2179,16 +1802,16 @@ public partial class MainWindow : Window
             await PlayMusicAsync(music, null, FavoriteSongsList);
             e.Handled = true;
         }
-        else if (e.Key == Key.Delete && FavoriteSongsList.SelectedItem is MusicInfo del)
+        else if (e.Key == Key.Delete && FavoriteSongsList.SelectedItem is MusicInfo deleted)
         {
-            await RemoveFavoriteSongAsync(del);
+            await RemoveFavoriteSongAsync(deleted);
             e.Handled = true;
         }
     }
 
-    private void FavRefreshBtn_Click(object sender, RoutedEventArgs e)
+    private async void FavRefreshBtn_Click(object sender, RoutedEventArgs e)
     {
-        _ = LoadOnlinePlaylistsAsync();
+        await LoadOnlinePlaylistsAsync();
         Announce("在线收藏已刷新");
     }
 
@@ -2202,43 +1825,38 @@ public partial class MainWindow : Window
 
     private async void FavClearBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedOnlinePlaylist == null || _dataService == null) return;
+        var selected = _savedPlaylists.Current.Selected;
+        if (selected is null) return;
         var count = FavoriteSongsList.Items.Count;
-        if (count == 0) { Announce("当前歌单为空"); return; }
-        var result = MessageBox.Show($"确定清空在线歌单“{_selectedOnlinePlaylist.Name}”（共 {count} 首）吗？", "确认清空", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (result != MessageBoxResult.Yes) return;
-        await _dataService.ClearPlaylistItemsAsync(_selectedOnlinePlaylist.Id);
-        await ActivateOnlinePlaylistAsync(_selectedOnlinePlaylist);
-        Announce($"在线歌单已清空：{_selectedOnlinePlaylist.Name}");
-    }
-
-    /// <summary>收藏整个远程歌单（分类歌单/排行榜）到在线收藏，仅保存元数据，打开时按需联网加载</summary>
-    private async Task CollectRemotePlaylistAsync(string name, string source, string remoteId, PlaylistType type)
-    {
-        if (_dataService == null) return;
-        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(remoteId)) { Announce("无法收藏该歌单"); return; }
-        // 去重：同一远程歌单已收藏则不再重复添加
-        var existing = (await _dataService.GetFavoritePlaylistsAsync(false)).FirstOrDefault(p =>
-            string.Equals(p.RemoteId, remoteId, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(p.Source, source, StringComparison.OrdinalIgnoreCase));
-        if (existing != null)
+        if (count == 0)
         {
-            Announce($"歌单“{name}”已在在线收藏中");
+            Announce("当前歌单为空");
             return;
         }
-        var playlist = new Playlist
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = name,
-            Description = "远程收藏歌单",
-            Type = type,
-            IsLocal = false,
-            Source = source,
-            RemoteId = remoteId
-        };
-        await _dataService.SavePlaylistAsync(playlist);
-        Announce($"已将歌单“{name}”收藏到在线收藏");
+        var confirmation = MessageBox.Show(
+            $"确定清空在线歌单“{selected.Name}”（共 {count} 首）吗？",
+            "确认清空",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirmation != MessageBoxResult.Yes) return;
+        ApplySavedPlaylistResult(await _savedPlaylists.ClearAsync());
     }
+
+    private async Task CollectRemotePlaylistAsync(
+        string name,
+        string source,
+        string remoteId,
+        PlaylistType type) =>
+        ApplySavedPlaylistResult(await _savedPlaylists.CollectRemoteAsync(
+            new(name, source, remoteId, type)));
+
+    private void ApplySavedPlaylistResult(SavedPlaylistResult result)
+    {
+        RenderSavedPlaylists(result.Snapshot);
+        if (!string.IsNullOrWhiteSpace(result.Message))
+            Announce(result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
+    }
+
     // ==================== 歌曲列表右键菜单 ====================
 
     /// <summary>为 5 个歌曲列表各自构建独立的右键菜单</summary>
@@ -2405,13 +2023,13 @@ public partial class MainWindow : Window
         try
         {
             var qualities = await _musicSourceService!.GetQualitiesForSourceAsync(music.Source);
-            RebuildQualityMenu(playQualityItem, qualities, SongMenu_PlayQuality_Click, _defaultQuality);
-            RebuildQualityMenu(downloadItem, qualities, SongMenu_Download_Click, _defaultDownloadQuality);
+            RebuildQualityMenu(playQualityItem, qualities, SongMenu_PlayQuality_Click, _playback.DefaultQuality);
+            RebuildQualityMenu(downloadItem, qualities, SongMenu_Download_Click, GetComboTag(DownloadQualityCombo, "128k"));
         }
         catch
         {
-            RebuildQualityMenu(playQualityItem, new List<string> { "128k" }, SongMenu_PlayQuality_Click, _defaultQuality);
-            RebuildQualityMenu(downloadItem, new List<string> { "128k" }, SongMenu_Download_Click, _defaultDownloadQuality);
+            RebuildQualityMenu(playQualityItem, new List<string> { "128k" }, SongMenu_PlayQuality_Click, _playback.DefaultQuality);
+            RebuildQualityMenu(downloadItem, new List<string> { "128k" }, SongMenu_Download_Click, GetComboTag(DownloadQualityCombo, "128k"));
         }
     }
 
@@ -2488,7 +2106,7 @@ public partial class MainWindow : Window
                 if (isCurrent)
                 {
                     var actual = _playerService?.ActualQuality;
-                    var shown = string.IsNullOrEmpty(actual) ? _currentPlayingQuality : actual;
+                    var shown = string.IsNullOrEmpty(actual) ? _playback.DefaultQuality : actual;
                     if (!string.IsNullOrEmpty(shown))
                         lines.Add($"当前播放音质：{TranslateQuality(shown)}");
                 }
@@ -2531,7 +2149,6 @@ public partial class MainWindow : Window
         var music = GetContextMusic(sender);
         if (music == null) return;
         await PlayMusicAsync(music, q, GetContextList(sender));
-        _defaultQuality = q;
         _playback.DefaultQuality = q;
         SelectComboByTag(DefaultQualityCombo, q);
         Announce($"已将默认播放音质设为 {TranslateQuality(q)}");
@@ -2573,15 +2190,17 @@ public partial class MainWindow : Window
         if (list == null) return;
         if (ReferenceEquals(list, CategorySongsList))
         {
-            if (_categorySelectedPlaylist == null) { Announce("暂无可收藏的歌单"); return; }
+            var selected = _browseWorkflow.CurrentPlaylistPage?.Playlist;
+            if (selected == null) { Announce("暂无可收藏的歌单"); return; }
             var source = GetComboTag(CategorySourceCombo, "netease");
-            await CollectRemotePlaylistAsync(_categorySelectedPlaylist.Name, source, _categorySelectedPlaylist.Id, PlaylistType.Cloud);
+            await CollectRemotePlaylistAsync(selected.Name, source, selected.Id, PlaylistType.Cloud);
         }
         else if (ReferenceEquals(list, RankingSongsList))
         {
-            if (_rankingSelected == null) { Announce("暂无可收藏的榜单"); return; }
-            var remoteId = $"{_rankingSelected.Source}_{_rankingSelected.Id}";
-            await CollectRemotePlaylistAsync(_rankingSelected.Name, _rankingSelected.Source, remoteId, PlaylistType.Recommend);
+            var selected = _browseWorkflow.CurrentRankingPage?.Ranking;
+            if (selected == null) { Announce("暂无可收藏的榜单"); return; }
+            var remoteId = $"{selected.Source}_{selected.Id}";
+            await CollectRemotePlaylistAsync(selected.Name, selected.Source, remoteId, PlaylistType.Recommend);
         }
     }
 
@@ -2694,7 +2313,7 @@ public partial class MainWindow : Window
         await _downloads.DownloadListAsync(new DownloadListRequest(
             online,
             label,
-            _defaultDownloadQuality,
+            GetComboTag(DownloadQualityCombo, "128k"),
             GetEffectiveDownloadDir(),
             subFolder));
     }
@@ -2704,52 +2323,13 @@ public partial class MainWindow : Window
     {
         var music = GetContextMusic(sender);
         if (music == null) return;
-
-        var playerPath = NormalizeExternalPlayerPath(ThirdPartyPlayerPathBox?.Text ?? string.Empty);
-        if (string.IsNullOrEmpty(playerPath))
-        {
-            Announce("请先在设置中配置第三方播放器");
-            return;
-        }
-        if (!File.Exists(playerPath))
-        {
-            Announce("未找到第三方播放器程序，请检查设置中的播放器路径");
-            return;
-        }
-
-        try
-        {
-            var prepared = await _downloads.PrepareExternalPlaybackAsync(music, _defaultQuality);
-            if (prepared is null) return;
-
-            // 启动第三方播放器：可执行文件路径含空格也正确；目标（本地路径/在线 URL）加引号安全传递
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = playerPath,
-                Arguments = $"\"{prepared.Value}\"",
-                UseShellExecute = false,
-                WorkingDirectory = System.IO.Path.GetDirectoryName(playerPath) ?? string.Empty
-            };
-            _processLauncher!.Start(psi);
-            Announce($"已调用第三方播放器播放：{music.Title}，{music.Artist}");
-        }
-        catch (Exception ex)
-        {
-            Announce($"调用第三方播放器失败：{ex.Message}");
-            System.Diagnostics.Debug.WriteLine($"外部播放失败: {ex.Message}");
-        }
+        var result = await _downloads.PlayExternallyAsync(new(
+            ThirdPartyPlayerPathBox?.Text ?? string.Empty,
+            music,
+            _playback.DefaultQuality));
+        Announce(result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
-    /// <summary>规范化第三方播放器路径：去首尾空格与引号、展开环境变量（如 %ProgramFiles%），便于处理带空格/带引号的路径</summary>
-    private static string NormalizeExternalPlayerPath(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
-        var p = raw.Trim().Trim('"').Trim();
-        if (string.IsNullOrEmpty(p)) return string.Empty;
-        return System.Environment.ExpandEnvironmentVariables(p);
-    }
-
-    /// <summary>键盘（应用键/Shift+F10）在歌曲列表打开右键菜单</summary>
     private bool TryOpenSongContextMenu()
     {
         var fe = Keyboard.FocusedElement as DependencyObject;
@@ -2780,7 +2360,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>给外部窗口的歌曲列表挂接播放/右键菜单/收藏等能力（用于“导入个人歌单”窗口的歌曲预览列表）</summary>
-    public void AttachSongListCapabilities(ListBox list)
+    private void AttachSongListCapabilities(ListBox list)
     {
         if (list == null) return;
         _externalSongLists.Add(list);
@@ -2792,15 +2372,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>解除外部歌曲列表挂接（窗口关闭时调用，避免播放队列引用已关闭窗口的列表）</summary>
-    public void DetachSongListCapabilities(ListBox list)
-    {
-        if (list == null) return;
-        _externalSongLists.Remove(list);
-        list.KeyDown -= ExternalSongList_KeyDown;
-        list.PreviewMouseRightButtonDown -= SongList_PreviewMouseRightButtonDown;
-        list.ContextMenuOpening -= SongList_ContextMenuOpening;
-    }
-
     /// <summary>外部歌曲列表回车/空格直接播放</summary>
     private async void ExternalSongList_KeyDown(object sender, KeyEventArgs e)
     {
@@ -2819,17 +2390,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>供外部窗口（如导入个人歌单窗口）键盘打开指定歌曲列表的右键菜单</summary>
-    public bool TryOpenSongContextMenuFor(ListBox list)
-    {
-        if (list == null || list.SelectedItem is not MusicInfo m) return false;
-        if (m.Id is PagePrevId or PageNextId or AlbumBackId) return false;
-        var menu = list.ContextMenu;
-        if (menu == null) return false;
-        menu.PlacementTarget = list;
-        menu.IsOpen = true;
-        return true;
-    }
-
     // ==================== 下载管理 ====================
 
     private void DownloadCancelBtn_Click(object sender, RoutedEventArgs e)
@@ -2853,14 +2413,8 @@ public partial class MainWindow : Window
 
     private void DownloadOpenFolderBtn_Click(object sender, RoutedEventArgs e)
     {
-        var dir = GetEffectiveDownloadDir();
-        try
-        {
-            Directory.CreateDirectory(dir);
-            _processLauncher!.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true });
-            Announce($"已打开下载文件夹 {dir}");
-        }
-        catch (Exception ex) { Announce($"打开文件夹失败：{ex.Message}"); }
+        var result = _downloads.OpenDownloadDirectory(DownloadPathBox?.Text);
+        Announce(result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
     private void DownloadClearDoneBtn_Click(object sender, RoutedEventArgs e)
@@ -3169,14 +2723,14 @@ public partial class MainWindow : Window
             Title = "选择音频文件"
         };
         if (openFileDialog.ShowDialog() == true)
-            Announce($"已选择：{Path.GetFileName(openFileDialog.FileName)}");
+            Announce($"已选择：{System.IO.Path.GetFileName(openFileDialog.FileName)}");
     }
 
     private void OpenFolder_Click(object sender, RoutedEventArgs e)
     {
         var folderDialog = new System.Windows.Forms.FolderBrowserDialog();
         if (folderDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-            Announce($"已选择文件夹：{Path.GetFileName(folderDialog.SelectedPath)}");
+            Announce($"已选择文件夹：{System.IO.Path.GetFileName(folderDialog.SelectedPath)}");
     }
 
     private void Exit_Click(object sender, RoutedEventArgs e) =>
@@ -3489,14 +3043,12 @@ public partial class MainWindow : Window
     private async void ClearHotkey(HotkeySettingItem item)
     {
         var result = await _settingsWorkflow.ClearHotkeyAsync(item.ActionId, item.IsGlobal);
-        _settingsState = result.State;
         PresentHotkeyResult(result, null, $"{item.ActionName}快捷键已清除");
     }
 
     private async void ResetHotkeysBtn_Click(object sender, RoutedEventArgs e)
     {
         var result = await _settingsWorkflow.ResetHotkeysAsync();
-        _settingsState = result.State;
         PresentHotkeyResult(result, null, "快捷键已恢复默认");
     }
 
@@ -3528,7 +3080,6 @@ public partial class MainWindow : Window
             item.IsGlobal,
             key,
             mods);
-        _settingsState = result.State;
         _recordingHotkeyItem = null;
         var saved = _settingsWorkflow.GetHotkeys().First(h =>
             h.ActionId == item.ActionId && h.IsGlobal == item.IsGlobal);
@@ -3671,7 +3222,6 @@ public partial class MainWindow : Window
             var edit = _settingsWorkflow.Edit(settings =>
                 settings.OutputDeviceIndex = _playerService.CurrentOutputDeviceIndex);
             if (!edit.Accepted) return;
-            _settingsState = edit.State;
             var saved = await _settingsWorkflow.SaveAsync(edit.State);
             if (!saved.Succeeded)
                 Announce("保存输出设备设置失败，退出时将再次保存");
@@ -3732,7 +3282,7 @@ public partial class MainWindow : Window
         }
         await _downloads.DownloadAsync(new DownloadRequest(
             music,
-            _defaultDownloadQuality,
+            GetComboTag(DownloadQualityCombo, "128k"),
             GetEffectiveDownloadDir()));
     }
 

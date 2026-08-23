@@ -40,12 +40,12 @@ public class TtsService : ITtsService
         }
     }
 
-    public async Task SpeakAsync(string text)
+    public Task SpeakAsync(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
             _logger.LogWarning("TTS文本为空");
-            return;
+            return Task.CompletedTask;
         }
 
         _logger.LogInformation("朗读文本: {Text}", text);
@@ -59,6 +59,8 @@ public class TtsService : ITtsService
         {
             _logger.LogError(ex, "朗读失败");
         }
+
+        return Task.CompletedTask;
     }
 
     public async Task SpeakQueuedAsync(string text)

@@ -21,9 +21,7 @@ public readonly record struct ShutdownResult(ShutdownStatus Status, string Phase
     public bool Succeeded => Status == ShutdownStatus.Completed;
 }
 
-internal sealed record ApplicationShutdownSnapshot(
-    SettingsEditState Settings,
-    IReadOnlyList<MusicSource> Sources);
+internal sealed record ApplicationShutdownSnapshot(SettingsEditState Settings);
 
 internal interface IApplicationShutdownParticipant
 {
@@ -229,14 +227,22 @@ internal sealed class WpfShutdownFeedback(IAccessibleAnnouncer announcer) : IShu
     }
 }
 
-internal sealed class MainWindowShutdownParticipant(MainWindow window)
+internal sealed class MainWindowShutdownParticipant(
+    MainWindow window,
+    SettingsWorkflow settings,
+    IMusicSourceService musicSources)
     : IApplicationShutdownParticipant
 {
     public ApplicationShutdownSnapshot CaptureAndBlock() =>
         window.CaptureAndBlockShutdown();
 
-    public Task PersistAsync(
+    public async Task PersistAsync(
         ApplicationShutdownSnapshot snapshot,
-        CancellationToken cancellationToken) =>
-        window.PersistShutdownAsync(snapshot, cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        var saved = await settings.SaveAsync(snapshot.Settings, cancellationToken);
+        if (!saved.Succeeded)
+            throw new InvalidOperationException($"Settings persistence failed: {saved.ErrorType}");
+        await musicSources.PersistSourcesAsync(cancellationToken);
+    }
 }

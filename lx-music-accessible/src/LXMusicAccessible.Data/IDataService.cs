@@ -54,21 +54,6 @@ public interface IDataService
     Task<List<MusicSource>> GetMusicSourcesAsync();
 
     /// <summary>
-    /// 删除指定音源
-    /// </summary>
-    Task DeleteMusicSourcesAsync(List<string> ids);
-
-    /// <summary>
-    /// 保存播放历史
-    /// </summary>
-    Task SavePlayHistoryAsync(MusicInfo music);
-
-    /// <summary>
-    /// 获取播放历史
-    /// </summary>
-    Task<List<MusicInfo>> GetPlayHistoryAsync(int count = 50);
-    
-    /// <summary>
     /// 保存播放列表项目
     /// </summary>
     Task SavePlaylistItemAsync(string playlistId, MusicInfo music, int orderNum);
@@ -77,11 +62,6 @@ public interface IDataService
     /// 获取播放列表项目
     /// </summary>
     Task<List<MusicInfo>> GetPlaylistItemsAsync(string playlistId);
-    
-    /// <summary>
-    /// 删除播放列表项目
-    /// </summary>
-    Task DeletePlaylistItemAsync(string itemId);
     
     /// <summary>
     /// 清空播放列表项目

@@ -690,39 +690,6 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         return null;
     }
 
-    /// <summary>通过脚本源的 pic 动作解析封面 URL（失败返回 null；当前 UI 暂无封面展示，仅供接口使用）</summary>
-    public async Task<string?> GetPicFromScriptAsync(
-        MusicInfo music,
-        CancellationToken cancellationToken = default)
-    {
-        if (music == null || string.IsNullOrEmpty(music.Source)) return null;
-        foreach (var script in GetEnabledPlaybackScripts())
-        {
-            try
-            {
-                var url = await _scriptEngine.GetPicAsync(
-                    script,
-                    music,
-                    music.Source,
-                    cancellationToken);
-                if (!string.IsNullOrEmpty(url)) return url;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception exception)
-            {
-                _logger.LogDebug(
-                    "Script cover lookup failed ({ScriptId}): {ErrorType}",
-                    script.Id,
-                    exception.GetType().Name);
-            }
-        }
-        return null;
-    }
-
-    // ================================================================
-    //  分类 / 歌单 / 排行榜 — 委托给内置 API
-    // ================================================================
-
     public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(
         string sourceId = "netease",
         CancellationToken cancellationToken = default)
@@ -751,9 +718,6 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         }
         return PagedResult<Playlist>.Empty(page, pageSize);
     }
-
-    public async Task<PagedResult<Playlist>> GetPlaylistsAsync(int page = 1, int pageSize = 20, string category = "全部")
-        => await GetPlaylistsByCategoryAsync(category, page, pageSize, "netease");
 
     public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(
         string playlistId,
@@ -799,26 +763,6 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         }
         return PagedResult<MusicInfo>.Empty(page, pageSize);
     }
-
-    public async Task<MusicInfo?> GetMusicInfoAsync(string musicId, string source)
-    {
-        if (_apiMap.TryGetValue(source, out var api))
-        {
-            try { var r = await api.SearchAsync(musicId, 1, 1); return r.Items.FirstOrDefault(); }
-            catch (Exception exception)
-            {
-                _logger.LogDebug(
-                    "Music info lookup failed ({SourceId}): {ErrorType}",
-                    source,
-                    exception.GetType().Name);
-            }
-        }
-        return null;
-    }
-
-    // ================================================================
-    //  音源管理
-    // ================================================================
 
     public List<MusicSource> GetAllSources() => _sources.Where(s => !s.IsSystemHidden).ToList();
     public List<MusicSource> GetEnabledSources() => _sources.Where(s => s.IsEnabled).OrderBy(s => s.Priority).ToList();
@@ -936,7 +880,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         StartPersistence();
         RaiseSourcesChanged();
     }
-    public void ClearCache() { _searchSessions.Clear(); }
+    private void ClearCache() { _searchSessions.Clear(); }
     public async Task<bool> UpdateSourceAsync(MusicSource s) { s.LastUpdateDate = DateTime.Now; ClearCache(); await PersistSourcesAsync(); RaiseSourcesChanged(); return true; }
 
     public async Task<MusicSource?> ImportFromUrlAsync(
@@ -1018,7 +962,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
     }
 
     /// <summary>只从已验证的持久化内容重新加载，绝不回源下载。</summary>
-    public async Task<bool> ReloadSourceAsync(MusicSource s)
+    private async Task<bool> ReloadSourceAsync(MusicSource s)
     {
         try
         {

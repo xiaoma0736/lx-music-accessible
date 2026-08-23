@@ -297,12 +297,6 @@ public interface IMusicSourceService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 通过脚本源的 pic 动作解析封面 URL（失败返回 null）
-    /// </summary>
-    Task<string?> GetPicFromScriptAsync(
-        MusicInfo music,
-        CancellationToken cancellationToken = default);
-    /// <summary>
     /// 搜索音乐
     /// </summary>
     Task<PagedResult<MusicInfo>> SearchAsync(
@@ -312,11 +306,6 @@ public interface IMusicSourceService
         string searchType = "song",
         string sourceId = "all",
         CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取音乐信息
-    /// </summary>
-    Task<MusicInfo?> GetMusicInfoAsync(string musicId, string source);
 
     /// <summary>
     /// 获取播放 URL
@@ -335,11 +324,6 @@ public interface IMusicSourceService
         string source,
         string quality = "128k",
         CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取播放列表或分类歌单
-    /// </summary>
-    Task<PagedResult<Playlist>> GetPlaylistsAsync(int page = 1, int pageSize = 20, string category = "全部");
 
     /// <summary>
     /// 获取歌单分类
@@ -449,11 +433,6 @@ public interface IMusicSourceService
     Task<List<string>> GetQualitiesForSourceAsync(string sourceId);
 
     /// <summary>
-    /// 重新加载网络、本地或内嵌内容的脚本音源；内置源直接返回 true
-    /// </summary>
-    Task<bool> ReloadSourceAsync(MusicSource source);
-
-    /// <summary>
     /// 持久化全部音源
     /// </summary>
     Task PersistSourcesAsync(CancellationToken cancellationToken = default);
@@ -463,8 +442,4 @@ public interface IMusicSourceService
     /// </summary>
     List<MusicSource> GetEnabledSources();
 
-    /// <summary>
-    /// 清除缓存
-    /// </summary>
-    void ClearCache();
 }

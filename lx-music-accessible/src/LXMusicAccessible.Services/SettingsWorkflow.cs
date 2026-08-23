@@ -85,6 +85,8 @@ public sealed record HotkeyEditResult(
     public bool Applied => Status is HotkeyEditStatus.Applied or HotkeyEditStatus.Unchanged;
 }
 
+public sealed record DataDirectoryChangeResult(bool Succeeded, string Path, string Message);
+
 /// <summary>
 /// Deep settings module: defaults, immutable editing, validation, versioned persistence,
 /// hotkey conflicts and compensated native registration all live behind this interface.
@@ -144,6 +146,51 @@ public sealed class SettingsWorkflow
     public SettingsEditState Current
     {
         get { lock (_stateGate) return _current; }
+    }
+
+    public string DataDirectory => AppDataPaths.ResolveDataDir();
+
+    public DataDirectoryChangeResult ChangeDataDirectory(string selectedParent)
+    {
+        try
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(selectedParent);
+            var current = Path.GetFullPath(AppDataPaths.ResolveDataDir());
+            var parent = Path.GetFullPath(selectedParent.Trim());
+            var candidate = Path.GetFullPath(Path.Combine(parent, AppDataPaths.DefaultDirName));
+            if (string.Equals(parent, current, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(candidate, current, StringComparison.OrdinalIgnoreCase))
+            {
+                return new(true, current, "已选择当前数据目录");
+            }
+
+            var target = AppDataPaths.CreateOwnedDataDirectory(parent).Path;
+            CopyIfPresent(Path.Combine(current, "lxmusic.db"), Path.Combine(target, "lxmusic.db"));
+            var sourceLogs = Path.Combine(current, "logs");
+            if (Directory.Exists(sourceLogs))
+            {
+                var targetLogs = Path.Combine(target, "logs");
+                Directory.CreateDirectory(targetLogs);
+                foreach (var source in Directory.EnumerateFiles(sourceLogs))
+                    CopyIfPresent(source, Path.Combine(targetLogs, Path.GetFileName(source)));
+            }
+            AppDataPaths.WriteDataDirPointer(target);
+            return new(true, target, "数据目录已设置，请重启应用后完全生效");
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or InvalidOperationException
+            or NotSupportedException)
+        {
+            _logger.LogWarning("Data directory change failed: {ErrorType}", exception.GetType().Name);
+            return new(false, DataDirectory, "设置数据目录失败");
+        }
+    }
+
+    private static void CopyIfPresent(string source, string target)
+    {
+        if (File.Exists(source) && !File.Exists(target)) File.Copy(source, target, overwrite: false);
     }
 
     public async Task<SettingsEditState> LoadAsync(

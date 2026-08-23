@@ -497,7 +497,7 @@
                                         <Label Content="按 Alt+F4 时：" VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
                                         <ComboBox x:Name="CloseBehaviorCombo" Width="180" Height="28" KeyboardNavigation.TabIndex="64"
                                                   AutomationProperties.Name="Alt加F4行为" AutomationProperties.HelpText="选择关闭应用或隐藏到系统托盘"
-                                                  SelectionChanged="CloseBehaviorCombo_SelectionChanged" IsTabStop="True">
+                                                  IsTabStop="True">
                                             <ComboBoxItem Content="关闭应用" Tag="close" IsSelected="True"/>
                                             <ComboBoxItem Content="隐藏到系统托盘" Tag="hide"/>
                                         </ComboBox>
@@ -542,7 +542,7 @@
                                                VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
                                         <ComboBox x:Name="DownloadQualityCombo" Width="180" Height="28" KeyboardNavigation.TabIndex="71"
                                                   AutomationProperties.Name="默认下载音质" AutomationProperties.HelpText="批量下载与下载专辑时使用的音质；下载不了该音质时自动回退到最高可用音质"
-                                                  SelectionChanged="DownloadQualityCombo_SelectionChanged" IsTabStop="True">
+                                                  IsTabStop="True">
                                             <ComboBoxItem Content="128k 标准" Tag="128k" IsSelected="True"/>
                                             <ComboBoxItem Content="192k" Tag="192k"/>
                                             <ComboBoxItem Content="320k 高品质" Tag="320k"/>

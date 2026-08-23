@@ -21,7 +21,6 @@ public partial class PlaylistImportView : UserControl
     private bool _loggedIn;
     private List<RemotePlaylist> _playlists = new();
     private bool _selectAllState;
-    private bool _songListAttached;
 
     internal PlaylistImportView(
         IPlaylistImportService service,
@@ -366,11 +365,6 @@ public partial class PlaylistImportView : UserControl
     {
         if (remote == null) return;
         // 歌曲预览列表挂接主窗口的播放/右键菜单/收藏能力（仅一次）
-        if (!_songListAttached)
-        {
-            _songListAttached = true;
-            (HostWindow as MainWindow)?.AttachSongListCapabilities(PlaylistSongsList);
-        }
         Announce($"正在获取歌单《{remote.Name}》的歌曲，请稍候。");
         try
         {

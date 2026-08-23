@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using LXMusicAccessible.Models;
@@ -38,6 +39,10 @@ public sealed record DownloadListResult(
 
 public sealed record ExternalPlaybackTarget(string Value);
 
+public sealed record ExternalPlaybackRequest(string PlayerPath, MusicInfo Music, string Quality);
+
+public sealed record ExternalPlaybackResult(bool Succeeded, string Message);
+
 public sealed record DownloadCacheCleanupResult(int DeletedFiles, long FreedBytes);
 
 /// <summary>
@@ -61,10 +66,14 @@ public interface IDownloadWorkflow
         CancellationToken cancellationToken = default);
     void Cancel(DownloadTask task);
     void ClearCompleted();
-    string GetDefaultDownloadDirectory();
+    string ResolveDownloadDirectory(string? requested = null);
+    ExternalPlaybackResult OpenDownloadDirectory(string? requested = null);
     Task<ExternalPlaybackTarget?> PrepareExternalPlaybackAsync(
         MusicInfo music,
         string quality,
+        CancellationToken cancellationToken = default);
+    Task<ExternalPlaybackResult> PlayExternallyAsync(
+        ExternalPlaybackRequest request,
         CancellationToken cancellationToken = default);
     DownloadCacheCleanupResult ClearTemporaryFiles();
 }
@@ -123,6 +132,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     private readonly HttpClient _httpClient;
     private readonly BackgroundWorkHost _backgroundWork;
     private readonly IAccessibleAnnouncer _announcer;
+    private readonly IProcessLauncher _processLauncher;
     private readonly string _temporaryRoot;
     private readonly Dictionary<string, DownloadPlan> _plans = new(StringComparer.Ordinal);
     private readonly HashSet<string> _externalTemporaryFiles = new(StringComparer.OrdinalIgnoreCase);
@@ -137,14 +147,16 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         ILyricService lyrics,
         HttpClient httpClient,
         BackgroundWorkHost backgroundWork,
-        IAccessibleAnnouncer announcer)
+        IAccessibleAnnouncer announcer,
+        IProcessLauncher processLauncher)
         : this(
             logger,
             new DownloadSourceAdapter(musicSources, lyrics),
             httpClient,
             backgroundWork,
             announcer,
-            temporaryRoot: null)
+            temporaryRoot: null,
+            processLauncher)
     {
     }
 
@@ -154,13 +166,15 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         HttpClient httpClient,
         BackgroundWorkHost backgroundWork,
         IAccessibleAnnouncer announcer,
-        string? temporaryRoot = null)
+        string? temporaryRoot,
+        IProcessLauncher processLauncher)
     {
         _logger = logger;
         _source = source;
         _httpClient = httpClient;
         _backgroundWork = backgroundWork;
         _announcer = announcer;
+        _processLauncher = processLauncher;
         _temporaryRoot = Path.GetFullPath(temporaryRoot ?? Path.GetTempPath());
         Tasks = new ReadOnlyObservableCollection<DownloadTask>(_tasks);
     }
@@ -358,7 +372,34 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         }
     }
 
-    public string GetDefaultDownloadDirectory()
+    public string ResolveDownloadDirectory(string? requested = null)
+    {
+        try { return ResolveTargetDirectory(requested); }
+        catch (DownloadSafetyException) when (!string.IsNullOrWhiteSpace(requested))
+        {
+            return ResolveTargetDirectory(null);
+        }
+    }
+
+    public ExternalPlaybackResult OpenDownloadDirectory(string? requested = null)
+    {
+        try
+        {
+            var directory = ResolveDownloadDirectory(requested);
+            _processLauncher.Start(new ProcessStartInfo("explorer.exe", $"\"{directory}\"")
+            {
+                UseShellExecute = true
+            });
+            return new(true, $"已打开下载文件夹 {directory}");
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning("Opening download directory failed: {ErrorType}", exception.GetType().Name);
+            return new(false, "打开下载文件夹失败");
+        }
+    }
+
+    private static string GetDefaultDownloadDirectory()
     {
         var music = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
         if (!string.IsNullOrWhiteSpace(music)) return Path.Combine(music, "落雪音乐下载");
@@ -434,6 +475,41 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         if (result is null)
             SafeAnnounce(new("未能准备外部播放链接", AnnouncementKind.Error, activityId));
         return result;
+    }
+
+    public async Task<ExternalPlaybackResult> PlayExternallyAsync(
+        ExternalPlaybackRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var playerPath = Environment.ExpandEnvironmentVariables(
+            request.PlayerPath?.Trim().Trim('"').Trim() ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(playerPath))
+            return new(false, "请先在设置中配置第三方播放器");
+        if (!File.Exists(playerPath))
+            return new(false, "未找到第三方播放器程序，请检查设置中的播放器路径");
+
+        try
+        {
+            var target = await PrepareExternalPlaybackAsync(
+                request.Music,
+                request.Quality,
+                cancellationToken);
+            if (target is null) return new(false, "未能准备外部播放内容");
+            _processLauncher.Start(new ProcessStartInfo
+            {
+                FileName = playerPath,
+                Arguments = $"\"{target.Value}\"",
+                UseShellExecute = false,
+                WorkingDirectory = Path.GetDirectoryName(playerPath) ?? string.Empty
+            });
+            return new(true, $"已调用第三方播放器播放：{request.Music.Title}，{request.Music.Artist}");
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning("External player launch failed: {ErrorType}", exception.GetType().Name);
+            return new(false, "调用第三方播放器失败");
+        }
     }
 
     public DownloadCacheCleanupResult ClearTemporaryFiles()

@@ -7,6 +7,7 @@ using LXMusicAccessible.App;
 using LXMusicAccessible.Audio;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Data;
+using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
 using LXMusicAccessible.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
@@ -112,12 +113,13 @@ public sealed class ApplicationHostTests
             Assert.Equal("ready", await data.GetSettingValueAsync("test.host-smoke"));
             Assert.NotEmpty(await data.GetPlaylistsAsync());
 
-            var fileStorage = app.Services.GetRequiredService<IDataStorageService>();
-            await fileStorage.SaveUserSettingsAsync("fixture", new { Ready = true });
+            var history = app.Services.GetRequiredService<LocalSearchHistoryStore>();
+            await history.SaveAsync([new SearchHistory { Keyword = "fixture" }]);
+            Assert.Equal("fixture", Assert.Single(await history.LoadAsync()).Keyword);
             Assert.True(File.Exists(Path.Combine(
                 dataDirectory,
                 "file-storage",
-                "user_settings.json")));
+                "search_history.json")));
 
             var accessibility = app.Services.GetRequiredService<IAccessibleAnnouncer>();
             var speech = app.Services.GetRequiredService<ITtsService>();

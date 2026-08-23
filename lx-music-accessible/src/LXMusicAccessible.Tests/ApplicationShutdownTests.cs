@@ -257,7 +257,7 @@ public sealed class ApplicationShutdownTests
         {
             CaptureCount++;
             events.Add("capture-block");
-            return new(new SettingsEditState(0, new UserSettings()), Array.Empty<MusicSource>());
+            return new(new SettingsEditState(0, new UserSettings()));
         }
 
         public async Task PersistAsync(
@@ -286,14 +286,14 @@ public sealed class ApplicationShutdownTests
         IReadOnlyList<MusicSource> sources) : IApplicationShutdownParticipant
     {
         public ApplicationShutdownSnapshot CaptureAndBlock() =>
-            new(new SettingsEditState(0, settings), sources);
+            new(new SettingsEditState(0, settings));
 
         public async Task PersistAsync(
             ApplicationShutdownSnapshot snapshot,
             CancellationToken cancellationToken)
         {
             await data.SaveSettingsAsync(snapshot.Settings.Settings, cancellationToken);
-            await data.SaveMusicSourcesAsync(snapshot.Sources.ToList(), cancellationToken);
+            await data.SaveMusicSourcesAsync(sources.ToList(), cancellationToken);
         }
     }
 
