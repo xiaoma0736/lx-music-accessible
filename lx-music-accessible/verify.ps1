@@ -14,7 +14,7 @@ $releaseBuild = Join-Path $root "build_release.ps1"
 Push-Location $root
 try {
     Write-Host "== 1/7 Restore =="
-    & dotnet restore $solution
+    & dotnet restore $solution --force-evaluate
     if ($LASTEXITCODE -ne 0) { throw "Restore failed." }
 
     Write-Host "== 2/7 Audit High/Critical dependencies =="

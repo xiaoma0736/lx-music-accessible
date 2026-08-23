@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     
     <AssemblyName>落雪音乐无障碍版V2.0</AssemblyName>
     <RootNamespace>LXMusicAccessible</RootNamespace>

@@ -29,7 +29,7 @@
     <RemoveDir Directories="$(InstallerPayloadDirectory)" />
     <MakeDir Directories="$(InstallerPayloadDirectory);$([System.IO.Path]::GetDirectoryName('$(InstallerPayloadArchive)'))" />
     <MSBuild Projects="@(InstallerApplicationProject)"
-             Targets="Restore;Publish"
+             Targets="Publish"
              BuildInParallel="false"
              Properties="Configuration=$(Configuration);RuntimeIdentifier=$(InstallerRuntimeIdentifier);SelfContained=true;PublishDir=$([MSBuild]::EnsureTrailingSlash('$(InstallerPayloadDirectory)'))" />
     <ZipDirectory SourceDirectory="$(InstallerPayloadDirectory)"
