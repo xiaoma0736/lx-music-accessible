@@ -2,6 +2,54 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+if (-not ("NativeSqliteVersion" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class NativeSqliteVersion
+{
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate IntPtr SqliteVersion();
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr LoadLibraryW(string path);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+    private static extern IntPtr GetProcAddress(IntPtr module, string name);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool FreeLibrary(IntPtr module);
+
+    public static string Read(string path)
+    {
+        var module = LoadLibraryW(path);
+        if (module == IntPtr.Zero)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to load SQLite runtime: " + path);
+
+        try
+        {
+            var export = GetProcAddress(module, "sqlite3_libversion");
+            if (export == IntPtr.Zero)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "SQLite version export is missing: " + path);
+
+            var readVersion = (SqliteVersion)Marshal.GetDelegateForFunctionPointer(export, typeof(SqliteVersion));
+            var version = Marshal.PtrToStringAnsi(readVersion());
+            if (version == null)
+                throw new InvalidOperationException("SQLite returned no version.");
+
+            return version;
+        }
+        finally
+        {
+            FreeLibrary(module);
+        }
+    }
+}
+"@
+}
+
 $root = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $rootPrefix = $root.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
 $src = Join-Path $root "src"
@@ -42,6 +90,18 @@ function Assert-ZipPayload([string]$ArchivePath, [string[]]$RequiredFiles) {
     finally {
         $archive.Dispose()
     }
+}
+
+function Assert-SqliteVersion([string]$Directory, [Version]$MinimumVersion) {
+    $libraryPath = Join-Path $Directory "e_sqlite3.dll"
+    $versionText = [NativeSqliteVersion]::Read($libraryPath)
+    $version = [Version]$versionText
+    if ($version -lt $MinimumVersion) {
+        throw "SQLite $version is older than required security baseline $MinimumVersion in $libraryPath"
+    }
+
+    Write-Host "Loaded SQLite runtime: $version ($libraryPath)"
+    return $version.ToString()
 }
 
 function Invoke-Installer([string]$Installer, [string[]]$Arguments, [string]$FailureMessage) {
@@ -102,6 +162,7 @@ $requiredPayload = @(
     "UninstallCleanup.ps1",
     $userDocuments[0]
 )
+$minimumSqliteVersion = [Version]"3.50.2"
 
 $selfContainedZip = Join-Path $releaseRoot "LXMusicAccessible-$version-win-x64-self-contained.zip"
 $frameworkDependentZip = Join-Path $releaseRoot "LXMusicAccessible-$version-win-x64-framework-dependent.zip"
@@ -130,6 +191,7 @@ if (-not (Test-Path -LiteralPath $setupExecutable -PathType Leaf)) {
 }
 Assert-Payload $selfContained $requiredPayload
 Assert-ZipPayload $payloadArchive $requiredPayload
+$selfContainedSqliteVersion = Assert-SqliteVersion $selfContained $minimumSqliteVersion
 
 $appVersion = (Get-Item -LiteralPath (Join-Path $selfContained $applicationExecutable)).VersionInfo.ProductVersion
 $setupVersion = (Get-Item -LiteralPath $setupExecutable).VersionInfo.ProductVersion
@@ -147,6 +209,10 @@ Invoke-DotNet @(
     "--output", $frameworkDependent
 ) "Framework-dependent publish failed."
 Assert-Payload $frameworkDependent $requiredPayload
+$frameworkDependentSqliteVersion = Assert-SqliteVersion $frameworkDependent $minimumSqliteVersion
+if ($frameworkDependentSqliteVersion -ne $selfContainedSqliteVersion) {
+    throw "Published SQLite runtime versions differ. self-contained=$selfContainedSqliteVersion; framework-dependent=$frameworkDependentSqliteVersion"
+}
 
 Write-Host "== 3/6 Create release artifacts =="
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
@@ -186,6 +252,7 @@ $manifest = [ordered]@{
     product = "LX Music Accessible"
     version = $version
     runtime = "win-x64"
+    sqliteVersion = $selfContainedSqliteVersion
     generatedAtUtc = [DateTime]::UtcNow.ToString("O")
     payload = @($payloadFiles)
     artifacts = @($releaseArtifacts)
@@ -196,6 +263,14 @@ $manifestJson = $manifest | ConvertTo-Json -Depth 5
 Write-Host "== 5/6 Verify recorded SHA-256 values =="
 $savedManifest = [System.IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json
 if ($savedManifest.version -ne $version) { throw "Release manifest version mismatch." }
+if ($savedManifest.sqliteVersion -ne $selfContainedSqliteVersion) { throw "Release manifest SQLite version mismatch." }
+foreach ($payload in $savedManifest.payload) {
+    $payloadPath = Join-Path $selfContained $payload.path
+    $actualHash = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -ne $payload.sha256) {
+        throw "Release payload hash mismatch: $($payload.path)"
+    }
+}
 foreach ($artifact in $savedManifest.artifacts) {
     $artifactPath = Join-Path $releaseRoot $artifact.file
     $actualHash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
