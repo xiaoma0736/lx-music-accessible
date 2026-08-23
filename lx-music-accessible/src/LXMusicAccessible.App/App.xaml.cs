@@ -126,7 +126,7 @@ public partial class App : Application
             // 先创建主窗口，让用户能看到界面
             // Resolve the effective data directory before creating the window,
             // configuring logging, or opening the database.
-            var dataDir = AppDataPaths.ResolveDataDir();
+            var dataDir = AppDataPaths.PrepareDataDir();
             Directory.CreateDirectory(Path.Combine(dataDir, "logs"));
 
             _mainWindow = new MainWindow();
@@ -224,7 +224,14 @@ public partial class App : Application
             DeleteShortcuts("落雪音乐无障碍版*.lnk");
             DeleteUninstallRegistry();
 
-            if (delData) DeleteUserData();
+            if (delData && !DeleteUserData())
+            {
+                MessageBox.Show(
+                    "部分或全部用户数据无法证明属于本应用，或清理时发生错误。为保护您的文件，这些数据已保留。",
+                    "落雪音乐无障碍版 卸载",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
 
             var installDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
             ScheduleInstallDirDeletion(installDir);
@@ -265,14 +272,46 @@ public partial class App : Application
         catch { }
     }
 
-    private static void DeleteUserData()
+    private static bool DeleteUserData()
     {
-        var defaultDir = AppDataPaths.DefaultDataDir;
-        var effective = AppDataPaths.ResolveDataDir();
-        foreach (var dir in new[] { effective, defaultDir }.Distinct(StringComparer.OrdinalIgnoreCase))
+        try
         {
-            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+            var logDirectory = Path.Combine(Path.GetTempPath(), "LXMusicAccessible");
+            Directory.CreateDirectory(logDirectory);
+            Log.Logger = new LoggerConfiguration()
+                .WriteTo.File(Path.Combine(logDirectory, "uninstall-cleanup.log"), shared: true)
+                .CreateLogger();
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Debug.WriteLine($"Cleanup logging unavailable: {ex.GetType().Name}");
+        }
+
+        IReadOnlyList<AppDataCleanupResult> results;
+        try
+        {
+            results = AppDataPaths.CleanupOwnedData(failure =>
+                Log.Warning(
+                    "App data cleanup failed: Operation={Operation}, RelativePath={RelativePath}, ErrorType={ErrorType}",
+                    failure.Operation,
+                    failure.RelativePath,
+                    failure.ErrorType));
+
+            foreach (var result in results.Where(result => !result.Accepted))
+            {
+                Log.Warning("App data cleanup refused: Reason={Reason}", result.Refusal);
+            }
+
+            if (results.Any(result => result.PreservedUnknownContent))
+                Log.Information("App data cleanup preserved unknown content");
+        }
+        finally
+        {
+            Log.CloseAndFlush();
+        }
+
+        return results.Count > 0
+            && results.All(result => result.Succeeded && !result.PreservedUnknownContent);
     }
     private static void ScheduleInstallDirDeletion(string installDir)
     {

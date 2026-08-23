@@ -1158,15 +1158,18 @@ public partial class MainWindow : Window
                 UseDescriptionForTitle = true
             };
             if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
-            var target = dlg.SelectedPath?.Trim();
-            if (string.IsNullOrEmpty(target)) return;
+            var selectedParent = dlg.SelectedPath?.Trim();
+            if (string.IsNullOrEmpty(selectedParent)) return;
             var current = AppDataPaths.ResolveDataDir();
-            if (string.Equals(Path.GetFullPath(target), Path.GetFullPath(current), StringComparison.OrdinalIgnoreCase))
+            var targetCandidate = Path.GetFullPath(Path.Combine(selectedParent, AppDataPaths.DefaultDirName));
+            if (string.Equals(Path.GetFullPath(selectedParent), Path.GetFullPath(current), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(targetCandidate, Path.GetFullPath(current), StringComparison.OrdinalIgnoreCase))
             {
                 Announce("已选择当前数据目录");
                 return;
             }
-            Directory.CreateDirectory(target);
+            var ownedDirectory = AppDataPaths.CreateOwnedDataDirectory(selectedParent);
+            var target = ownedDirectory.Path;
             // Copy (not move) the existing database and logs so the old location
             // is retained as a backup; takes full effect after restart.
             MigrateDataDir(current, target);
