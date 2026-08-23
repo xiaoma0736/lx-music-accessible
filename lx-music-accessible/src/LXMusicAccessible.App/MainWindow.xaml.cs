@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private readonly IDataStorageService _dataStorageService;
     private readonly IProcessLauncher _processLauncher;
     private readonly PlaylistImportView _playlistImportPanel;
+    private readonly ApplicationWindowFactory _windowFactory;
     private string _defaultQuality = "128k";
     private string _defaultDownloadQuality = "128k";
     private string _currentPlayingQuality = "128k"; // 最近一次播放使用的音质（查看歌曲详情用）
@@ -153,7 +154,8 @@ public partial class MainWindow : Window
         IDownloadService downloadService,
         IDataStorageService dataStorageService,
         IProcessLauncher processLauncher,
-        PlaylistImportView playlistImportPanel)
+        PlaylistImportView playlistImportPanel,
+        ApplicationWindowFactory windowFactory)
     {
         _accessibilityService = accessibilityService;
         _playerService = playerService;
@@ -166,6 +168,7 @@ public partial class MainWindow : Window
         _dataStorageService = dataStorageService;
         _processLauncher = processLauncher;
         _playlistImportPanel = playlistImportPanel;
+        _windowFactory = windowFactory;
 
         InitializeComponent();
         PlaylistImportHost.Content = _playlistImportPanel;
@@ -2507,7 +2510,7 @@ public partial class MainWindow : Window
     private LyricsWindow EnsureLyricsWindow()
     {
         if (_lyricsWindow == null)
-            _lyricsWindow = new LyricsWindow(this);
+            _lyricsWindow = _windowFactory.CreateLyrics(TryHandleLyricsWindowHotkey);
         return _lyricsWindow;
     }
 
@@ -3850,7 +3853,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var guide = new UserGuideWindow(_accessibilityService) { Owner = this };
+            var guide = _windowFactory.CreateUserGuide(this);
             guide.ShowDialog();
         }
         catch (Exception ex)
@@ -3863,7 +3866,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var window = new SponsorQrWindow(_accessibilityService) { Owner = this };
+            var window = _windowFactory.CreateSponsor(this);
             window.ShowDialog();
         }
         catch (Exception ex)

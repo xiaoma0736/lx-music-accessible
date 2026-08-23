@@ -59,11 +59,6 @@ internal sealed class TestApplicationHost : IAsyncDisposable
         try
         {
             host = ApplicationHost.CreateBuilder(dataDirectory)
-                .UseDefaultServiceProvider((_, options) =>
-                {
-                    options.ValidateOnBuild = true;
-                    options.ValidateScopes = true;
-                })
                 .ConfigureLogging(logging => logging.ClearProviders())
                 .ConfigureServices((_, services) =>
                 {
@@ -99,7 +94,7 @@ internal sealed class TestApplicationHost : IAsyncDisposable
             if (host is not null)
             {
                 try { await host.StopAsync(); } catch { }
-                host.Dispose();
+                await ApplicationHost.DisposeHostAsync(host);
             }
 
             SqliteConnection.ClearAllPools();
@@ -119,7 +114,7 @@ internal sealed class TestApplicationHost : IAsyncDisposable
         }
         finally
         {
-            _host.Dispose();
+            await ApplicationHost.DisposeHostAsync(_host);
             SqliteConnection.ClearAllPools();
             DeleteOwnedDirectory(DataDirectory);
         }

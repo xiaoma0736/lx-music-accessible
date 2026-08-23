@@ -43,6 +43,11 @@ public static class ApplicationHost
         var dataDir = Path.GetFullPath(dataDirectory);
 
         return Host.CreateDefaultBuilder()
+            .UseDefaultServiceProvider((_, options) =>
+            {
+                options.ValidateOnBuild = true;
+                options.ValidateScopes = true;
+            })
             .ConfigureServices((_, services) =>
             {
                 services.AddSingleton<MusicHttpClient>();
@@ -84,11 +89,22 @@ public static class ApplicationHost
                     sp.GetRequiredService<IPlaylistImportService>(),
                     sp.GetRequiredService<IAccessibilityService>(),
                     sp.GetRequiredService<IPlaylistLoginWindowFactory>()));
+                services.AddSingleton<ApplicationWindowFactory>();
                 services.AddSingleton<MainWindow>();
                 services.AddSingleton<IApplicationShell, WpfApplicationShell>();
 
                 replaceAdapters?.Invoke(services);
             });
+    }
+
+    internal static ValueTask DisposeHostAsync(IHost host)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        if (host is IAsyncDisposable asyncDisposable)
+            return asyncDisposable.DisposeAsync();
+
+        host.Dispose();
+        return ValueTask.CompletedTask;
     }
 
     private static ApplicationRuntime CreateRuntime(
@@ -97,13 +113,7 @@ public static class ApplicationHost
         IStartupFailurePresenter failurePresenter,
         Action<IServiceCollection>? replaceAdapters = null) =>
         new(
-            () => CreateBuilder(dataDirectory, replaceAdapters)
-                .UseDefaultServiceProvider((_, options) =>
-                {
-                    options.ValidateOnBuild = true;
-                    options.ValidateScopes = true;
-                })
-                .Build(),
+            () => CreateBuilder(dataDirectory, replaceAdapters).Build(),
             initializer,
             failurePresenter);
 }

@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
 using LXMusicAccessible.Services;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Core.MusicApi;
@@ -15,26 +16,36 @@ class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Console.WriteLine("=== LX Music 音源模块全链路验证 v3 ===\n");
 
-        var services = new ServiceCollection();
-        services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
-        services.AddSingleton<string>("testdata"); // DataService 需要的 dataDir
-        services.AddSingleton<MusicHttpClient>();
-        services.AddSingleton<ScriptMusicSource>();
-        services.AddSingleton<LxScriptEngine>();
-        services.AddSingleton<NeteaseMusicService>();
-        services.AddSingleton<QqMusicService>();
-        services.AddSingleton<KugouMusicService>();
-        services.AddSingleton<KuwoMusicService>();
-        services.AddSingleton<MiguMusicService>();
-        services.AddSingleton<IPlaylistImportProvider, NeteasePlaylistProvider>();
-        services.AddSingleton<IPlaylistImportProvider, QqPlaylistProvider>();
-        services.AddSingleton<IPlaylistImportProvider, KugouPlaylistProvider>();
-        services.AddSingleton<IPlaylistImportProvider, KuwoPlaylistProvider>();
-        services.AddSingleton<IPlaylistImportService, PlaylistImportService>();
-        services.AddSingleton<IDataService, DataService>();
-        services.AddSingleton<IMusicSourceService, MusicSourceService>();
-        services.AddSingleton<ILyricService, LyricService>();
-        var sp = services.BuildServiceProvider();
+        using var host = Host.CreateDefaultBuilder(args)
+            .UseDefaultServiceProvider((_, options) =>
+            {
+                options.ValidateOnBuild = true;
+                options.ValidateScopes = true;
+            })
+            .ConfigureServices(services =>
+            {
+                services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
+                services.AddSingleton<string>("testdata"); // DataService 需要的 dataDir
+                services.AddSingleton<MusicHttpClient>();
+                services.AddSingleton<ScriptMusicSource>();
+                services.AddSingleton<LxScriptEngine>();
+                services.AddSingleton<NeteaseMusicService>();
+                services.AddSingleton<QqMusicService>();
+                services.AddSingleton<KugouMusicService>();
+                services.AddSingleton<KuwoMusicService>();
+                services.AddSingleton<MiguMusicService>();
+                services.AddSingleton<IPlaylistImportProvider, NeteasePlaylistProvider>();
+                services.AddSingleton<IPlaylistImportProvider, QqPlaylistProvider>();
+                services.AddSingleton<IPlaylistImportProvider, KugouPlaylistProvider>();
+                services.AddSingleton<IPlaylistImportProvider, KuwoPlaylistProvider>();
+                services.AddSingleton<IPlaylistImportService, PlaylistImportService>();
+                services.AddSingleton<IDataService, DataService>();
+                services.AddSingleton<IMusicSourceService, MusicSourceService>();
+                services.AddSingleton<ILyricService, LyricService>();
+            })
+            .Build();
+        await host.StartAsync();
+        var sp = host.Services;
         var src = (MusicSourceService)sp.GetRequiredService<IMusicSourceService>();
         var scriptSource = sp.GetRequiredService<ScriptMusicSource>();
         int pass = 0, fail = 0;
@@ -809,6 +820,7 @@ send(EVENT_NAMES.inited, { sources: {} });
         catch (Exception ex) { Console.WriteLine($"  23 异常: {ex.Message}"); }
 
 Console.WriteLine($"\n=== 验证完成：通过 {pass}，失败 {fail} ===");
+        await host.StopAsync();
     }
     /// <summary>生成指定时长/频率的正弦单声道 16bit WAV（用于播放器冒烟测试）</summary>
     static void GenerateSineWav(string path, double seconds, double freq)

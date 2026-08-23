@@ -11,13 +11,14 @@ namespace LXMusicAccessible.App;
 /// </summary>
 public partial class LyricsWindow : Window
 {
-    private readonly MainWindow _owner;
+    private readonly Func<KeyEventArgs, bool> _handleHotkey;
     private bool _allowClose; // 应用退出时置 true，允许真正关闭
 
-    public LyricsWindow(MainWindow owner)
+    public LyricsWindow(Func<KeyEventArgs, bool> handleHotkey)
     {
+        ArgumentNullException.ThrowIfNull(handleHotkey);
         InitializeComponent();
-        _owner = owner;
+        _handleHotkey = handleHotkey;
     }
 
     /// <summary>设置歌词列表内容（共享主窗口的歌词行集合，IsCurrent 高亮通过绑定自动跟随）</summary>
@@ -77,7 +78,7 @@ public partial class LyricsWindow : Window
             return;
         }
         // 其余按键先交给主窗口处理播放局部热键（F1~F12、Shift+F7/F8 等）
-        if (_owner.TryHandleLyricsWindowHotkey(e))
+        if (_handleHotkey(e))
             e.Handled = true;
     }
 

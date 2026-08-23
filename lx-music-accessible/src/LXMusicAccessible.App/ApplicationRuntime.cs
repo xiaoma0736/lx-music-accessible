@@ -146,7 +146,7 @@ public sealed class ApplicationRuntime : IAsyncDisposable
         var host = Interlocked.Exchange(ref _host, null);
         if (host is null) return;
         try { await host.StopAsync(cancellationToken); }
-        finally { host.Dispose(); }
+        finally { await ApplicationHost.DisposeHostAsync(host); }
     }
 }
 

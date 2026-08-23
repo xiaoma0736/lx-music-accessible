@@ -1,0 +1,27 @@
+using System.Windows;
+using System.Windows.Input;
+using LXMusicAccessible.Services;
+
+namespace LXMusicAccessible.App;
+
+/// <summary>Creates runtime-dependent secondary windows from the Host-owned dependency graph.</summary>
+public sealed class ApplicationWindowFactory(IAccessibilityService announcer)
+{
+    public UserGuideWindow CreateUserGuide(Window? owner) =>
+        WithOwner(new UserGuideWindow(announcer), owner);
+
+    public SponsorQrWindow CreateSponsor(Window? owner) =>
+        WithOwner(new SponsorQrWindow(announcer), owner);
+
+    public LyricsWindow CreateLyrics(Func<KeyEventArgs, bool> handleHotkey)
+    {
+        ArgumentNullException.ThrowIfNull(handleHotkey);
+        return new LyricsWindow(handleHotkey);
+    }
+
+    private static T WithOwner<T>(T window, Window? owner) where T : Window
+    {
+        if (owner is not null) window.Owner = owner;
+        return window;
+    }
+}

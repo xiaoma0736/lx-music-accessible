@@ -102,6 +102,23 @@ try {
     & $textCheck
     if ($LASTEXITCODE -ne 0) { throw "Repository text checks failed." }
 
+    $sourceFiles = @(Get-ChildItem -LiteralPath (Join-Path $root "src") -Filter *.cs -File -Recurse |
+        Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' })
+    $locatorMatches = @($sourceFiles | Select-String -Pattern @(
+        '\bBuildServiceProvider\s*\(',
+        '\bstatic\s+(?:readonly\s+)?IServiceProvider\b',
+        '\bServiceLocator\b'))
+    if ($locatorMatches.Count -gt 0) {
+        $locatorMatches | ForEach-Object { Write-Host "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
+        throw "Static service locator or second container construction found."
+    }
+
+    $mainWindowSource = Get-Content -Raw -LiteralPath (Join-Path $root "src\LXMusicAccessible.App\MainWindow.xaml.cs")
+    if ($mainWindowSource -match '\bIServiceProvider\b') {
+        throw "MainWindow must not hold or accept a general IServiceProvider."
+    }
+    Write-Host "Host composition check passed ($($sourceFiles.Count) C# source files)."
+
     Write-Host "== 7/7 Clean release and installer verification =="
     & $releaseBuild
     if ($LASTEXITCODE -ne 0) { throw "Release verification failed." }
