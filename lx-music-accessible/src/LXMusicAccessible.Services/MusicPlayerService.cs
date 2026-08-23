@@ -25,7 +25,6 @@ public class MusicPlayerService : IMusicPlayerService
     private CancellationTokenSource? _precacheCts;
 
     public event EventHandler<Models.PlayerStateChangedEventArgs>? StateChanged;
-    public event EventHandler<TimeSpan>? ProgressChanged;
     public event EventHandler? QueueCompleted;
 
     public bool IsPlaying => _state == Models.PlayerState.Playing;

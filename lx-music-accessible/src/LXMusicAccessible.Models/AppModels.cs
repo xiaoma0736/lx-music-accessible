@@ -341,28 +341,3 @@ public class SearchHistory
     public override string ToString() => Keyword;
 }
 
-/// <summary>
-/// 热门搜索词
-/// </summary>
-public class HotSearchWord
-{
-    public string Word { get; set; } = string.Empty;
-    public int Score { get; set; }
-    public string Source { get; set; } = string.Empty;
-    public DateTime UpdateTime { get; set; } = DateTime.Now;
-    public int? Trend { get; set; }
-
-    public override string ToString() => Word;
-}
-
-/// <summary>
-/// 热门搜索分组（按音源分组）
-/// </summary>
-public class HotSearchGroup
-{
-    public string Source { get; set; } = string.Empty;
-    public string SourceName { get; set; } = string.Empty;
-    public List<HotSearchWord> Words { get; set; } = new();
-    public DateTime UpdateTime { get; set; } = DateTime.Now;
-}
-

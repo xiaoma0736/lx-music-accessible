@@ -811,11 +811,4 @@ public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128
         return lines.Count > 0 ? new Lyric { Lines = lines } : null;
     }
 
-    public async Task<List<HotSearchWord>> GetHotSearchWordsAsync()
-    {
-        return await Task.FromResult(new List<HotSearchWord>
-        {
-            new() { Word = "热门歌曲", Score = 100, Source = SourceId },
-        });
-    }
 }

@@ -43,7 +43,5 @@ public interface IMusicApi
     /// <summary>获取排行榜详情（歌曲列表）</summary>
     Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50);
 
-    /// <summary>获取热门搜索词</summary>
-    Task<List<HotSearchWord>> GetHotSearchWordsAsync();
 }
 

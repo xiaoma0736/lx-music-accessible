@@ -494,35 +494,6 @@ public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128
         }
     }
 
-    // ========== 热门搜索 ==========
-
-    public async Task<List<HotSearchWord>> GetHotSearchWordsAsync()
-    {
-        try
-        {
-            var result = await _httpClient.PostWeapiAsync<NeteaseHotSearchResp>(
-                $"{WeapiBaseUrl}/search/hot",
-                new { type = "1111" },
-                DefaultHeaders);
-
-            if (result?.Data == null) return new List<HotSearchWord>();
-
-            return result.Data.Select((w, i) => new HotSearchWord
-            {
-                Word = w.SearchWord ?? "",
-                Score = result.Data.Count - i,
-                Source = "netease",
-                UpdateTime = DateTime.Now,
-                Trend = w.Score
-            }).ToList();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "获取热门搜索失败");
-            return new List<HotSearchWord>();
-        }
-    }
-
     // ========== 辅助方法 ==========
 
     private static int GetQualityLevel(NeteasePrivilege? p)

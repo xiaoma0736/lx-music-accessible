@@ -882,44 +882,4 @@ public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128
         return lines.Count > 0 ? new Lyric { Lines = lines } : null;
     }
 
-    // ========== 热门搜索 ==========
-
-    public async Task<List<HotSearchWord>> GetHotSearchWordsAsync()
-    {
-        try
-        {
-            var url = "https://c.y.qq.com/splcloud/fcgi-bin/gethotkey.fcg";
-            var parameters = new Dictionary<string, string>
-            {
-                ["format"] = "json",
-                ["uin"] = "0",
-                ["needNewCode"] = "1"
-            };
-            var response = await _httpClient.GetAsync(url, parameters);
-            using var doc = JsonDocument.Parse(response);
-            var root = doc.RootElement;
-            var words = new List<HotSearchWord>();
-            if (root.TryGetProperty("data", out var data) && data.TryGetProperty("hotkey", out var hotkey))
-            {
-                int idx = 0;
-                foreach (var item in hotkey.EnumerateArray())
-                {
-                    words.Add(new HotSearchWord
-                    {
-                        Word = item.TryGetProperty("k", out var k) ? k.GetString() ?? "" : "",
-                        Score = 50 - idx,
-                        Source = "qq",
-                        UpdateTime = DateTime.Now
-                    });
-                    idx++;
-                }
-            }
-            return words;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "获取QQ热门搜索失败");
-            return new List<HotSearchWord>();
-        }
-    }
 }

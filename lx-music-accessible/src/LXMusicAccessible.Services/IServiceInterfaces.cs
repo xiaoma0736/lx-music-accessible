@@ -161,11 +161,6 @@ public interface IMusicPlayerService
     event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
 
     /// <summary>
-    /// 鎾斁杩涘害鍙樺寲浜嬩欢
-    /// </summary>
-    event EventHandler<TimeSpan>? ProgressChanged;
-
-    /// <summary>
     /// 鎾斁闃熷垪宸叉挱瀹岋紙椤哄簭鎾斁鍒版湯灏句笖闈炲惊鐜ā寮忔椂瑙﹀彂锛屼緵鑷姩缈婚〉缁挱锛?
     /// </summary>
     event EventHandler? QueueCompleted;

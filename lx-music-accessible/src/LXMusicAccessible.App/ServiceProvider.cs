@@ -2,7 +2,6 @@
 using Microsoft.Extensions.Logging;
 using LXMusicAccessible.Services;
 using LXMusicAccessible.Core.MusicApi;
-using LXMusicAccessible.ViewModels;
 using LXMusicAccessible.Data;
 using Serilog;
 
@@ -66,7 +65,6 @@ public static class ServiceProvider
         // 音乐源服务
         services.AddSingleton<IMusicSourceService, MusicSourceService>();
         services.AddSingleton<IDownloadService, DownloadService>();
-        services.AddSingleton<IHotSearchService, HotSearchService>();
         services.AddSingleton<ILyricService, LyricService>();
         services.AddSingleton<ScriptMusicSource>();
         
@@ -84,12 +82,6 @@ public static class ServiceProvider
         services.AddSingleton<IPlaylistImportProvider, KugouPlaylistProvider>();
         services.AddSingleton<IPlaylistImportProvider, KuwoPlaylistProvider>();
         
-        // ViewModel
-        services.AddTransient<MainViewModel>();
-        services.AddTransient<SearchViewModel>();
-        services.AddTransient<PlaylistViewModel>();
-        services.AddTransient<LeaderboardViewModel>();
-
         return services.BuildServiceProvider();
     }
 

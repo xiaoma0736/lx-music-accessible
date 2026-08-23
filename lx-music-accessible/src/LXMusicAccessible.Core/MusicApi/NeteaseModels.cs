@@ -456,29 +456,6 @@ public class NeteaseLinuxApiResp
     public NeteasePlaylistDetailInfo? Playlist { get; set; }
 }
 
-// ========== 热门搜索 ==========
-
-public class NeteaseHotSearchResp
-{
-    [JsonPropertyName("code")]
-    public int Code { get; set; }
-
-    [JsonPropertyName("data")]
-    public List<NeteaseHotSearchItem>? Data { get; set; }
-}
-
-public class NeteaseHotSearchItem
-{
-    [JsonPropertyName("searchWord")]
-    public string? SearchWord { get; set; }
-
-    [JsonPropertyName("score")]
-    public int Score { get; set; }
-
-    [JsonPropertyName("content")]
-    public string? Content { get; set; }
-}
-
 // ========== ???? ==========
 
 public class NeteaseLyricResponse
