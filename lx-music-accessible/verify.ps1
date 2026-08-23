@@ -9,14 +9,15 @@ $solution = Join-Path $root "src\LXMusicAccessible.sln"
 $artifacts = Join-Path $root "artifacts"
 $results = Join-Path $artifacts "local-validation"
 $textCheck = Join-Path $root "scripts\check-text.ps1"
+$releaseBuild = Join-Path $root "build_release.ps1"
 
 Push-Location $root
 try {
-    Write-Host "== 1/6 Restore =="
+    Write-Host "== 1/7 Restore =="
     & dotnet restore $solution
     if ($LASTEXITCODE -ne 0) { throw "Restore failed." }
 
-    Write-Host "== 2/6 Audit High/Critical dependencies =="
+    Write-Host "== 2/7 Audit High/Critical dependencies =="
     $auditOutput = & dotnet list $solution package --vulnerable --include-transitive --format json
     if ($LASTEXITCODE -ne 0) { throw "Dependency audit failed." }
 
@@ -46,11 +47,11 @@ try {
     }
     Write-Host "High/Critical vulnerabilities: 0"
 
-    Write-Host "== 3/6 Build Release =="
+    Write-Host "== 3/7 Build Release =="
     & dotnet build $solution --configuration Release --no-restore
     if ($LASTEXITCODE -ne 0) { throw "Release build failed." }
 
-    Write-Host "== 4/6 Run offline tests =="
+    Write-Host "== 4/7 Run offline tests =="
     New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
     $resolvedArtifacts = (Resolve-Path -LiteralPath $artifacts).Path
     $resolvedResults = [System.IO.Path]::GetFullPath($results)
@@ -80,7 +81,7 @@ try {
         }
     }
 
-    Write-Host "== 5/6 Require discovered tests =="
+    Write-Host "== 5/7 Require discovered tests =="
     $resultFiles = @(Get-ChildItem -LiteralPath $resolvedResults -Filter *.trx -Recurse)
     if ($resultFiles.Count -eq 0) { throw "No test result files were produced." }
 
@@ -95,11 +96,15 @@ try {
     if ($executed -lt 1) { throw "The test run discovered zero tests." }
     Write-Host "Executed tests: $executed"
 
-    Write-Host "== 6/6 Text checks =="
+    Write-Host "== 6/7 Text checks =="
     & git diff --check
     if ($LASTEXITCODE -ne 0) { throw "Git text checks failed." }
     & $textCheck
     if ($LASTEXITCODE -ne 0) { throw "Repository text checks failed." }
+
+    Write-Host "== 7/7 Clean release and installer verification =="
+    & $releaseBuild
+    if ($LASTEXITCODE -ne 0) { throw "Release verification failed." }
 
     Write-Host "Local quality gate passed."
 }

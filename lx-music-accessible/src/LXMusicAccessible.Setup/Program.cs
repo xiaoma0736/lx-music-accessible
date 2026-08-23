@@ -148,7 +148,9 @@ static class Program
         {
             var shellType = Type.GetTypeFromProgID("WScript.Shell");
             if (shellType == null) return;
-            dynamic shell = Activator.CreateInstance(shellType);
+            var shellObject = Activator.CreateInstance(shellType);
+            if (shellObject == null) return;
+            dynamic shell = shellObject;
             dynamic shortcut = shell.CreateShortcut(lnkPath);
             shortcut.TargetPath = target;
             shortcut.WorkingDirectory = workDir;
