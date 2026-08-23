@@ -16,19 +16,62 @@ namespace LXMusicAccessible.Services;
 /// </summary>
 public class LxScriptEngine
 {
+    private static readonly TimeSpan ExecutionTimeout = TimeSpan.FromSeconds(10);
+    private const int MaxStatements = 500_000;
+    private const long MaxHeapBytes = 32L * 1024 * 1024;
+    private const int MaxNativeBufferBytes = ScriptNetworkClient.MaxResponseBytes;
+    private const int MaxRandomBytes = 64 * 1024;
+    private const int MaxUrlCharacters = 8 * 1024;
+    private const int MaxHeaderCharacters = 64 * 1024;
+    private const int MaxOptionsCharacters = 4 * 1024;
+    private const int MaxKeyCharacters = 64 * 1024;
+    private static readonly HashSet<string> SafeFailureCodes =
+    [
+        "content_encoding_invalid",
+        "content_encoding_unsupported",
+        "compression_input_limit_exceeded",
+        "compression_output_limit_exceeded",
+        "compression_operation_failed",
+        "compression_operation_unsupported",
+        "crypto_limit_exceeded",
+        "crypto_operation_failed",
+        "crypto_operation_unsupported",
+        "decompression_limit_exceeded",
+        "dns_resolution_failed",
+        "http_method_blocked",
+        "http_status_rejected",
+        "network_request_failed",
+        "network_target_blocked",
+        "redirect_limit_exceeded",
+        "redirect_location_invalid",
+        "request_cancelled",
+        "request_limit_exceeded",
+        "request_timeout",
+        "response_limit_exceeded",
+        "script_encoding_invalid",
+        "url_invalid"
+    ];
     private readonly ILogger<LxScriptEngine> _logger;
-    private readonly HttpClient _httpClient;
+    private readonly ScriptNetworkClient _networkClient;
 
     /// <summary>最近一次脚本执行错误（诊断用）</summary>
-    public string? LastError { get; private set; }
+    public string? LastError => LastFailure?.Code;
+    public ScriptExecutionFailure? LastFailure { get; private set; }
 
     /// <summary>脚本调用 lx.send(EVENT_NAMES.updateAlert, {log, updateUrl}) 时触发（供界面提示）</summary>
     public event EventHandler<LxScriptUpdateAlertEventArgs>? UpdateAlert;
 
     public LxScriptEngine(ILogger<LxScriptEngine> logger)
+        : this(logger, new ScriptNetworkClient())
+    {
+    }
+
+    public LxScriptEngine(
+        ILogger<LxScriptEngine> logger,
+        ScriptNetworkClient networkClient)
     {
         _logger = logger;
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+        _networkClient = networkClient;
     }
 
     // ================================================================
@@ -36,38 +79,66 @@ public class LxScriptEngine
     // ================================================================
 
     /// <summary>通过 Jint 执行脚本解析播放 URL（后台线程运行，失败返回 null）</summary>
-    public async Task<string?> GetPlayUrlAsync(LxScriptInfo script, MusicInfo music, string source, string quality)
+    public async Task<string?> GetPlayUrlAsync(
+        LxScriptInfo script,
+        MusicInfo music,
+        string source,
+        string quality,
+        CancellationToken cancellationToken = default)
         => await ExecuteActionAsync(script, "musicUrl", music, source, quality,
-            v => v.ValueKind == JsonValueKind.String ? v.GetString() : null);
+            v => v.ValueKind == JsonValueKind.String ? v.GetString() : null,
+            cancellationToken);
 
     /// <summary>通过 Jint 执行脚本解析封面 URL（失败返回 null）</summary>
-    public async Task<string?> GetPicAsync(LxScriptInfo script, MusicInfo music, string source)
+    public async Task<string?> GetPicAsync(
+        LxScriptInfo script,
+        MusicInfo music,
+        string source,
+        CancellationToken cancellationToken = default)
         => await ExecuteActionAsync(script, "pic", music, source, null,
-            v => v.ValueKind == JsonValueKind.String ? v.GetString() : null);
+            v => v.ValueKind == JsonValueKind.String ? v.GetString() : null,
+            cancellationToken);
 
     /// <summary>通过 Jint 执行脚本解析歌词（失败返回 null）</summary>
-    public async Task<LxLyricRaw?> GetLyricAsync(LxScriptInfo script, MusicInfo music, string source)
-        => await ExecuteActionAsync(script, "lyric", music, source, null, ParseLyricResult);
+    public async Task<LxLyricRaw?> GetLyricAsync(
+        LxScriptInfo script,
+        MusicInfo music,
+        string source,
+        CancellationToken cancellationToken = default)
+        => await ExecuteActionAsync(
+            script,
+            "lyric",
+            music,
+            source,
+            null,
+            ParseLyricResult,
+            cancellationToken);
 
     /// <summary>加载校验：脚本可执行且已注册音乐请求处理器</summary>
     public async Task<bool> TestLoadAsync(LxScriptInfo script, CancellationToken cancellationToken = default)
     {
-        if (script == null || string.IsNullOrEmpty(script.RawScript)) return false;
+        LastFailure = null;
+        if (!IsScriptAllowed(script)) return false;
+        using var execution = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        execution.CancelAfter(ExecutionTimeout);
         try
         {
             return await Task.Run(() =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var engine = CreateEngine();
+                execution.Token.ThrowIfCancellationRequested();
+                var engine = CreateEngine(execution.Token);
                 engine.Execute(ShimJs);
-                engine.Execute(script.RawScript);
+                engine.Execute(script.RawScript!);
                 return engine.Evaluate("globalThis.lx.__probe()").AsBoolean();
-            }, cancellationToken);
+            }, execution.Token);
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "脚本 [{Name}] 加载校验失败", script?.Name ?? "?");
+            SetFailure(execution.IsCancellationRequested
+                ? "script_timeout"
+                : ClassifyExecutionFailure(ex));
+            _logger.LogDebug("脚本 [{Name}] 加载校验失败: {Code}", script.Name, LastError);
             return false;
         }
     }
@@ -79,22 +150,26 @@ public class LxScriptEngine
     /// <summary>执行一次动作分派：解析结果 JSON 序列化到 __r，随后读取并解析</summary>
     private async Task<T?> ExecuteActionAsync<T>(
         LxScriptInfo script, string action, MusicInfo music, string source, string? quality,
-        Func<JsonElement, T?> parse)
+        Func<JsonElement, T?> parse,
+        CancellationToken cancellationToken)
     {
-        if (script == null || string.IsNullOrEmpty(script.RawScript)) return default;
+        LastFailure = null;
+        if (!IsScriptAllowed(script)) return default;
+        using var execution = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        execution.CancelAfter(ExecutionTimeout);
         try
         {
             return await Task.Run(() =>
             {
                 var lxSource = ToLxSource(source);
-                var engine = CreateEngine();
+                var engine = CreateEngine(execution.Token);
                 engine.SetValue("__scriptInfo", BuildScriptInfoJson(script));
                 engine.SetValue("__mi", BuildMusicInfoJson(music, lxSource));
                 engine.SetValue("__src", lxSource);
                 engine.SetValue("__act", action);
                 engine.SetValue("__q", quality ?? "");
                 engine.Execute(ShimJs);
-                engine.Execute(script.RawScript);
+                engine.Execute(script.RawScript!);
                 engine.Execute(InvokeSnippet);
 
                 var json = engine.Evaluate("JSON.stringify(globalThis.__r)").AsString();
@@ -110,16 +185,20 @@ public class LxScriptEngine
                 }
                 if (root.TryGetProperty("err", out var err) && err.ValueKind == JsonValueKind.String)
                 {
-                    LastError = err.GetString();
-                    _logger.LogDebug("脚本执行返回错误 [{Action}]: {Err}", action, err.GetString());
+                    SetFailure(SanitizeFailureCode(err.GetString()));
+                    _logger.LogDebug("脚本执行返回错误 [{Action}]: {Code}", action, LastError);
                 }
                 return default;
-            });
+            }, execution.Token);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            LastError = ex.Message;
-            _logger.LogDebug(ex, "脚本 [{Name}] Jint 执行失败 ({Action})", script?.Name ?? "?", action);
+            SetFailure(execution.IsCancellationRequested
+                ? "script_timeout"
+                : ClassifyExecutionFailure(ex));
+            _logger.LogDebug("脚本 [{Name}] Jint 执行失败 ({Action}): {Code}",
+                script.Name, action, LastError);
             return default;
         }
     }
@@ -192,14 +271,18 @@ public class LxScriptEngine
         return JsonSerializer.Serialize(mi);
     }
 
-    private Engine CreateEngine()
+    private Engine CreateEngine(CancellationToken cancellationToken)
     {
         var engine = new Engine(o =>
         {
-            o.TimeoutInterval(TimeSpan.FromSeconds(25));
-            o.MaxStatements(2_000_000);
+            o.TimeoutInterval(ExecutionTimeout);
+            o.MaxStatements(MaxStatements);
+            o.LimitMemory(MaxHeapBytes);
+            o.CancellationToken(cancellationToken);
         });
-        engine.SetValue("__lxNativeRequest", new Func<string, string, string, string, string, string>(NativeRequest));
+        engine.SetValue("__lxNativeRequest", new Func<string, string, string, string, string, string>(
+            (url, method, headers, body, options) =>
+                NativeRequest(url, method, headers, body, options, cancellationToken)));
         engine.SetValue("__lxNativeCrypto", new Func<string, string, string>(NativeCrypto));
         engine.SetValue("__lxNativeZlib", new Func<string, string, string>(NativeZlib));
         engine.SetValue("__lxNativeUpdateAlert", new Func<string, string>(NativeUpdateAlert));
@@ -210,11 +293,24 @@ public class LxScriptEngine
     // ================================================================
 
     /// <summary>同步 HTTP：返回 JSON {status, headers, body, bodyB64, err}；支持按请求超时</summary>
-    private string NativeRequest(string url, string method, string headersJson, string body, string optsJson)
+    private string NativeRequest(
+        string url,
+        string method,
+        string headersJson,
+        string body,
+        string optsJson,
+        CancellationToken executionToken)
     {
         try
         {
-            using var cts = new CancellationTokenSource();
+            if (url.Length > MaxUrlCharacters
+                || headersJson.Length > MaxHeaderCharacters
+                || optsJson.Length > MaxOptionsCharacters
+                || Encoding.UTF8.GetByteCount(body) > ScriptNetworkClient.MaxRequestBodyBytes)
+            {
+                return RequestError("request_limit_exceeded");
+            }
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(executionToken);
             int timeoutMs = 0;
             try
             {
@@ -223,9 +319,12 @@ public class LxScriptEngine
                     timeoutMs = t.GetInt32();
             }
             catch { }
-            if (timeoutMs > 0) cts.CancelAfter(timeoutMs);
+            if (timeoutMs > 0) cts.CancelAfter(Math.Min(timeoutMs, (int)ExecutionTimeout.TotalMilliseconds));
 
-            var req = new HttpRequestMessage(new HttpMethod(string.IsNullOrWhiteSpace(method) ? "GET" : method), url);
+            var requestMethod = string.IsNullOrWhiteSpace(method) ? "GET" : method.ToUpperInvariant();
+            if (requestMethod is not ("GET" or "POST" or "PUT" or "PATCH" or "DELETE" or "HEAD"))
+                return RequestError("http_method_blocked");
+            using var req = new HttpRequestMessage(new HttpMethod(requestMethod), url);
             string? contentType = null;
             try
             {
@@ -258,29 +357,36 @@ public class LxScriptEngine
             if (!string.IsNullOrEmpty(body) && req.Method != HttpMethod.Get && req.Method != HttpMethod.Head)
                 req.Content = new StringContent(body, Encoding.UTF8, contentType ?? "application/json");
 
-            var resp = _httpClient.SendAsync(req, cts.Token).GetAwaiter().GetResult();
-            var raw = resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
-            var headers = resp.Headers.ToDictionary(kv => kv.Key, kv => string.Join(", ", kv.Value), StringComparer.OrdinalIgnoreCase);
-            if (resp.Content.Headers.ContentType != null)
-                headers["Content-Type"] = resp.Content.Headers.ContentType.ToString();
-            string text;
-            try { text = Encoding.UTF8.GetString(raw); } catch { text = ""; }
+            var resp = _networkClient.SendAsync(
+                req,
+                ScriptNetworkClient.MaxResponseBytes,
+                cts.Token).GetAwaiter().GetResult();
+            var raw = resp.Body;
+            var text = Encoding.UTF8.GetString(raw);
             return JsonSerializer.Serialize(new
             {
-                status = (int)resp.StatusCode,
-                headers,
+                status = resp.StatusCode,
+                headers = resp.Headers,
                 body = text,
                 bodyB64 = Convert.ToBase64String(raw),
                 err = ""
             });
         }
+        catch (OperationCanceledException) when (executionToken.IsCancellationRequested)
+        {
+            return RequestError("request_cancelled");
+        }
         catch (OperationCanceledException)
         {
-            return JsonSerializer.Serialize(new { status = 0, headers = new Dictionary<string, string>(), body = "", bodyB64 = "", err = "request timeout" });
+            return RequestError("request_timeout");
         }
-        catch (Exception ex)
+        catch (ScriptNetworkException ex)
         {
-            return JsonSerializer.Serialize(new { status = 0, headers = new Dictionary<string, string>(), body = "", bodyB64 = "", err = ex.Message });
+            return RequestError(ex.Code);
+        }
+        catch
+        {
+            return RequestError("network_request_failed");
         }
     }
 
@@ -289,6 +395,8 @@ public class LxScriptEngine
     {
         try
         {
+            if (argsJson.Length > MaxNativeBufferBytes * 2)
+                return Err("crypto_limit_exceeded");
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(argsJson) ? "{}" : argsJson);
             var r = doc.RootElement;
             switch (op)
@@ -296,31 +404,36 @@ public class LxScriptEngine
                 case "aesEncrypt":
                 case "aesDecrypt":
                 {
-                    var data = GetB64(r, "data");
-                    var key = GetB64(r, "key");
-                    var iv = GetB64(r, "iv");
+                    var data = GetB64(r, "data", MaxNativeBufferBytes);
+                    var key = GetB64(r, "key", 64);
+                    var iv = GetB64(r, "iv", 32);
                     var mode = GetStr(r, "mode") ?? "aes-128-cbc";
                     return Ok(Convert.ToBase64String(AesTransform(op == "aesEncrypt", data, mode, key, iv)));
                 }
                 case "rsaEncrypt":
                 {
-                    var data = GetB64(r, "data");
+                    var data = GetB64(r, "data", MaxNativeBufferBytes);
                     var keyPem = GetStr(r, "key") ?? "";
+                    if (keyPem.Length > MaxKeyCharacters) return Err("crypto_limit_exceeded");
                     return Ok(Convert.ToBase64String(RsaEncryptNoPadding(data, keyPem)));
                 }
                 case "randomBytes":
                 {
                     int size = r.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number ? s.GetInt32() : 16;
-                    if (size < 0) size = 0;
+                    if (size < 0 || size > MaxRandomBytes) return Err("crypto_limit_exceeded");
                     return Ok(Convert.ToBase64String(RandomNumberGenerator.GetBytes(size)));
                 }
                 default:
-                    return Err("unknown crypto op: " + op);
+                    return Err("crypto_operation_unsupported");
             }
         }
-        catch (Exception ex)
+        catch (ScriptResourceLimitException ex)
         {
-            return Err(ex.Message);
+            return Err(ex.Code);
+        }
+        catch
+        {
+            return Err("crypto_operation_failed");
         }
     }
 
@@ -329,7 +442,10 @@ public class LxScriptEngine
     {
         try
         {
+            if (b64.Length > ((MaxNativeBufferBytes + 2) / 3) * 4)
+                return Err("compression_input_limit_exceeded");
             var data = string.IsNullOrWhiteSpace(b64) ? Array.Empty<byte>() : Convert.FromBase64String(b64);
+            if (data.Length > MaxNativeBufferBytes) return Err("compression_input_limit_exceeded");
             byte[] result;
             switch (op)
             {
@@ -338,7 +454,7 @@ public class LxScriptEngine
                     using (var z = new System.IO.Compression.ZLibStream(inMs, System.IO.Compression.CompressionMode.Decompress))
                     using (var outMs = new MemoryStream())
                     {
-                        z.CopyTo(outMs);
+                        CopyToBounded(z, outMs, MaxNativeBufferBytes);
                         result = outMs.ToArray();
                     }
                     break;
@@ -346,7 +462,11 @@ public class LxScriptEngine
                     using (var outMs = new MemoryStream())
                     {
                         using (var z = new System.IO.Compression.ZLibStream(outMs, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+                        {
                             z.Write(data, 0, data.Length);
+                        }
+                        if (outMs.Length > MaxNativeBufferBytes)
+                            return Err("compression_output_limit_exceeded");
                         result = outMs.ToArray();
                     }
                     break;
@@ -355,26 +475,105 @@ public class LxScriptEngine
                     using (var gz = new System.IO.Compression.GZipStream(gzIn, System.IO.Compression.CompressionMode.Decompress))
                     using (var gzOut = new MemoryStream())
                     {
-                        gz.CopyTo(gzOut);
+                        CopyToBounded(gz, gzOut, MaxNativeBufferBytes);
                         result = gzOut.ToArray();
                     }
                     break;
                 default:
-                    return Err("unknown zlib op: " + op);
+                    return Err("compression_operation_unsupported");
             }
             return Ok(Convert.ToBase64String(result));
         }
-        catch (Exception ex)
+        catch (ScriptResourceLimitException ex)
         {
-            return Err(ex.Message);
+            return Err(ex.Code);
+        }
+        catch
+        {
+            return Err("compression_operation_failed");
         }
     }
+
+    private static void CopyToBounded(Stream input, Stream output, int maxBytes)
+    {
+        var buffer = new byte[16 * 1024];
+        while (true)
+        {
+            var read = input.Read(buffer, 0, buffer.Length);
+            if (read == 0) return;
+            if (output.Length + read > maxBytes)
+                throw new ScriptResourceLimitException("compression_output_limit_exceeded");
+            output.Write(buffer, 0, read);
+        }
+    }
+
+    private bool IsScriptAllowed(LxScriptInfo? script)
+    {
+        if (script is null || string.IsNullOrEmpty(script.RawScript))
+        {
+            SetFailure("script_missing");
+            return false;
+        }
+        if (Encoding.UTF8.GetByteCount(script.RawScript) <= ScriptNetworkClient.MaxScriptBytes)
+            return true;
+        SetFailure("script_limit_exceeded");
+        return false;
+    }
+
+    private void SetFailure(string code)
+    {
+        LastFailure = new ScriptExecutionFailure(code, code switch
+        {
+            "script_timeout" => "脚本执行超过时间限制",
+            "script_statement_limit_exceeded" => "脚本执行超过语句限制",
+            "script_memory_limit_exceeded" => "脚本执行超过内存限制",
+            "script_limit_exceeded" => "脚本内容超过大小限制",
+            "request_cancelled" => "脚本请求已取消",
+            _ => "脚本操作被安全边界拒绝"
+        });
+    }
+
+    private static string ClassifyExecutionFailure(Exception exception)
+    {
+        if (exception is OperationCanceledException or TimeoutException) return "script_timeout";
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            var name = current.GetType().Name;
+            if (name.Contains("MemoryLimit", StringComparison.OrdinalIgnoreCase))
+                return "script_memory_limit_exceeded";
+            if (name.Contains("Statements", StringComparison.OrdinalIgnoreCase))
+                return "script_statement_limit_exceeded";
+            if (name.Contains("Timeout", StringComparison.OrdinalIgnoreCase))
+                return "script_timeout";
+        }
+        return "script_execution_failed";
+    }
+
+    private static string SanitizeFailureCode(string? value)
+    {
+        if (value is null) return "script_execution_failed";
+        foreach (var code in SafeFailureCodes)
+            if (value.Contains(code, StringComparison.Ordinal)) return code;
+        return "script_execution_failed";
+    }
+
+    private static string RequestError(string code)
+        => JsonSerializer.Serialize(new
+        {
+            status = 0,
+            headers = new Dictionary<string, string>(),
+            body = "",
+            bodyB64 = "",
+            err = code,
+            error = new { code }
+        });
 
     /// <summary>updateAlert 上抛桥</summary>
     private string NativeUpdateAlert(string argsJson)
     {
         try
         {
+            if (argsJson.Length > MaxHeaderCharacters) return "{}";
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(argsJson) ? "{}" : argsJson);
             var root = doc.RootElement;
             string? log = null, updateUrl = null;
@@ -386,11 +585,21 @@ public class LxScriptEngine
         return "{}";
     }
 
-    private static byte[] GetB64(JsonElement r, string name)
+    private static byte[] GetB64(JsonElement r, string name, int maxBytes)
     {
         if (r.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(p.GetString()))
         {
-            try { return Convert.FromBase64String(p.GetString()!); } catch { }
+            var value = p.GetString()!;
+            if (value.Length > ((maxBytes + 2) / 3) * 4)
+                throw new ScriptResourceLimitException("crypto_limit_exceeded");
+            try
+            {
+                var bytes = Convert.FromBase64String(value);
+                if (bytes.Length > maxBytes)
+                    throw new ScriptResourceLimitException("crypto_limit_exceeded");
+                return bytes;
+            }
+            catch (FormatException) { }
         }
         return Array.Empty<byte>();
     }
@@ -1004,6 +1213,13 @@ public class LxScriptEngine
   };
 })();
 """;
+}
+
+public sealed record ScriptExecutionFailure(string Code, string Message);
+
+internal sealed class ScriptResourceLimitException(string code) : Exception(code)
+{
+    public string Code { get; } = code;
 }
 
 /// <summary>脚本 updateAlert 事件参数（供界面提示音源更新）</summary>

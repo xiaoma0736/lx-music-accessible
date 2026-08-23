@@ -14,30 +14,37 @@ namespace LXMusicAccessible.Core.MusicApi;
 public class ScriptMusicSource : IDisposable
 {
     private readonly ILogger<ScriptMusicSource> _logger;
-    private readonly HttpClient _httpClient;
+    private readonly ScriptNetworkClient _networkClient;
+    private readonly bool _ownsNetworkClient;
     private readonly Dictionary<string, LxScriptInfo> _scripts = new();
 
+    public string? LastFailureCode { get; private set; }
+
     public ScriptMusicSource(ILogger<ScriptMusicSource> logger)
-        : this(logger, new HttpClientHandler { UseCookies = false }, disposeHandler: true)
+        : this(logger, new ScriptNetworkClient(), ownsNetworkClient: true)
     {
     }
 
     public ScriptMusicSource(ILogger<ScriptMusicSource> logger, HttpMessageHandler handler)
-        : this(logger, handler, disposeHandler: false)
+        : this(logger, new ScriptNetworkClient(handler), ownsNetworkClient: true)
+    {
+    }
+
+    public ScriptMusicSource(
+        ILogger<ScriptMusicSource> logger,
+        ScriptNetworkClient networkClient)
+        : this(logger, networkClient, ownsNetworkClient: false)
     {
     }
 
     private ScriptMusicSource(
         ILogger<ScriptMusicSource> logger,
-        HttpMessageHandler handler,
-        bool disposeHandler)
+        ScriptNetworkClient networkClient,
+        bool ownsNetworkClient)
     {
         _logger = logger;
-        _httpClient = new HttpClient(handler, disposeHandler)
-        {
-            Timeout = TimeSpan.FromSeconds(15)
-        };
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("lx-music-request/1.0");
+        _networkClient = networkClient;
+        _ownsNetworkClient = ownsNetworkClient;
     }
 
     // ================================================================
@@ -54,16 +61,26 @@ public class ScriptMusicSource : IDisposable
         string sourceId,
         CancellationToken cancellationToken = default)
     {
+        LastFailureCode = null;
         try
         {
-            _logger.LogInformation("暂存网络音源脚本: {Url}", url);
-            var scriptContent = await _httpClient.GetStringAsync(url, cancellationToken);
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                throw new ScriptNetworkException("url_invalid");
+            _logger.LogInformation("暂存网络音源脚本: {Host}", uri.IdnHost);
+            var scriptContent = await _networkClient.GetScriptAsync(uri, cancellationToken);
             return ParseLxScript(scriptContent, sourceId, url, false);
         }
         catch (OperationCanceledException) { throw; }
+        catch (ScriptNetworkException ex)
+        {
+            LastFailureCode = ex.Code;
+            _logger.LogWarning("网络脚本暂存被拒绝: {Code}", ex.Code);
+            return null;
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "暂存网络脚本失败: {Url}", url);
+            LastFailureCode = "script_stage_failed";
+            _logger.LogError(ex, "暂存网络脚本失败");
             return null;
         }
     }
@@ -74,15 +91,37 @@ public class ScriptMusicSource : IDisposable
         string sourceId,
         CancellationToken cancellationToken = default)
     {
+        LastFailureCode = null;
         try
         {
             _logger.LogInformation("暂存本地音源脚本: {Path}", filePath);
-            var scriptContent = await File.ReadAllTextAsync(filePath, cancellationToken);
+            await using var stream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 16 * 1024,
+                useAsync: true);
+            var bytes = await ScriptNetworkClient.ReadBoundedAsync(
+                stream,
+                ScriptNetworkClient.MaxScriptBytes,
+                "script_limit_exceeded",
+                cancellationToken);
+            var scriptContent = new UTF8Encoding(false, true).GetString(bytes);
             return ParseLxScript(scriptContent, sourceId, filePath, true);
         }
         catch (OperationCanceledException) { throw; }
+        catch (ScriptNetworkException ex)
+        {
+            LastFailureCode = ex.Code;
+            _logger.LogWarning("本地脚本暂存被拒绝: {Code}", ex.Code);
+            return null;
+        }
         catch (Exception ex)
         {
+            LastFailureCode = ex is DecoderFallbackException
+                ? "script_encoding_invalid"
+                : "script_stage_failed";
             _logger.LogError(ex, "暂存本地脚本失败: {Path}", filePath);
             return null;
         }
@@ -91,9 +130,18 @@ public class ScriptMusicSource : IDisposable
     /// <summary>解析已取得的内容到暂存对象，不注册也不执行。</summary>
     public LxScriptInfo? StageFromContent(string content, string sourceId, string source, bool isLocal)
     {
+        LastFailureCode = null;
         try
         {
+            if (Encoding.UTF8.GetByteCount(content) > ScriptNetworkClient.MaxScriptBytes)
+                throw new ScriptNetworkException("script_limit_exceeded");
             return ParseLxScript(content, sourceId, source, isLocal);
+        }
+        catch (ScriptNetworkException ex)
+        {
+            LastFailureCode = ex.Code;
+            _logger.LogWarning("脚本内容暂存被拒绝: {Code}", ex.Code);
+            return null;
         }
         catch (Exception ex)
         {
@@ -109,8 +157,12 @@ public class ScriptMusicSource : IDisposable
     {
         await using var stream = typeof(ScriptMusicSource).Assembly.GetManifestResourceStream(resourceName);
         if (stream is null) return null;
-        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        var content = await reader.ReadToEndAsync(cancellationToken);
+        var bytes = await ScriptNetworkClient.ReadBoundedAsync(
+            stream,
+            ScriptNetworkClient.MaxScriptBytes,
+            "script_limit_exceeded",
+            cancellationToken);
+        var content = new UTF8Encoding(false, true).GetString(bytes);
         return StageFromContent(content, sourceId, $"bundle://{resourceName}", true);
     }
 
@@ -245,10 +297,16 @@ public class ScriptMusicSource : IDisposable
     // ================================================================
 
     /// <summary>通过脚本源获取播放 URL</summary>
-    public async Task<string?> GetPlayUrlAsync(string scriptId, string songId, string source, string quality = "128k")
+    public async Task<string?> GetPlayUrlAsync(
+        string scriptId,
+        string songId,
+        string source,
+        string quality = "128k",
+        CancellationToken cancellationToken = default)
     {
         if (!_scripts.TryGetValue(scriptId, out var script))
             return null;
+        LastFailureCode = null;
 
         // 无法明确识别 URL 模式的脚本（如 POST 型接口/混淆源），不走正则快路径，交由 Jint 执行真实脚本
         if (script.UrlPattern == LxUrlPattern.None) return null;
@@ -258,7 +316,7 @@ public class ScriptMusicSource : IDisposable
         try
         {
             var url = BuildScriptUrl(script, lxSource, songId, quality);
-            _logger.LogInformation("脚本源 [{Name}] 请求播放URL: {Url}", script.Name, url);
+            _logger.LogInformation("脚本源 [{Name}] 请求播放 URL", script.Name);
 
             var headers = new Dictionary<string, string>
             {
@@ -274,11 +332,21 @@ public class ScriptMusicSource : IDisposable
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             foreach (var header in headers)
                 request.Headers.TryAddWithoutValidation(header.Key, header.Value);
-            using var response = await _httpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
-            var body = await response.Content.ReadAsStringAsync();
+            var response = await _networkClient.SendAsync(
+                request,
+                ScriptNetworkClient.MaxResponseBytes,
+                cancellationToken);
+            if (response.StatusCode is < 200 or >= 300) return null;
+            var body = Encoding.UTF8.GetString(response.Body);
 
             return ExtractUrlFromResponse(body, script.Name);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (ScriptNetworkException ex)
+        {
+            LastFailureCode = ex.Code;
+            _logger.LogWarning("脚本源 [{Name}] 请求被拒绝: {Code}", script.Name, ex.Code);
+            return null;
         }
         catch (Exception ex)
         {
@@ -296,7 +364,10 @@ public class ScriptMusicSource : IDisposable
     /// <summary>移除</summary>
     public void Remove(string id) { _scripts.Remove(id); }
     public void Clear() { _scripts.Clear(); }
-    public void Dispose() => _httpClient.Dispose();
+    public void Dispose()
+    {
+        if (_ownsNetworkClient) _networkClient.Dispose();
+    }
 
     // ================================================================
     //  辅助

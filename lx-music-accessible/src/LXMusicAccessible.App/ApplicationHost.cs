@@ -29,6 +29,7 @@ public static class ApplicationHost
                 services.AddSingleton<KugouMusicService>();
                 services.AddSingleton<KuwoMusicService>();
                 services.AddSingleton<MiguMusicService>();
+                services.AddSingleton<ScriptNetworkClient>();
                 services.AddSingleton<ScriptMusicSource>();
 
                 services.AddSingleton<IAccessibilityService, AccessibilityService>();
