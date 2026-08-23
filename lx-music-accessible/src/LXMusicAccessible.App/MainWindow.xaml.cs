@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     private readonly ITtsService _ttsService;
     private readonly IMusicSourceService _musicSourceService;
     private readonly LyricsWorkflow _lyrics;
-    private readonly IDownloadService _downloadService;
+    private readonly IDownloadWorkflow _downloads;
     private readonly IDataStorageService _dataStorageService;
     private readonly IProcessLauncher _processLauncher;
     private readonly PlaylistImportView _playlistImportPanel;
@@ -129,7 +129,7 @@ public partial class MainWindow : Window
         ITtsService ttsService,
         IMusicSourceService musicSourceService,
         LyricsWorkflow lyrics,
-        IDownloadService downloadService,
+        IDownloadWorkflow downloads,
         IDataStorageService dataStorageService,
         IProcessLauncher processLauncher,
         PlaylistImportView playlistImportPanel,
@@ -145,7 +145,7 @@ public partial class MainWindow : Window
         _ttsService = ttsService;
         _musicSourceService = musicSourceService;
         _lyrics = lyrics;
-        _downloadService = downloadService;
+        _downloads = downloads;
         _dataStorageService = dataStorageService;
         _processLauncher = processLauncher;
         _playlistImportPanel = playlistImportPanel;
@@ -170,8 +170,7 @@ public partial class MainWindow : Window
         _hotkeyManager.HotkeysRegistrationFailed += HotkeyManager_HotkeysRegistrationFailed;
         _musicSourceService.SourcesChanged += MusicSourceService_SourcesChanged;
         _musicSourceService.ScriptUpdateAlert += MusicSourceService_ScriptUpdateAlert;
-        DownloadTaskList.ItemsSource = _downloadService.Tasks;
-        _downloadService.TaskCompleted += DownloadService_TaskCompleted;
+        DownloadTaskList.ItemsSource = _downloads.Tasks;
 
         SetupEventHandlers();
         InstallNumpadHook();
@@ -711,26 +710,6 @@ public partial class MainWindow : Window
         };
     }
 
-    private void DownloadService_TaskCompleted(object? sender, DownloadTask task)
-    {
-        if (task == null) return;
-        Dispatcher.BeginInvoke(new Action(() =>
-        {
-            if (task.Status == DownloadTaskStatus.Completed)
-            {
-                // 批量任务完成时不逐条播报，避免批量下载刷屏（开始批量时已播报总数）
-                if (task.IsBatch) return;
-                Announce(string.IsNullOrEmpty(task.LyricPath)
-                    ? $"下载完成：{task.DisplayName}"
-                    : $"下载完成：{task.DisplayName}，已同步下载歌词");
-            }
-            else if (task.Status == DownloadTaskStatus.Failed)
-                Announce($"下载失败：{task.DisplayName}，{task.ErrorMessage}");
-            else if (task.Status == DownloadTaskStatus.Cancelled)
-                Announce($"下载已取消：{task.DisplayName}");
-        }), System.Windows.Threading.DispatcherPriority.Background);
-    }
-
     // ==================== 设置 ====================
 
     private async Task LoadSettingsAsync()
@@ -889,35 +868,12 @@ public partial class MainWindow : Window
         Announce(_lyrics.AutoScroll ? "已开启歌词自动滚动" : "已关闭歌词自动滚动");
     }
 
-    /// <summary>清理歌曲缓存等临时文件（%TEMP% 下的 lxmusic_*.tmp 与 lxmusic_ext_*），跳过正在占用的文件</summary>
+    /// <summary>清理下载模块拥有且当前未使用的外部播放临时文件。</summary>
     private void ClearCacheBtn_Click(object sender, RoutedEventArgs e)
     {
-        int deleted = 0;
-        long freed = 0;
-        var dir = System.IO.Path.GetTempPath();
-        try
-        {
-            foreach (var pattern in new[] { "lxmusic_*.tmp", "lxmusic_ext_*" })
-            {
-                foreach (var f in System.IO.Directory.EnumerateFiles(dir, pattern))
-                {
-                    try
-                    {
-                        var fi = new System.IO.FileInfo(f);
-                        freed += fi.Length;
-                        System.IO.File.Delete(f);
-                        deleted++;
-                    }
-                    catch { /* 正在使用（如当前播放中）等无法删除的跳过 */ }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"清理缓存失败: {ex.Message}");
-        }
-        Announce(deleted > 0
-            ? $"已清理缓存 {deleted} 个文件，释放 {FormatBytes(freed)}。"
+        var result = _downloads.ClearTemporaryFiles();
+        Announce(result.DeletedFiles > 0
+            ? $"已清理缓存 {result.DeletedFiles} 个文件，释放 {FormatBytes(result.FreedBytes)}。"
             : "没有可清理的缓存文件。");
     }
 
@@ -1029,8 +985,7 @@ public partial class MainWindow : Window
             if (IsValidDirectoryPath(saved))
                 return saved;
         }
-        var def = _downloadService?.GetDefaultDownloadDir()
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), "落雪音乐下载");
+        var def = _downloads.GetDefaultDownloadDirectory();
         return IsValidDirectoryPath(def) ? def
             : Path.Combine(AppDataPaths.DefaultDataDir, "downloads");
     }
@@ -1056,14 +1011,14 @@ public partial class MainWindow : Window
     /// <summary>把下载设置应用到下载服务（立即生效，影响之后的下载任务）</summary>
     private void ApplyDownloadSettings()
     {
-        if (_downloadService == null) return;
         _defaultDownloadQuality = GetComboTag(DownloadQualityCombo, "128k");
-        _downloadService.DownloadLyric = DownloadLyricCheckBox?.IsChecked ?? true;
-        _downloadService.IncludeQualityTag = DownloadNameQualityCheckBox?.IsChecked ?? true;
         var orderTag = GetComboTag(DownloadNameOrderCombo, "ArtistTitle");
-        _downloadService.NameOrder = string.Equals(orderTag, "TitleArtist", StringComparison.OrdinalIgnoreCase)
-            ? DownloadNameOrder.TitleArtist
-            : DownloadNameOrder.ArtistTitle;
+        _downloads.ApplyPreferences(new DownloadPreferences(
+            DownloadLyricCheckBox?.IsChecked ?? true,
+            string.Equals(orderTag, "TitleArtist", StringComparison.OrdinalIgnoreCase)
+                ? DownloadNameOrder.TitleArtist
+                : DownloadNameOrder.ArtistTitle,
+            DownloadNameQualityCheckBox?.IsChecked ?? true));
     }
 
     private void DownloadSetting_Changed(object sender, RoutedEventArgs e) => ApplyDownloadSettings();
@@ -1176,7 +1131,6 @@ public partial class MainWindow : Window
         _musicSourceService.SourcesChanged -= MusicSourceService_SourcesChanged;
         _musicSourceService.ScriptUpdateAlert -= MusicSourceService_ScriptUpdateAlert;
         _playback.QueueCompleted -= PlayerService_QueueCompleted;
-        _downloadService.TaskCompleted -= DownloadService_TaskCompleted;
         DisposeTrayIcon();
 
         return new ApplicationShutdownSnapshot(settings, sources);
@@ -2012,18 +1966,6 @@ public partial class MainWindow : Window
         };
     }
 
-    /// <summary>清理文件夹名中的非法字符（用于专辑下载子文件夹等）</summary>
-    private static string SanitizeFolderName(string name)
-    {
-        if (string.IsNullOrWhiteSpace(name)) return "整张专辑";
-        var invalid = Path.GetInvalidFileNameChars();
-        var sb = new System.Text.StringBuilder(name.Length);
-        foreach (var ch in name)
-            sb.Append(Array.IndexOf(invalid, ch) >= 0 ? '_' : ch);
-        var result = sb.ToString().Trim().TrimEnd('.');
-        return string.IsNullOrWhiteSpace(result) ? "整张专辑" : result;
-    }
-
     // ==================== 独立歌词窗口 ====================
 
     private LyricsWindow EnsureLyricsWindow()
@@ -2699,9 +2641,10 @@ public partial class MainWindow : Window
         var music = GetContextMusic(sender);
         if (music == null) return;
         var quality = string.Equals(q, "local", StringComparison.OrdinalIgnoreCase) ? "原文件" : q;
-        if (_downloadService == null) return;
-        var task = await _downloadService.DownloadAsync(music, quality, GetEffectiveDownloadDir());
-        Announce($"已开始下载：{task.DisplayName}");
+        await _downloads.DownloadAsync(new DownloadRequest(
+            music,
+            quality,
+            GetEffectiveDownloadDir()));
     }
 
     /// <summary>批量下载当前列表的全部在线歌曲（右键“下载整个列表”）</summary>
@@ -2760,38 +2703,13 @@ public partial class MainWindow : Window
     /// <summary>批量下载一批在线歌曲（使用默认下载音质；本地歌曲自动跳过）</summary>
     private async Task DownloadSongsAsync(IReadOnlyList<MusicInfo> songs, string label, string? subFolder = null)
     {
-        if (_downloadService == null) return;
         var online = songs.Where(s => !string.Equals(s.Source, "Local", StringComparison.OrdinalIgnoreCase)).ToList();
-        if (online.Count == 0)
-        {
-            Announce("没有可下载的在线歌曲");
-            return;
-        }
-        // 专辑下载时在下载目录内新建“专辑名”子文件夹
-        var baseDir = GetEffectiveDownloadDir();
-        var dir = baseDir;
-        if (!string.IsNullOrWhiteSpace(subFolder))
-        {
-            try
-            {
-                dir = Path.Combine(baseDir, SanitizeFolderName(subFolder));
-                Directory.CreateDirectory(dir);
-            }
-            catch { dir = baseDir; }
-        }
-        var quality = _defaultDownloadQuality;
-        int queued = 0;
-        foreach (var s in online)
-        {
-            try
-            {
-                // 批量下载保护：isBatch=true 走串行 + 每首间隔（由 DownloadService 节流）
-                await _downloadService.DownloadAsync(s, quality, dir, isBatch: true);
-                queued++;
-            }
-            catch { }
-        }
-        Announce($"已开始批量下载{label}：{queued} 首歌曲，默认下载音质 {TranslateQuality(quality)}，下载不了时自动回退最高音质");
+        await _downloads.DownloadListAsync(new DownloadListRequest(
+            online,
+            label,
+            _defaultDownloadQuality,
+            GetEffectiveDownloadDir(),
+            subFolder));
     }
 
     /// <summary>用第三方播放器播放当前歌曲：本地歌曲直接传本地路径；在线歌曲先下载到临时文件再交外部播放器（下载失败回退直接传 URL），确保各类播放器都能正常播放</summary>
@@ -2814,35 +2732,14 @@ public partial class MainWindow : Window
 
         try
         {
-            string target;
-            bool isLocal = string.Equals(music.Source, "Local", StringComparison.OrdinalIgnoreCase);
-            if (isLocal)
-            {
-                target = music.PlayUrl ?? string.Empty;
-                if (string.IsNullOrEmpty(target))
-                {
-                    Announce("该本地歌曲缺少文件路径，无法调用第三方播放器");
-                    return;
-                }
-            }
-            else
-            {
-                Announce($"正在解析播放链接：{music.Title}");
-                var url = await _musicSourceService!.GetPlayUrlAsync(music, music.Source, _defaultQuality);
-                if (string.IsNullOrEmpty(url))
-                {
-                    Announce("未能获取播放链接，无法调用第三方播放器");
-                    return;
-                }
-                // 先下载到临时文件（与内部播放器一致，确保外部播放器能直接播放本地文件）；下载失败再回退直接传 URL
-                target = await DownloadForExternalPlayerAsync(url) ?? url;
-            }
+            var prepared = await _downloads.PrepareExternalPlaybackAsync(music, _defaultQuality);
+            if (prepared is null) return;
 
             // 启动第三方播放器：可执行文件路径含空格也正确；目标（本地路径/在线 URL）加引号安全传递
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = playerPath,
-                Arguments = $"\"{target}\"",
+                Arguments = $"\"{prepared.Value}\"",
                 UseShellExecute = false,
                 WorkingDirectory = System.IO.Path.GetDirectoryName(playerPath) ?? string.Empty
             };
@@ -2863,78 +2760,6 @@ public partial class MainWindow : Window
         var p = raw.Trim().Trim('"').Trim();
         if (string.IsNullOrEmpty(p)) return string.Empty;
         return System.Environment.ExpandEnvironmentVariables(p);
-    }
-
-    /// <summary>把在线播放链接下载到临时文件（供外部播放器可靠播放），失败返回 null 由调用方回退直接传 URL。
-    /// 临时文件使用识别出的音频扩展名（如 .mp3/.m4a/.flac），避免 foobar2000 等按扩展名过滤的播放器拒绝打开。</summary>
-    private async Task<string?> DownloadForExternalPlayerAsync(string url)
-    {
-        try
-        {
-            CleanupOldExternalTempFiles();
-            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(180) };
-            using var response = await http.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-            var ext = ResolveAudioExtension(url, response);
-            var tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"lxmusic_ext_{Guid.NewGuid():N}{ext}");
-            using (var fs = System.IO.File.Create(tmp))
-                await response.Content.CopyToAsync(fs);
-            return tmp;
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"外部播放器下载失败: {ex.Message}");
-            return null;
-        }
-    }
-
-    /// <summary>从 URL 路径或响应 Content-Type 推断音频扩展名（默认 .mp3）</summary>
-    private static string ResolveAudioExtension(string url, System.Net.Http.HttpResponseMessage response)
-    {
-        try
-        {
-            var fromUrl = System.IO.Path.GetExtension(new Uri(url).AbsolutePath);
-            if (!string.IsNullOrEmpty(fromUrl) && fromUrl.Length <= 6 && IsAudioExt(fromUrl))
-                return fromUrl;
-        }
-        catch { }
-        var ct = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant() ?? string.Empty;
-        return ct switch
-        {
-            "audio/mpeg" or "audio/mp3" => ".mp3",
-            "audio/mp4" or "audio/m4a" or "audio/x-m4a" => ".m4a",
-            "audio/flac" or "audio/x-flac" => ".flac",
-            "audio/wav" or "audio/x-wav" or "audio/wave" => ".wav",
-            "audio/ogg" or "application/ogg" => ".ogg",
-            "audio/aac" or "audio/aacp" => ".aac",
-            "audio/webm" => ".webm",
-            _ => ".mp3"
-        };
-    }
-
-    private static bool IsAudioExt(string ext)
-    {
-        var e = ext.ToLowerInvariant();
-        return e is ".mp3" or ".m4a" or ".flac" or ".wav" or ".ogg" or ".aac" or ".webm" or ".opus" or ".mp4" or ".aiff" or ".wma";
-    }
-
-    /// <summary>清理超过 1 小时的外部播放器临时文件，避免 %TEMP% 无限堆积</summary>
-    private static void CleanupOldExternalTempFiles()
-    {
-        try
-        {
-            var dir = System.IO.Path.GetTempPath();
-            foreach (var f in System.IO.Directory.GetFiles(dir, "lxmusic_ext_*"))
-            {
-                try
-                {
-                    if (System.IO.File.GetLastWriteTime(f) < DateTime.Now.AddHours(-1))
-                        System.IO.File.Delete(f);
-                }
-                catch { }
-            }
-        }
-        catch { }
     }
 
     /// <summary>键盘（应用键/Shift+F10）在歌曲列表打开右键菜单</summary>
@@ -3024,8 +2849,7 @@ public partial class MainWindow : Window
     {
         if (DownloadTaskList.SelectedItem is DownloadTask t)
         {
-            _downloadService?.Cancel(t);
-            Announce("已取消下载任务");
+            _downloads.Cancel(t);
         }
         else Announce("请先选择要取消的下载任务");
     }
@@ -3035,8 +2859,7 @@ public partial class MainWindow : Window
         if (DownloadTaskList.SelectedItem is DownloadTask t &&
             t.Status is DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled)
         {
-            await _downloadService!.RetryAsync(t, GetEffectiveDownloadDir());
-            Announce($"正在重试下载：{t.Music.Title}");
+            await _downloads.RetryAsync(t, GetEffectiveDownloadDir());
         }
         else Announce("请选择失败的下载任务进行重试");
     }
@@ -3055,7 +2878,7 @@ public partial class MainWindow : Window
 
     private void DownloadClearDoneBtn_Click(object sender, RoutedEventArgs e)
     {
-        _downloadService?.ClearCompleted();
+        _downloads.ClearCompleted();
         Announce("已清空已完成的任务");
     }
 
@@ -4114,16 +3937,10 @@ public partial class MainWindow : Window
             Announce("没有可下载的歌曲");
             return;
         }
-        if (_downloadService == null) return;
-        try
-        {
-            var task = await _downloadService.DownloadAsync(music, _defaultDownloadQuality, GetEffectiveDownloadDir());
-            Announce($"已开始下载：{task.DisplayName}");
-        }
-        catch (Exception ex)
-        {
-            Announce($"下载失败：{ex.Message}");
-        }
+        await _downloads.DownloadAsync(new DownloadRequest(
+            music,
+            _defaultDownloadQuality,
+            GetEffectiveDownloadDir()));
     }
 
     private MusicInfo? GetSelectedSongInFocusedList()

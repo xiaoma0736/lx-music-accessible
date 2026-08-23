@@ -91,7 +91,7 @@ public static class ApplicationHost
                 services.AddSingleton<IMusicSourceService>(sp => sp.GetRequiredService<MusicSourceService>());
                 services.AddSingleton<IMusicBrowseSource>(sp => sp.GetRequiredService<MusicSourceService>());
                 services.AddSingleton<MusicBrowseWorkflow>();
-                services.AddSingleton<IDownloadService, DownloadService>();
+                services.AddSingleton<IDownloadWorkflow, DownloadWorkflow>();
                 services.AddSingleton<ILyricService, LyricService>();
                 services.AddSingleton<LyricsWorkflow>();
                 services.AddSingleton<LxScriptEngine>();
