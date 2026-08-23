@@ -746,29 +746,33 @@ public class DataService : IDataService
         // 播放列表项目会通过外键自动删除
     }
 
-    public async Task SaveSettingsAsync(UserSettings settings)
+    public async Task SaveSettingsAsync(
+        UserSettings settings,
+        CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("保存设置");
         
-        using var connection = await GetConnectionAsync();
+        using var connection = await GetConnectionAsync(cancellationToken);
         
         var settingsJson = JsonSerializer.Serialize(settings);
-        await connection.ExecuteAsync(
+        await connection.ExecuteAsync(new CommandDefinition(
             @"INSERT INTO Settings (Key, Value) VALUES (@Key, @Value)
               ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value",
-            new { Key = "UserSettings", Value = settingsJson }
-        );
+            new { Key = "UserSettings", Value = settingsJson },
+            cancellationToken: cancellationToken));
     }
 
-    public async Task<UserSettings?> GetSettingsAsync()
+    public async Task<UserSettings?> GetSettingsAsync(
+        CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("获取设置");
         
-        using var connection = await GetConnectionAsync();
+        using var connection = await GetConnectionAsync(cancellationToken);
         
-        var result = await connection.QuerySingleOrDefaultAsync<string>(
+        var result = await connection.QuerySingleOrDefaultAsync<string>(new CommandDefinition(
             "SELECT Value FROM Settings WHERE Key = @Key",
-            new { Key = "UserSettings" });
+            new { Key = "UserSettings" },
+            cancellationToken: cancellationToken));
             
         if (string.IsNullOrEmpty(result))
         {
@@ -786,17 +790,19 @@ public class DataService : IDataService
         }
     }
 
-    public async Task SaveMusicSourcesAsync(List<MusicSource> sources)
+    public async Task SaveMusicSourcesAsync(
+        List<MusicSource> sources,
+        CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("保存音源");
         
-        using var connection = await GetConnectionAsync();
-        using var transaction = await connection.BeginTransactionAsync();
+        using var connection = await GetConnectionAsync(cancellationToken);
+        using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         try
         {
             foreach (var source in sources)
             {
-                await connection.ExecuteAsync(@"
+                await connection.ExecuteAsync(new CommandDefinition(@"
                 INSERT INTO MusicSources
                 (Id, Name, Version, ScriptUrl, ScriptContent, IsEnabled, Priority, AddedDate, LastUpdateDate, Type, IsDefault, TrustState, ContentSha256)
                 VALUES (@Id, @Name, @Version, @ScriptUrl, @ScriptContent, @IsEnabled, @Priority, @AddedDate, @LastUpdateDate, @Type, @IsDefault, @TrustState, @ContentSha256)
@@ -828,13 +834,13 @@ public class DataService : IDataService
                         Type = source.Type,
                         TrustState = source.TrustState,
                         source.ContentSha256
-                    }, transaction);
+                    }, transaction, cancellationToken: cancellationToken));
             }
-            await transaction.CommitAsync();
+            await transaction.CommitAsync(cancellationToken);
         }
         catch
         {
-            await transaction.RollbackAsync();
+            await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
     }

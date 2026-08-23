@@ -90,6 +90,11 @@ public static class ApplicationHost
                     sp.GetRequiredService<IAccessibleAnnouncer>(),
                     sp.GetRequiredService<IPlaylistLoginWindowFactory>()));
                 services.AddSingleton<ApplicationWindowFactory>();
+                services.AddSingleton<ApplicationShutdownRequest>();
+                services.AddSingleton<IApplicationShutdown>(sp =>
+                    sp.GetRequiredService<ApplicationShutdownRequest>());
+                services.AddSingleton<IApplicationShutdownParticipant, MainWindowShutdownParticipant>();
+                services.AddSingleton<IShutdownFeedback, WpfShutdownFeedback>();
                 services.AddSingleton<MainWindow>();
                 services.AddSingleton<IApplicationShell, WpfApplicationShell>();
 

@@ -1,6 +1,7 @@
 ﻿// Compiled: 2026-08-01 - 全链路打通 + 无障碍键盘导航 + 简体中文界面
 using System.Collections.Generic;
 using System;
+using System.ComponentModel;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -33,6 +34,11 @@ public partial class MainWindow : Window
     private readonly IProcessLauncher _processLauncher;
     private readonly PlaylistImportView _playlistImportPanel;
     private readonly ApplicationWindowFactory _windowFactory;
+    private readonly IApplicationShutdown _applicationShutdown;
+    private UserSettings _loadedSettings = new();
+    private Task? _closeAfterShutdown;
+    private bool _shutdownCloseAllowed;
+    private bool _shutdownBlocked;
     private string _defaultQuality = "128k";
     private string _defaultDownloadQuality = "128k";
     private string _currentPlayingQuality = "128k"; // 最近一次播放使用的音质（查看歌曲详情用）
@@ -152,7 +158,8 @@ public partial class MainWindow : Window
         IDataStorageService dataStorageService,
         IProcessLauncher processLauncher,
         PlaylistImportView playlistImportPanel,
-        ApplicationWindowFactory windowFactory)
+        ApplicationWindowFactory windowFactory,
+        IApplicationShutdown applicationShutdown)
     {
         _accessibilityService = accessibilityService;
         _playerService = playerService;
@@ -166,6 +173,7 @@ public partial class MainWindow : Window
         _processLauncher = processLauncher;
         _playlistImportPanel = playlistImportPanel;
         _windowFactory = windowFactory;
+        _applicationShutdown = applicationShutdown;
 
         InitializeComponent();
         if (_accessibilityService is WpfAccessibleAnnouncer wpfAnnouncer)
@@ -892,6 +900,7 @@ public partial class MainWindow : Window
         try
         {
             var settings = await _dataService.GetSettingsAsync();
+            _loadedSettings = CloneForShutdown(settings ?? new UserSettings());
             _lyricOffsets = settings?.LyricOffsets ?? new();
             if (settings != null)
             {
@@ -1263,48 +1272,111 @@ public partial class MainWindow : Window
     }
 
 
-    private async void SaveSettingsOnExit()
+    internal ApplicationShutdownSnapshot CaptureAndBlockShutdown()
     {
-        if (_dataService == null) return;
-        try
+        if (_shutdownBlocked)
+            throw new InvalidOperationException("Shutdown state has already been captured.");
+
+        var settings = CloneForShutdown(_loadedSettings);
+        settings.DefaultVolume = _playerService.Volume;
+        settings.WindowWidth = (int)Math.Round(ActualWidth);
+        settings.WindowHeight = (int)Math.Round(ActualHeight);
+        settings.AutoPlay = AutoPlayCheckBox.IsChecked ?? true;
+        settings.ShuffleMode = ShufflePlayCheckBox.IsChecked ?? false;
+        settings.LoopMode = RepeatPlayCheckBox.IsChecked ?? false;
+        settings.EnableScreenReader = EnableScreenReaderCheckBox.IsChecked ?? true;
+        settings.EnableVoiceAnnouncement = EnableVoiceAnnouncementCheckBox.IsChecked ?? true;
+        settings.DefaultPlayQuality = GetComboTag(DefaultQualityCombo, "128k");
+        settings.DefaultDownloadQuality = GetComboTag(DownloadQualityCombo, "128k");
+        settings.DownloadPath = DownloadPathBox.Text?.Trim() ?? string.Empty;
+        settings.DownloadLyric = DownloadLyricCheckBox?.IsChecked ?? true;
+        settings.DownloadNameOrder = string.Equals(
+            GetComboTag(DownloadNameOrderCombo, "ArtistTitle"),
+            "TitleArtist",
+            StringComparison.OrdinalIgnoreCase)
+            ? DownloadNameOrder.TitleArtist
+            : DownloadNameOrder.ArtistTitle;
+        settings.DownloadNameIncludeQuality = DownloadNameQualityCheckBox?.IsChecked ?? true;
+        settings.ThirdPartyPlayerPath = ThirdPartyPlayerPathBox?.Text?.Trim() ?? string.Empty;
+        settings.LyricAutoAnnounce = LyricAnnounceCheckBox.IsChecked ?? true;
+        settings.LyricAutoScroll = LyricScrollCheckBox.IsChecked ?? true;
+        settings.DefaultSearchSource = GetComboTag(SearchSourceCombo, "all");
+        settings.AccessibilitySettings ??= new AccessibilitySettings();
+        settings.AccessibilitySettings.AnnouncementVoiceId = GetComboTag(VoiceCombo, "");
+        settings.AccessibilitySettings.AnnouncementRate =
+            double.TryParse(GetComboTag(SpeechRateCombo, "1"), out var speechRate)
+                ? speechRate
+                : 1.0;
+        settings.CustomHotkeys = CloneForShutdown(_hotkeyManager.GetAllHotkeys());
+        settings.OutputDeviceIndex = _playerService.CurrentOutputDeviceIndex;
+        settings.LyricOffsets = new Dictionary<string, int>(_lyricOffsets);
+        settings.HideToTrayOnAltF4 = _hideToTrayOnAltF4;
+        settings.Playback = new PlaybackSessionState
         {
-            var settings = await _dataService.GetSettingsAsync() ?? new UserSettings();
-            settings.DefaultVolume = _playerService?.Volume ?? 0.8;
-            settings.AutoPlay = AutoPlayCheckBox.IsChecked ?? true;
-            settings.ShuffleMode = ShufflePlayCheckBox.IsChecked ?? false;
-            settings.LoopMode = RepeatPlayCheckBox.IsChecked ?? false;
-            settings.EnableScreenReader = EnableScreenReaderCheckBox.IsChecked ?? true;
-            settings.EnableVoiceAnnouncement = EnableVoiceAnnouncementCheckBox.IsChecked ?? true;
-            settings.DefaultPlayQuality = GetComboTag(DefaultQualityCombo, "128k");
-            settings.DefaultDownloadQuality = GetComboTag(DownloadQualityCombo, "128k");
-            settings.DownloadPath = DownloadPathBox.Text?.Trim() ?? string.Empty;
-            settings.DownloadLyric = DownloadLyricCheckBox?.IsChecked ?? true;
-            settings.DownloadNameOrder = string.Equals(GetComboTag(DownloadNameOrderCombo, "ArtistTitle"), "TitleArtist", StringComparison.OrdinalIgnoreCase)
-                ? DownloadNameOrder.TitleArtist
-                : DownloadNameOrder.ArtistTitle;
-            settings.DownloadNameIncludeQuality = DownloadNameQualityCheckBox?.IsChecked ?? true;
-            settings.ThirdPartyPlayerPath = ThirdPartyPlayerPathBox?.Text?.Trim() ?? string.Empty;
-            settings.LyricAutoAnnounce = LyricAnnounceCheckBox.IsChecked ?? true;
-            settings.LyricAutoScroll = LyricScrollCheckBox.IsChecked ?? true;
-            settings.DefaultSearchSource = GetComboTag(SearchSourceCombo, "all");
-            settings.AccessibilitySettings ??= new AccessibilitySettings();
-            settings.AccessibilitySettings.AnnouncementVoiceId = GetComboTag(VoiceCombo, "");
-            settings.AccessibilitySettings.AnnouncementRate =
-                double.TryParse(GetComboTag(SpeechRateCombo, "1"), out var spRate) ? spRate : 1.0;
-            settings.CustomHotkeys = _hotkeyManager?.GetAllHotkeys() ?? new List<Hotkey>();
-            settings.OutputDeviceIndex = _playerService?.CurrentOutputDeviceIndex ?? -1;
-            settings.LyricOffsets = _lyricOffsets;
-            settings.HideToTrayOnAltF4 = _hideToTrayOnAltF4;
-            await _dataService.SaveSettingsAsync(settings);
-            // 音源配置（导入/启用/禁用/默认/优先级）随退出一并持久化，避免异步保存未完成而丢失
-            if (_musicSourceService != null)
-                await _musicSourceService.PersistSourcesAsync();
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"保存设置失败: {ex.Message}");
-        }
+            CurrentMusic = _playerService.CurrentMusic is null
+                ? null
+                : CapturePlaybackMusic(_playerService.CurrentMusic),
+            PositionSeconds = Math.Max(0, _playerService.Position.TotalSeconds),
+            WasPlaying = _playerService.IsPlaying,
+            WasPaused = _playerService.IsPaused
+        };
+        var sources = CloneForShutdown(_musicSourceService.GetAllSources());
+
+        _shutdownBlocked = true;
+        IsEnabled = false;
+        _positionTimer.Stop();
+        _clockTimer.Stop();
+        _hotkeyManager.UnregisterAllGlobal();
+        UninstallNumpadHook();
+        _musicSourceService.SourcesChanged -= MusicSourceService_SourcesChanged;
+        _musicSourceService.ScriptUpdateAlert -= MusicSourceService_ScriptUpdateAlert;
+        _playerService.QueueCompleted -= PlayerService_QueueCompleted;
+        _downloadService.TaskCompleted -= DownloadService_TaskCompleted;
+        DisposeTrayIcon();
+
+        return new ApplicationShutdownSnapshot(settings, sources);
     }
+
+    internal async Task PersistShutdownAsync(
+        ApplicationShutdownSnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        var stored = await _dataService.GetSettingsAsync(cancellationToken);
+        if (stored is not null)
+        {
+            snapshot.Settings.DefaultSourceId = stored.DefaultSourceId;
+            snapshot.Settings.FavoritePlaylistName = stored.FavoritePlaylistName;
+            snapshot.Settings.AccessibilitySettings.AnnouncementVolume =
+                stored.AccessibilitySettings?.AnnouncementVolume ?? 0.8;
+            snapshot.Settings.AccessibilitySettings.EnableFocusAnnouncements =
+                stored.AccessibilitySettings?.EnableFocusAnnouncements ?? true;
+            snapshot.Settings.AccessibilitySettings.FocusAnnouncementDelay =
+                stored.AccessibilitySettings?.FocusAnnouncementDelay ?? 300;
+        }
+        await _dataService.SaveSettingsAsync(snapshot.Settings, cancellationToken);
+        await _dataService.SaveMusicSourcesAsync(snapshot.Sources.ToList(), cancellationToken);
+        _loadedSettings = CloneForShutdown(snapshot.Settings);
+    }
+
+    private static T CloneForShutdown<T>(T value) =>
+        JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value))
+        ?? throw new InvalidOperationException("Shutdown state could not be captured.");
+
+    private static MusicInfo CapturePlaybackMusic(MusicInfo music) => new()
+    {
+        Id = music.Id,
+        Hash = music.Hash,
+        Songmid = music.Songmid,
+        Title = music.Title,
+        Artist = music.Artist,
+        Album = music.Album,
+        Duration = music.Duration,
+        Source = music.Source,
+        Quality = music.Quality,
+        AddedDate = music.AddedDate,
+        PlayCount = music.PlayCount,
+        IsAlbum = music.IsAlbum
+    };
     // ==================== 搜索 ====================
 
     private async Task SearchMusicAsync(bool resetPage = true)
@@ -3995,13 +4067,15 @@ public partial class MainWindow : Window
     /// <summary>从托盘退出应用：释放托盘图标后关闭窗口</summary>
     private void QuitApplication()
     {
-        if (_trayIcon != null)
-        {
-            _trayIcon.Visible = false;
-            _trayIcon.Dispose();
-            _trayIcon = null;
-        }
         Close();
+    }
+
+    private void DisposeTrayIcon()
+    {
+        if (_trayIcon == null) return;
+        _trayIcon.Visible = false;
+        _trayIcon.Dispose();
+        _trayIcon = null;
     }
 
     // ==================== 辅助 ====================
@@ -4666,15 +4740,40 @@ public partial class MainWindow : Window
         return null;
     }
 
+    protected override async void OnClosing(CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        if (_shutdownCloseAllowed) return;
+
+        e.Cancel = true;
+        await CloseAfterShutdownAsync();
+    }
+
+    private Task CloseAfterShutdownAsync() =>
+        _closeAfterShutdown ??= CompleteShutdownAndCloseAsync();
+
+    private async Task CompleteShutdownAndCloseAsync()
+    {
+        try
+        {
+            await _applicationShutdown.RequestAsync();
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"Shutdown coordination failed: {exception.GetType().Name}");
+        }
+        finally
+        {
+            _shutdownCloseAllowed = true;
+            Close();
+        }
+    }
+
     protected override void OnClosed(EventArgs e)
     {
         // 释放托盘图标，避免退出后图标残留
-        if (_trayIcon != null)
-        {
-            _trayIcon.Visible = false;
-            _trayIcon.Dispose();
-            _trayIcon = null;
-        }
+        DisposeTrayIcon();
         if (_musicSourceService != null)
             _musicSourceService.SourcesChanged -= MusicSourceService_SourcesChanged;
         _hotkeyManager?.UnregisterAllGlobal();
@@ -4687,7 +4786,6 @@ public partial class MainWindow : Window
         base.OnClosed(e);
         _positionTimer.Stop();
         _clockTimer.Stop();
-        SaveSettingsOnExit();
     }
 
     /// <summary>歌词列表项：文本 + 是否为当前播放句（用于高亮/放大）</summary>

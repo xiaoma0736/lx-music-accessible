@@ -34,17 +34,19 @@ public interface IDataService
     /// <summary>
     /// 保存设置
     /// </summary>
-    Task SaveSettingsAsync(UserSettings settings);
+    Task SaveSettingsAsync(UserSettings settings, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取设置
     /// </summary>
-    Task<UserSettings?> GetSettingsAsync();
+    Task<UserSettings?> GetSettingsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 保存音源
     /// </summary>
-    Task SaveMusicSourcesAsync(List<MusicSource> sources);
+    Task SaveMusicSourcesAsync(
+        List<MusicSource> sources,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取音源

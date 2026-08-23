@@ -272,6 +272,9 @@ public class UserSettings
     /// </summary>
     public int OutputDeviceIndex { get; set; } = -1;
 
+    /// <summary>上次关闭时捕获的播放状态；启动时可读取，但不会隐式联网或自动播放。</summary>
+    public PlaybackSessionState Playback { get; set; } = new();
+
     /// <summary>
     /// 本地收藏（网络歌曲收藏）的显示名称，可在播放列表页重命名
     /// </summary>
@@ -301,6 +304,14 @@ public class UserSettings
     /// for lyrics whose timestamps are shifted relative to the audio (e.g. AI-generated
     /// or a different version). Positive = announce later (fixes lyrics reading early).</summary>
     public Dictionary<string, int> LyricOffsets { get; set; } = new();
+}
+
+public sealed class PlaybackSessionState
+{
+    public MusicInfo? CurrentMusic { get; set; }
+    public double PositionSeconds { get; set; }
+    public bool WasPlaying { get; set; }
+    public bool WasPaused { get; set; }
 }
 
 /// <summary>

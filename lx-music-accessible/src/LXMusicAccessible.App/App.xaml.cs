@@ -312,7 +312,7 @@ public partial class App : Application
             return false;
         }
     }
-    protected override async void OnExit(ExitEventArgs e)
+    protected override void OnExit(ExitEventArgs e)
     {
         base.OnExit(e);
 
@@ -331,8 +331,9 @@ public partial class App : Application
 
         Log.Information("应用程序正在关闭");
 
-        if (_runtime != null)
-            await _runtime.DisposeAsync();
+        // Normal exits have already awaited IApplicationShutdown. This is only a
+        // synchronous final fallback; it must never begin new persistence work.
+        _runtime?.FinalizeExit();
 
         Log.CloseAndFlush();
     }

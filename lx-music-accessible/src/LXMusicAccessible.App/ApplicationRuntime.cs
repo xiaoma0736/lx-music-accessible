@@ -25,6 +25,7 @@ public sealed class ApplicationRuntime : IAsyncDisposable
     private IHost? _host;
     private CancellationTokenSource? _backgroundCancellation;
     private Task? _backgroundTask;
+    private ApplicationShutdownCoordinator? _shutdownCoordinator;
     private bool _started;
     private bool _disposed;
 
@@ -52,6 +53,8 @@ public sealed class ApplicationRuntime : IAsyncDisposable
                 _host = _createHost();
                 await _host.StartAsync(cancellationToken);
                 await _initializer.InitializeAsync(_host.Services, cancellationToken);
+
+                BindShutdown(_host.Services);
 
                 var shell = _host.Services.GetRequiredService<IApplicationShell>();
                 shell.Show();
@@ -90,6 +93,31 @@ public sealed class ApplicationRuntime : IAsyncDisposable
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         if (_disposed) return;
+        if (_shutdownCoordinator is not null)
+        {
+            await _shutdownCoordinator.RequestAsync().WaitAsync(cancellationToken);
+            return;
+        }
+
+        _started = false;
+        await QuiesceBackgroundAsync(cancellationToken);
+        await ReleaseHostAsync(cancellationToken);
+    }
+
+    internal void FinalizeExit()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _started = false;
+        var backgroundCancellation = Interlocked.Exchange(ref _backgroundCancellation, null);
+        backgroundCancellation?.Cancel();
+        backgroundCancellation?.Dispose();
+        _ = Interlocked.Exchange(ref _backgroundTask, null);
+        Interlocked.Exchange(ref _host, null)?.Dispose();
+    }
+
+    private async Task QuiesceBackgroundAsync(CancellationToken cancellationToken)
+    {
         _started = false;
         var backgroundCancellation = Interlocked.Exchange(ref _backgroundCancellation, null);
         var backgroundTask = Interlocked.Exchange(ref _backgroundTask, null);
@@ -100,7 +128,6 @@ public sealed class ApplicationRuntime : IAsyncDisposable
             catch (OperationCanceledException) when (backgroundCancellation?.IsCancellationRequested == true) { }
         }
         backgroundCancellation?.Dispose();
-        await ReleaseHostAsync(cancellationToken);
     }
 
     public async ValueTask DisposeAsync()
@@ -123,6 +150,19 @@ public sealed class ApplicationRuntime : IAsyncDisposable
                 logger,
                 _backgroundCancellation.Token),
             _backgroundCancellation.Token);
+    }
+
+    private void BindShutdown(IServiceProvider services)
+    {
+        var request = services.GetRequiredService<ApplicationShutdownRequest>();
+        _shutdownCoordinator = new ApplicationShutdownCoordinator(
+            () => services.GetRequiredService<IApplicationShutdownParticipant>(),
+            QuiesceBackgroundAsync,
+            ReleaseHostAsync,
+            services.GetRequiredService<IShutdownFeedback>(),
+            services.GetRequiredService<ILogger<ApplicationShutdownCoordinator>>(),
+            TimeSpan.FromSeconds(15));
+        request.Bind(_shutdownCoordinator.RequestAsync);
     }
 
     private static async Task RunOptionalBackgroundWorkAsync(

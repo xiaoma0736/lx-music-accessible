@@ -4,6 +4,7 @@ using LXMusicAccessible.App;
 using LXMusicAccessible.Audio;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Data;
+using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
 using LXMusicAccessible.Tests.Infrastructure;
 using Microsoft.Data.Sqlite;
@@ -125,6 +126,10 @@ public sealed class ApplicationRuntimeTests
                 services.Replace(ServiceDescriptor.Singleton<IAudioPlayer>(audio));
                 services.Replace(ServiceDescriptor.Singleton<IProcessLauncher>(new RecordingProcessLauncher()));
                 services.Replace(ServiceDescriptor.Singleton<IApplicationShell>(shell));
+                services.Replace(ServiceDescriptor.Singleton<IApplicationShutdownParticipant>(
+                    new RecordingShutdownParticipant(events)));
+                services.Replace(ServiceDescriptor.Singleton<IShutdownFeedback>(
+                    new RecordingShutdownFeedback()));
                 services.AddSingleton<IHostedService>(_ => new RecordingHostedService(events));
             });
     }
@@ -218,5 +223,29 @@ public sealed class ApplicationRuntimeTests
         }
 
         public void Dispose() => events.Add("host-dispose");
+    }
+
+    private sealed class RecordingShutdownParticipant(List<string> events)
+        : IApplicationShutdownParticipant
+    {
+        public ApplicationShutdownSnapshot CaptureAndBlock()
+        {
+            events.Add("shutdown-capture");
+            return new(new UserSettings(), Array.Empty<MusicSource>());
+        }
+
+        public Task PersistAsync(
+            ApplicationShutdownSnapshot snapshot,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            events.Add("shutdown-persist");
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingShutdownFeedback : IShutdownFeedback
+    {
+        public void Report(ShutdownResult result) { }
     }
 }
