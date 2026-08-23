@@ -122,12 +122,121 @@ public sealed class PlaylistSnapshotTests
         await AssertNoOrphansAsync(fixture.DatabasePath);
     }
 
+    [Fact]
+    public async Task Favorite_addition_preserves_existing_order_and_reports_existing_input_and_single_duplicates()
+    {
+        using var fixture = await TemporaryDatabase.CreateAsync();
+        var playlist = CreatePlaylist("favorites", "Favorites");
+        await SeedAsync(fixture.Data, playlist, CreateSong("old-1"), CreateSong("old-2"));
+
+        var first = await fixture.Data.AddSongsToPlaylistAsync(
+            playlist.Id,
+            [
+                CreateSong("old-1", "must not replace existing"),
+                CreateSong("new-1", "first version"),
+                CreateSong("new-1", "duplicate version"),
+                CreateSong("new-2")
+            ]);
+        var single = await fixture.Data.AddSongsToPlaylistAsync(
+            playlist.Id,
+            [CreateSong("new-3")]);
+        var repeatedSingle = await fixture.Data.AddSongsToPlaylistAsync(
+            playlist.Id,
+            [CreateSong("new-3", "duplicate single")]);
+
+        Assert.Equal(new PlaylistSongAddition(2, 2), first);
+        Assert.Equal(new PlaylistSongAddition(1, 0), single);
+        Assert.Equal(new PlaylistSongAddition(0, 1), repeatedSingle);
+        var actual = await fixture.Data.GetPlaylistItemsAsync(playlist.Id);
+        Assert.Equal(["old-1", "old-2", "new-1", "new-2", "new-3"],
+            actual.Select(song => song.Id));
+        Assert.Equal("old-1", actual[0].Title);
+        Assert.Equal("first version", actual[2].Title);
+        await AssertNoOrphansAsync(fixture.DatabasePath);
+    }
+
+    [Fact]
+    public async Task Favorite_addition_failure_after_a_completed_batch_rolls_back_every_insert()
+    {
+        using var fixture = await TemporaryDatabase.CreateAsync();
+        var playlist = CreatePlaylist("favorites", "Favorites");
+        await SeedAsync(fixture.Data, playlist, CreateSong("old-1"), CreateSong("old-2"));
+        await fixture.ExecuteAsync(@"
+            CREATE TRIGGER fail_favorite_insert
+            BEFORE INSERT ON PlaylistItems
+            WHEN NEW.MusicId = 'fail'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected favorite failure');
+            END;");
+
+        var additions = Enumerable.Range(0, 150)
+            .Select(index => CreateSong(index == 125 ? "fail" : $"new-{index:D3}"));
+        await Assert.ThrowsAsync<SqliteException>(() =>
+            fixture.Data.AddSongsToPlaylistAsync(playlist.Id, additions));
+
+        Assert.Equal(["old-1", "old-2"],
+            (await fixture.Data.GetPlaylistItemsAsync(playlist.Id)).Select(song => song.Id));
+        await AssertNoOrphansAsync(fixture.DatabasePath);
+    }
+
+    [Fact]
+    public async Task Favorite_addition_cancellation_after_a_completed_batch_rolls_back_every_insert()
+    {
+        using var fixture = await TemporaryDatabase.CreateAsync();
+        var playlist = CreatePlaylist("favorites", "Favorites");
+        await SeedAsync(fixture.Data, playlist, CreateSong("old-1"), CreateSong("old-2"));
+        using var cancellation = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            fixture.Data.AddSongsToPlaylistAsync(
+                playlist.Id,
+                CancelFavoriteAfterFirstBatch(cancellation),
+                cancellation.Token));
+
+        Assert.Equal(["old-1", "old-2"],
+            (await fixture.Data.GetPlaylistItemsAsync(playlist.Id)).Select(song => song.Id));
+        await AssertNoOrphansAsync(fixture.DatabasePath);
+    }
+
+    [Fact]
+    public async Task Thousand_favorites_keep_input_order_and_use_one_observable_sqlite_commit()
+    {
+        using var fixture = await TemporaryDatabase.CreateAsync();
+        var playlist = CreatePlaylist("large-favorites", "Large favorites");
+        await SeedAsync(fixture.Data, playlist, CreateSong("existing"));
+        await using var keeper = await OpenAsync(fixture.DatabasePath);
+        Assert.Equal("wal", await keeper.QuerySingleAsync<string>("PRAGMA journal_mode=WAL"));
+        await keeper.ExecuteAsync("PRAGMA wal_autocheckpoint=0");
+        await keeper.QueryAsync("PRAGMA wal_checkpoint(TRUNCATE)");
+        var songs = Enumerable.Range(0, 1_000)
+            .Select(index => CreateSong($"song-{index:D4}"))
+            .ToList();
+
+        var result = await fixture.Data.AddSongsToPlaylistAsync(playlist.Id, songs);
+
+        Assert.Equal(new PlaylistSongAddition(1_000, 0), result);
+        Assert.Equal(new[] { "existing" }.Concat(songs.Select(song => song.Id)),
+            (await fixture.Data.GetPlaylistItemsAsync(playlist.Id)).Select(song => song.Id));
+        Assert.Equal(1, CountWalCommits(fixture.DatabasePath + "-wal"));
+        await AssertNoOrphansAsync(fixture.DatabasePath);
+    }
+
     private static IEnumerable<MusicInfo> CancelAfterFirstBatch(CancellationTokenSource cancellation)
     {
         for (var index = 0; index < 250; index++)
         {
             if (index == 101) cancellation.Cancel();
             yield return CreateSong($"new-{index:D3}");
+        }
+    }
+
+    private static IEnumerable<MusicInfo> CancelFavoriteAfterFirstBatch(
+        CancellationTokenSource cancellation)
+    {
+        for (var index = 0; index < 250; index++)
+        {
+            if (index == 101) cancellation.Cancel();
+            yield return CreateSong($"favorite-{index:D3}");
         }
     }
 

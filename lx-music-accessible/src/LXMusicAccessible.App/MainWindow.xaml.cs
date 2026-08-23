@@ -2655,11 +2655,21 @@ public partial class MainWindow : Window
         var list = songs.Where(s => s != null
             && !string.Equals(s.Source, "Local", StringComparison.OrdinalIgnoreCase)).ToList();
         if (list.Count == 0) { Announce("本地歌曲无需收藏，请收藏网络歌曲"); return; }
-        await _dataService.AddSongsToPlaylistAsync(_selectedOnlinePlaylist!.Id, list);
+        var addition = await _dataService.AddSongsToPlaylistAsync(_selectedOnlinePlaylist!.Id, list);
         await LoadOnlinePlaylistsAsync();
         if (_selectedOnlinePlaylist != null)
             OnlinePlaylistList.SelectedItem = _onlinePlaylists.FirstOrDefault(p => p.Id == _selectedOnlinePlaylist.Id);
-        Announce($"已添加 {list.Count} 首歌曲到在线收藏：{_selectedOnlinePlaylist!.Name}");
+        if (addition.AddedCount == 0)
+        {
+            Announce($"所选歌曲已在在线收藏中：{_selectedOnlinePlaylist!.Name}");
+        }
+        else
+        {
+            var duplicateMessage = addition.SkippedCount == 0
+                ? string.Empty
+                : $"，跳过 {addition.SkippedCount} 首重复歌曲";
+            Announce($"已添加 {addition.AddedCount} 首歌曲到在线收藏：{_selectedOnlinePlaylist!.Name}{duplicateMessage}");
+        }
     }
 
     private async Task RemoveFavoriteSongAsync(MusicInfo music)

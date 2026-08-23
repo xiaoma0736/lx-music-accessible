@@ -87,26 +87,6 @@ public interface IDataService
     Task ClearPlaylistItemsAsync(string playlistId);
 
     /// <summary>
-    /// 批量添加歌曲到本地收藏（网络歌曲；按 歌曲Id+音源 去重，已存在则跳过）
-    /// </summary>
-    Task AddFavoriteSongsAsync(IEnumerable<MusicInfo> songs);
-
-    /// <summary>
-    /// 获取本地收藏的网络歌曲列表（按添加时间倒序）
-    /// </summary>
-    Task<List<MusicInfo>> GetFavoriteSongsAsync();
-
-    /// <summary>
-    /// 从本地收藏移除指定歌曲
-    /// </summary>
-    Task RemoveFavoriteSongAsync(MusicInfo music);
-
-    /// <summary>
-    /// 清空本地收藏
-    /// </summary>
-    Task ClearFavoriteSongsAsync();
-
-    /// <summary>
     /// 获取收藏歌单（local=true 本地收藏，false 在线收藏）
     /// </summary>
     Task<List<Playlist>> GetFavoritePlaylistsAsync(bool local);
@@ -117,9 +97,14 @@ public interface IDataService
     Task<Playlist?> GetOrCreateDefaultPlaylistAsync(bool local);
 
     /// <summary>
-    /// 批量添加歌曲到指定歌单（按 歌曲Id+音源 去重）
+    /// 把歌曲原子追加到指定歌单。既有歌曲和输入歌曲按 Id（缺失时按 PlayUrl）与 Source
+    /// 去重并保留既有顺序及输入首次出现顺序；大型列表有界分批、单次提交。
+    /// 返回实际新增数和因既有或输入重复而跳过的数量；故障或取消不会留下部分写入。
     /// </summary>
-    Task AddSongsToPlaylistAsync(string playlistId, IEnumerable<MusicInfo> songs);
+    Task<PlaylistSongAddition> AddSongsToPlaylistAsync(
+        string playlistId,
+        IEnumerable<MusicInfo> songs,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 从指定歌单移除歌曲
@@ -159,3 +144,5 @@ public interface IDataService
 }
 
 public readonly record struct PlaylistSnapshotReplacement(int ImportedCount, int SkippedCount);
+
+public readonly record struct PlaylistSongAddition(int AddedCount, int SkippedCount);

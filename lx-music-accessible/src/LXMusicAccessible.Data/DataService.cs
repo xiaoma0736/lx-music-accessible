@@ -490,7 +490,7 @@ internal static class SqliteDatabaseConnection
 
 public class DataService : IDataService
 {
-    private const int SnapshotBatchSize = 100;
+    private const int PlaylistItemBatchSize = 100;
     private const string UpsertPlaylistSql = @"
         INSERT INTO Playlists
         (Id, Name, Description, Tags, Type, IsLocal, CreatedDate, ModifiedDate, Source, RemoteId, IsSnapshot)
@@ -573,7 +573,7 @@ public class DataService : IDataService
                 cancellationToken: cancellationToken));
 
             var seen = new HashSet<(string MusicId, string MusicSource)>();
-            var batch = new List<SnapshotItem>(SnapshotBatchSize);
+            var batch = new List<PlaylistItemWrite>(PlaylistItemBatchSize);
             var imported = 0;
             var skipped = 0;
             var addedDate = DateTime.Now.ToString("o");
@@ -597,7 +597,7 @@ public class DataService : IDataService
                     continue;
                 }
 
-                batch.Add(new SnapshotItem(
+                batch.Add(new PlaylistItemWrite(
                     Guid.NewGuid().ToString(),
                     playlist.Id,
                     JsonSerializer.Serialize(music),
@@ -606,15 +606,15 @@ public class DataService : IDataService
                     imported++,
                     addedDate));
 
-                if (batch.Count == SnapshotBatchSize)
+                if (batch.Count == PlaylistItemBatchSize)
                 {
-                    await WriteSnapshotBatchAsync(connection, transaction, batch, cancellationToken);
+                    await WritePlaylistItemBatchAsync(connection, transaction, batch, cancellationToken);
                     batch.Clear();
                 }
             }
 
             if (batch.Count != 0)
-                await WriteSnapshotBatchAsync(connection, transaction, batch, cancellationToken);
+                await WritePlaylistItemBatchAsync(connection, transaction, batch, cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();
             await transaction.CommitAsync(cancellationToken);
@@ -634,10 +634,10 @@ public class DataService : IDataService
         }
     }
 
-    private static async Task WriteSnapshotBatchAsync(
+    private static async Task WritePlaylistItemBatchAsync(
         SqliteConnection connection,
         System.Data.Common.DbTransaction transaction,
-        IReadOnlyList<SnapshotItem> batch,
+        IReadOnlyList<PlaylistItemWrite> batch,
         CancellationToken cancellationToken)
     {
         var sql = new StringBuilder(@"
@@ -686,14 +686,19 @@ public class DataService : IDataService
         IsSnapshot = playlist.IsSnapshot ? 1 : 0
     };
 
-    private sealed record SnapshotItem(
+    private sealed record PlaylistItemWrite(
         string Id,
         string PlaylistId,
         string MusicData,
         string MusicId,
         string MusicSource,
-        int OrderNum,
+        long OrderNum,
         string AddedDate);
+
+    private sealed record PlaylistItemIndex(
+        string MusicId,
+        string MusicSource,
+        long OrderNum);
 
     public async Task SavePlaylistAsync(Playlist playlist)
     {
@@ -1024,77 +1029,6 @@ public class DataService : IDataService
         await connection.ExecuteAsync("DELETE FROM PlaylistItems WHERE PlaylistId = @PlaylistId", new { PlaylistId = playlistId });
     }
 
-    // ============ 本地收藏（网络歌曲） ============
-
-    public async Task AddFavoriteSongsAsync(IEnumerable<MusicInfo> songs)
-    {
-        var list = songs?.Where(s => s != null).ToList() ?? new List<MusicInfo>();
-        if (list.Count == 0) return;
-        _logger.LogInformation("添加 {Count} 首歌曲到收藏", list.Count);
-
-        using var connection = await GetConnectionAsync();
-        foreach (var music in list)
-        {
-            if (string.IsNullOrEmpty(music.Id) || string.IsNullOrEmpty(music.Source)) continue;
-            var musicJson = JsonSerializer.Serialize(music);
-            await connection.ExecuteAsync(@"
-                INSERT INTO FavoriteSongs (MusicId, MusicSource, MusicData, OrderNum, AddedDate)
-                VALUES (@MusicId, @MusicSource, @MusicData, @OrderNum, @AddedDate)
-                ON CONFLICT(MusicId, MusicSource) DO UPDATE SET MusicData = @MusicData",
-                new
-                {
-                    MusicId = music.Id,
-                    MusicSource = music.Source,
-                    MusicData = musicJson,
-                    OrderNum = list.IndexOf(music),
-                    AddedDate = DateTime.Now.ToString("o")
-                });
-        }
-    }
-
-    public async Task<List<MusicInfo>> GetFavoriteSongsAsync()
-    {
-        _logger.LogInformation("获取收藏歌曲");
-        using var connection = await GetConnectionAsync();
-
-        var items = await connection.QueryAsync<string>(@"
-            SELECT MusicData
-            FROM FavoriteSongs
-            ORDER BY AddedDate DESC, OrderNum ASC");
-
-        var result = new List<MusicInfo>();
-        foreach (var musicJson in items)
-        {
-            try
-            {
-                var music = JsonSerializer.Deserialize<MusicInfo>(musicJson);
-                if (music != null) result.Add(music);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "解析收藏歌曲失败");
-            }
-        }
-        return result;
-    }
-
-    public async Task RemoveFavoriteSongAsync(MusicInfo music)
-    {
-        if (music == null) return;
-        _logger.LogInformation("从收藏移除: {Title}", music.Title);
-        using var connection = await GetConnectionAsync();
-        await connection.ExecuteAsync(
-            "DELETE FROM FavoriteSongs WHERE MusicId = @MusicId AND MusicSource = @MusicSource",
-            new { MusicId = music.Id, MusicSource = music.Source });
-    }
-
-    public async Task ClearFavoriteSongsAsync()
-    {
-        _logger.LogInformation("清空收藏");
-        using var connection = await GetConnectionAsync();
-        await connection.ExecuteAsync("DELETE FROM FavoriteSongs");
-    }
-
     // ============ 收藏歌单（本地/在线，V1.3） ============
 
     public async Task<List<Playlist>> GetFavoritePlaylistsAsync(bool local)
@@ -1163,33 +1097,97 @@ public class DataService : IDataService
         return created;
     }
 
-    public async Task AddSongsToPlaylistAsync(string playlistId, IEnumerable<MusicInfo> songs)
+    public async Task<PlaylistSongAddition> AddSongsToPlaylistAsync(
+        string playlistId,
+        IEnumerable<MusicInfo> songs,
+        CancellationToken cancellationToken = default)
     {
-        var list = songs?.Where(s => s != null).ToList() ?? new List<MusicInfo>();
-        if (list.Count == 0 || string.IsNullOrEmpty(playlistId)) return;
-        _logger.LogInformation("添加 {Count} 首歌曲到歌单 {PlaylistId}", list.Count, playlistId);
+        ArgumentNullException.ThrowIfNull(songs);
+        if (string.IsNullOrWhiteSpace(playlistId)) return default;
 
-        using var connection = await GetConnectionAsync();
-        int order = 0;
-        foreach (var music in list)
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var connection = await GetConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        try
         {
-            var musicId = string.IsNullOrEmpty(music.Id) ? music.PlayUrl ?? Guid.NewGuid().ToString() : music.Id;
-            var musicSource = string.IsNullOrEmpty(music.Source) ? "Local" : music.Source;
-            var musicJson = JsonSerializer.Serialize(music);
-            await connection.ExecuteAsync(@"
-                INSERT INTO PlaylistItems (Id, PlaylistId, MusicData, MusicId, MusicSource, OrderNum, AddedDate)
-                VALUES (@Id, @PlaylistId, @MusicData, @MusicId, @MusicSource, @OrderNum, @AddedDate)
-                ON CONFLICT(PlaylistId, MusicId, MusicSource) DO UPDATE SET MusicData = @MusicData",
-                new
+            var existing = (await connection.QueryAsync<PlaylistItemIndex>(new CommandDefinition(@"
+                SELECT MusicId, MusicSource, OrderNum
+                FROM PlaylistItems
+                WHERE PlaylistId = @PlaylistId",
+                new { PlaylistId = playlistId },
+                transaction,
+                cancellationToken: cancellationToken))).AsList();
+            var seen = new HashSet<(string MusicId, string MusicSource)>();
+            var nextOrder = 0L;
+            foreach (var item in existing)
+            {
+                seen.Add((item.MusicId, item.MusicSource));
+                nextOrder = Math.Max(nextOrder, item.OrderNum + 1);
+            }
+
+            var batch = new List<PlaylistItemWrite>(PlaylistItemBatchSize);
+            var added = 0;
+            var skipped = 0;
+            var addedDate = DateTime.Now.ToString("o");
+            foreach (var music in songs)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (music is null)
                 {
-                    Id = Guid.NewGuid().ToString(),
-                    PlaylistId = playlistId,
-                    MusicData = musicJson,
-                    MusicId = musicId,
-                    MusicSource = musicSource,
-                    OrderNum = order++,
-                    AddedDate = DateTime.Now.ToString("o")
-                });
+                    skipped++;
+                    continue;
+                }
+
+                var musicId = string.IsNullOrEmpty(music.Id)
+                    ? music.PlayUrl ?? Guid.NewGuid().ToString()
+                    : music.Id;
+                var musicSource = string.IsNullOrEmpty(music.Source) ? "Local" : music.Source;
+                if (!seen.Add((musicId, musicSource)))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                batch.Add(new PlaylistItemWrite(
+                    Guid.NewGuid().ToString(),
+                    playlistId,
+                    JsonSerializer.Serialize(music),
+                    musicId,
+                    musicSource,
+                    nextOrder++,
+                    addedDate));
+                added++;
+
+                if (batch.Count == PlaylistItemBatchSize)
+                {
+                    await WritePlaylistItemBatchAsync(connection, transaction, batch, cancellationToken);
+                    batch.Clear();
+                }
+            }
+
+            if (batch.Count != 0)
+                await WritePlaylistItemBatchAsync(connection, transaction, batch, cancellationToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            await transaction.CommitAsync(cancellationToken);
+            _logger.LogInformation(
+                "Added {AddedCount} songs to playlist {PlaylistId}; skipped {SkippedCount} duplicates",
+                added,
+                playlistId,
+                skipped);
+            return new PlaylistSongAddition(added, skipped);
+        }
+        catch
+        {
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+            catch (Exception rollbackException)
+            {
+                _logger.LogError(rollbackException, "Failed to roll back playlist addition {PlaylistId}", playlistId);
+            }
+            throw;
         }
     }
 
