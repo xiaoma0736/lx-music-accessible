@@ -63,12 +63,12 @@ class Program
         Check(scripts.Count > 0, $"脚本源加载 {scripts.Count} 个");
 
         // ====== 3. 播放URL（脚本源优先） ======
-        // ====== 2b. 数据库去重验证 ======
+        // ====== 2b. 脚本信任状态持久化验证 ======
         try
         {
             var dbSrc = sp.GetRequiredService<IDataService>();
             var after = await dbSrc.GetMusicSourcesAsync();
-            Console.WriteLine($"  [去重验证] 加载后音源数={after.Count} 聆澜数={after.Count(s => s.Id.StartsWith("script_") || s.Id == "paid_local")} 内存脚本源={scriptSource.GetAllScripts().Count}");
+            Console.WriteLine($"  [持久化验证] 加载后音源数={after.Count} 未信任数={after.Count(s => s.TrustState == ScriptTrustState.Untrusted)} 内存验证脚本数={scriptSource.GetAllScripts().Count}");
         }
         catch (Exception dex) { Console.WriteLine($"  [去重验证] 异常: {dex.Message}"); }
 
@@ -226,6 +226,8 @@ class Program
                 Check(imported != null, "本地导入聆澜脚本");
                 if (imported != null)
                 {
+                    var activation = await src.EnableSourceAsync(imported);
+                    Check(activation.Succeeded, "用户确认后启用聆澜脚本");
                     var info2 = scriptSource.GetScript(imported.Id);
                     var loadOk = info2 != null && await sp.GetRequiredService<LxScriptEngine>().TestLoadAsync(info2);
                     Check(loadOk, "聆澜脚本 Jint 加载校验");
@@ -280,43 +282,15 @@ class Program
             Check(false, "歌词全链路");
         }
 
-        // ====== 12. 预设脚本 URL 可达性 ======
-        Console.WriteLine("--- 12. 预设脚本 URL 可达性 ---");
-        try
-        {
-            using var hc = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-            foreach (var preset in ScriptMusicSource.SubscriptionSources)
-            {
-                try
-                {
-                    var resp = await hc.GetAsync(preset.Url);
-                    var ok = resp.IsSuccessStatusCode;
-                    Console.WriteLine($"  [{preset.Id}] {preset.Name} -> {(ok ? resp.StatusCode : resp.StatusCode)}");
-                    Check(ok, $"[{preset.Id}] 预设URL可达");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"  [{preset.Id}] {preset.Name} -> 不可达: {ex.Message}");
-                    Check(false, $"[{preset.Id}] 预设URL可达");
-                }
-            }
-        }
-        catch (Exception ex) { Console.WriteLine($"  URL测试异常: {ex.Message}"); }
-
-        // ====== 13. 订阅源加载 + 隐藏内置API校验 ======
-        Console.WriteLine("--- 13. 订阅源加载 + 隐藏内置API校验 ---");
-        var subs = ScriptMusicSource.SubscriptionSources;
-        Console.WriteLine($"  订阅清单数={subs.Count}: {string.Join(", ", subs.Select(s => s.Id))}");
-        Check(subs.Count >= 4, "订阅清单（4个在线稳定源）");
+        // ====== 12. 随版本验证脚本 + 隐藏内置API校验 ======
+        Console.WriteLine("--- 12. 随版本验证脚本 + 隐藏内置API校验 ---");
         foreach (var s in scriptSource.GetAllScripts())
             Console.WriteLine($"  [{s.Id}] {s.Name} v{s.Version} 源[{string.Join(",", s.SupportedSources)}]");
-        Check(scriptSource.GetAllScripts().Count > 0, "脚本源已加载");
-        foreach (var sub in subs)
-        {
-            var info = scriptSource.GetScript(sub.Id);
-            var probeOk = info != null && await sp.GetRequiredService<LxScriptEngine>().TestLoadAsync(info);
-            Check(probeOk, $"[{sub.Id}] 订阅源 Jint 加载校验");
-        }
+        var bundled = src.GetAllSources().SingleOrDefault(s => s.TrustState == ScriptTrustState.Bundled);
+        Check(bundled != null && bundled.IsEnabled, "随版本验证脚本已离线加载");
+        var bundledInfo = bundled == null ? null : scriptSource.GetScript(bundled.Id);
+        Check(bundledInfo != null && await sp.GetRequiredService<LxScriptEngine>().TestLoadAsync(bundledInfo),
+            "随版本验证脚本 Jint 加载校验");
 
         // 隐藏内置API：管理列表不含 5 大官方源，但底层搜索仍可用
         var mgmtList = src.GetAllSources();
@@ -354,6 +328,8 @@ class Program
                 {
                     Console.WriteLine($"  [ikun] 导入成功 {ikun.Name} v{ikun.Version} 类型={ikun.TypeText}");
                     Check(true, "IKUN导入");
+                    var activation = await src.EnableSourceAsync(ikun);
+                    Check(activation.Succeeded, "用户确认后启用 IKUN");
                     var ikunInfo = scriptSource.GetScript(ikun.Id);
                     if (ikunInfo != null)
                     {
@@ -541,6 +517,8 @@ class Program
                 Check(exSrc != null, "独家音源导入成功");
                 if (exSrc != null)
                 {
+                    var activation = await src.EnableSourceAsync(exSrc);
+                    Check(activation.Succeeded, "用户确认后启用独家音源");
                     var ok = await src.TestSourceAsync(exSrc);
                     Console.WriteLine($"  [exclusive] TestSource={ok}");
                     Check(ok, "独家音源 Jint 可执行");
@@ -801,19 +779,20 @@ send(EVENT_NAMES.inited, { sources: {} });
         }
         catch (Exception ex) { Console.WriteLine($"  22 异常: {ex.Message}"); Check(false, "严格匹配"); }
 
-        // ====== 23. 新预置源(HYW) + 全链路可播性校验 ======
-        Console.WriteLine("--- 23. 新预置源(HYW) + 全链路可播性校验 ---");
+        // ====== 23. 随版本验证源 + 全链路可播性校验 ======
+        Console.WriteLine("--- 23. 随版本验证源 + 全链路可播性校验 ---");
         try
         {
-            var hyw = scriptSource.GetScript("hyw");
-            Check(hyw != null, "HYW 预置已加载");
+            var bundledSource = src.GetAllSources().SingleOrDefault(s => s.TrustState == ScriptTrustState.Bundled);
+            var bundledScript = bundledSource == null ? null : scriptSource.GetScript(bundledSource.Id);
+            Check(bundledScript != null, "随版本验证源已加载");
             var qqSong = (await src.SearchAsync("晴天", 1, 3, "song", "qq")).Items.FirstOrDefault();
             if (qqSong != null)
             {
                 // 走 src.GetPlayUrlAsync 全链路（含可播性校验）
                 var url = await src.GetPlayUrlAsync(qqSong, qqSong.Source, "128k");
-                Console.WriteLine($"  [hyw 链路] QQ播放URL -> {(string.IsNullOrEmpty(url) ? "NULL" : url[..Math.Min(55, url.Length)] + "...")}");
-                Check(!string.IsNullOrEmpty(url), "HYW 全链路播放URL(校验后非空)");
+                Console.WriteLine($"  [随版本源链路] QQ播放URL -> {(string.IsNullOrEmpty(url) ? "NULL" : url[..Math.Min(55, url.Length)] + "...")}");
+                Check(!string.IsNullOrEmpty(url), "随版本源全链路播放URL(校验后非空)");
                 if (!string.IsNullOrEmpty(url))
                 {
                     using var hc = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
@@ -821,9 +800,9 @@ send(EVENT_NAMES.inited, { sources: {} });
                     {
                         var resp = await hc.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
                         var ct = resp.Content.Headers.ContentType?.ToString() ?? "";
-                        Check((int)resp.StatusCode == 200 && ct.StartsWith("audio/", StringComparison.OrdinalIgnoreCase), "HYW 全链路 URL 可播(200 audio)");
+                        Check((int)resp.StatusCode == 200 && ct.StartsWith("audio/", StringComparison.OrdinalIgnoreCase), "随版本源全链路 URL 可播(200 audio)");
                     }
-                    catch (Exception ex) { Console.WriteLine($"  [hyw 链路] 探测失败: {ex.Message}"); Check(false, "HYW 全链路 URL 可播(200 audio)"); }
+                    catch (Exception ex) { Console.WriteLine($"  [随版本源链路] 探测失败: {ex.Message}"); Check(false, "随版本源全链路 URL 可播(200 audio)"); }
                 }
             }
         }

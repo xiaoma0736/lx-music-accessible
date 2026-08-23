@@ -69,6 +69,10 @@ internal sealed class TestApplicationHost : IAsyncDisposable
                         new MusicHttpClient(
                             sp.GetRequiredService<ILogger<MusicHttpClient>>(),
                             httpHandler)));
+                    services.Replace(ServiceDescriptor.Singleton<ScriptMusicSource>(sp =>
+                        new ScriptMusicSource(
+                            sp.GetRequiredService<ILogger<ScriptMusicSource>>(),
+                            httpHandler)));
                     services.Replace(ServiceDescriptor.Singleton<IAccessibilityService>(announcer));
                     services.Replace(ServiceDescriptor.Singleton<ITtsService>(announcer));
                     services.Replace(ServiceDescriptor.Singleton<IProcessLauncher>(processLauncher));

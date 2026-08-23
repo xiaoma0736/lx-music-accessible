@@ -209,6 +209,8 @@ public class MusicSource
     public DateTime AddedDate { get; set; } = DateTime.Now;
     public DateTime LastUpdateDate { get; set; }
     public SourceType Type { get; set; }
+    public ScriptTrustState TrustState { get; set; }
+    public string? ContentSha256 { get; set; }
 
     /// <summary>系统隐藏源（内置官方API）：不出现在音源管理列表，但仍是搜索/歌单/排行等的底层数据源</summary>
     public bool IsSystemHidden { get; set; }
@@ -220,11 +222,14 @@ public class MusicSource
         SourceType.Custom => "自定义",
         SourceType.Network => "网络",
         SourceType.Local => "本地",
+        SourceType.Bundled => "随版本提供",
         _ => Type.ToString()
     };
 
     /// <summary>状态显示文本（默认优先）</summary>
-    public string StatusText => IsDefault ? "默认" : (IsEnabled ? "已启用" : "已禁用");
+    public string StatusText => TrustState == ScriptTrustState.Untrusted
+        ? "已暂存，未信任"
+        : IsDefault ? "默认" : (IsEnabled ? "已启用" : "已禁用");
 
     /// <summary>读屏朗读名称：名称 + 版本 + 接口类型 + 启用/默认状态</summary>
     public string AccessibleName
@@ -248,8 +253,31 @@ public enum SourceType
     BuiltIn,        // 鍐呯疆闊充箰婧?
     Custom,         // 鑷畾涔夐煶涔愭簮
     Network,        // 缃戠粶闊充箰婧?
-    Local           // 鏈湴闊充箰婧?
+    Local,          // 鏈湴闊充箰婧?
+    Bundled
 }
+
+public enum ScriptTrustState
+{
+    Untrusted,
+    UserApproved,
+    Bundled
+}
+
+public enum ScriptActivationStatus
+{
+    Activated,
+    ContentMissing,
+    DigestMismatch,
+    ValidationFailed,
+    PersistenceFailed,
+    Cancelled
+}
+
+public sealed record ScriptActivationResult(
+    bool Succeeded,
+    ScriptActivationStatus Status,
+    string Message);
 
 /// <summary>
 /// 姝屽崟鍒嗙被

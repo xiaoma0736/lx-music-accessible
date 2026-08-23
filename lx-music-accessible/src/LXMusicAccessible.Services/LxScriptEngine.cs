@@ -50,19 +50,21 @@ public class LxScriptEngine
         => await ExecuteActionAsync(script, "lyric", music, source, null, ParseLyricResult);
 
     /// <summary>加载校验：脚本可执行且已注册音乐请求处理器</summary>
-    public async Task<bool> TestLoadAsync(LxScriptInfo script)
+    public async Task<bool> TestLoadAsync(LxScriptInfo script, CancellationToken cancellationToken = default)
     {
         if (script == null || string.IsNullOrEmpty(script.RawScript)) return false;
         try
         {
             return await Task.Run(() =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var engine = CreateEngine();
                 engine.Execute(ShimJs);
                 engine.Execute(script.RawScript);
                 return engine.Evaluate("globalThis.lx.__probe()").AsBoolean();
-            });
+            }, cancellationToken);
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "脚本 [{Name}] 加载校验失败", script?.Name ?? "?");

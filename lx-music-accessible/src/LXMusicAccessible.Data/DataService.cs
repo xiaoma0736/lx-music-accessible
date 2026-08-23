@@ -50,6 +50,16 @@ public class DatabaseInitializer
                 await connection.ExecuteAsync("ALTER TABLE MusicSources ADD COLUMN IsDefault INTEGER NOT NULL DEFAULT 0");
                 _logger.LogInformation("已为 MusicSources 表添加 IsDefault 列");
             }
+            if (!cols.Any(n => string.Equals(n, "TrustState", StringComparison.OrdinalIgnoreCase)))
+            {
+                await connection.ExecuteAsync("ALTER TABLE MusicSources ADD COLUMN TrustState INTEGER NOT NULL DEFAULT 0");
+                _logger.LogInformation("已为 MusicSources 表添加 TrustState 列");
+            }
+            if (!cols.Any(n => string.Equals(n, "ContentSha256", StringComparison.OrdinalIgnoreCase)))
+            {
+                await connection.ExecuteAsync("ALTER TABLE MusicSources ADD COLUMN ContentSha256 TEXT");
+                _logger.LogInformation("已为 MusicSources 表添加 ContentSha256 列");
+            }
 
             // 迁移：Playlists 表补充 Source / RemoteId 列（在线收藏歌单的远程元数据）
             var pcols = await connection.QueryAsync<string>("SELECT name FROM pragma_table_info('Playlists')");
@@ -144,7 +154,9 @@ public class DatabaseInitializer
                 Priority INTEGER,
                 AddedDate TEXT,
                 LastUpdateDate TEXT,
-                Type INTEGER
+                Type INTEGER,
+                TrustState INTEGER NOT NULL DEFAULT 0,
+                ContentSha256 TEXT
             )");
 
         // 播放历史表
@@ -430,27 +442,38 @@ public class DataService : IDataService
         _logger.LogInformation("保存音源");
         
         using var connection = await GetConnectionAsync();
-        
-        foreach (var source in sources)
+        using var transaction = await connection.BeginTransactionAsync();
+        try
         {
-            await connection.ExecuteAsync(@"
+            foreach (var source in sources)
+            {
+                await connection.ExecuteAsync(@"
                 INSERT OR REPLACE INTO MusicSources 
-                (Id, Name, Version, ScriptUrl, ScriptContent, IsEnabled, Priority, AddedDate, LastUpdateDate, Type, IsDefault)
-                VALUES (@Id, @Name, @Version, @ScriptUrl, @ScriptContent, @IsEnabled, @Priority, @AddedDate, @LastUpdateDate, @Type, @IsDefault)",
-                new
-                {
-                    Id = source.Id,
-                    Name = source.Name,
-                    Version = source.Version,
-                    ScriptUrl = source.ScriptUrl,
-                    ScriptContent = source.ScriptContent,
-                    IsEnabled = source.IsEnabled ? 1 : 0,
-                    IsDefault = source.IsDefault ? 1 : 0,
-                    Priority = source.Priority,
-                    AddedDate = source.AddedDate.ToString("o"),
-                    LastUpdateDate = source.LastUpdateDate.ToString("o"),
-                    Type = source.Type
-                });
+                (Id, Name, Version, ScriptUrl, ScriptContent, IsEnabled, Priority, AddedDate, LastUpdateDate, Type, IsDefault, TrustState, ContentSha256)
+                VALUES (@Id, @Name, @Version, @ScriptUrl, @ScriptContent, @IsEnabled, @Priority, @AddedDate, @LastUpdateDate, @Type, @IsDefault, @TrustState, @ContentSha256)",
+                    new
+                    {
+                        Id = source.Id,
+                        Name = source.Name,
+                        Version = source.Version,
+                        ScriptUrl = source.ScriptUrl,
+                        ScriptContent = source.ScriptContent,
+                        IsEnabled = source.IsEnabled ? 1 : 0,
+                        IsDefault = source.IsDefault ? 1 : 0,
+                        Priority = source.Priority,
+                        AddedDate = source.AddedDate.ToString("o"),
+                        LastUpdateDate = source.LastUpdateDate.ToString("o"),
+                        Type = source.Type,
+                        TrustState = source.TrustState,
+                        source.ContentSha256
+                    }, transaction);
+            }
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
         }
     }
 
@@ -461,7 +484,7 @@ public class DataService : IDataService
         using var connection = await GetConnectionAsync();
         
         var sources = await connection.QueryAsync<dynamic>(@"
-            SELECT Id, Name, Version, ScriptUrl, ScriptContent, IsEnabled, IsDefault, Priority, AddedDate, LastUpdateDate, Type
+            SELECT Id, Name, Version, ScriptUrl, ScriptContent, IsEnabled, IsDefault, Priority, AddedDate, LastUpdateDate, Type, TrustState, ContentSha256
             FROM MusicSources
             ORDER BY Priority ASC");
             
@@ -485,7 +508,9 @@ public class DataService : IDataService
                 Priority = Convert.ToInt32(s.Priority),
                 AddedDate = addedDate,
                 LastUpdateDate = lastUpdateDate,
-                Type = (SourceType)Convert.ToInt32(s.Type)
+                Type = (SourceType)Convert.ToInt32(s.Type),
+                TrustState = (ScriptTrustState)Convert.ToInt32(s.TrustState),
+                ContentSha256 = s.ContentSha256
             });
         }
         

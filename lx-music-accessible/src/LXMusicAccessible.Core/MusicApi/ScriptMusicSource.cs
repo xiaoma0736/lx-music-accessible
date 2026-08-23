@@ -1,5 +1,7 @@
 ﻿using System.Text.RegularExpressions;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using LXMusicAccessible.Models;
 
@@ -9,130 +11,128 @@ namespace LXMusicAccessible.Core.MusicApi;
 /// 外部音源脚本加载器 — 解析 LX Music 源脚本（huibq/flower/聆澜等）
 /// 脚本格式：define API_URL + API_KEY + handleGetMusicUrl(action)
 /// </summary>
-public class ScriptMusicSource
+public class ScriptMusicSource : IDisposable
 {
     private readonly ILogger<ScriptMusicSource> _logger;
     private readonly HttpClient _httpClient;
     private readonly Dictionary<string, LxScriptInfo> _scripts = new();
-    private readonly JsonSerializerOptions _jsonOptions;
 
     public ScriptMusicSource(ILogger<ScriptMusicSource> logger)
+        : this(logger, new HttpClientHandler { UseCookies = false }, disposeHandler: true)
+    {
+    }
+
+    public ScriptMusicSource(ILogger<ScriptMusicSource> logger, HttpMessageHandler handler)
+        : this(logger, handler, disposeHandler: false)
+    {
+    }
+
+    private ScriptMusicSource(
+        ILogger<ScriptMusicSource> logger,
+        HttpMessageHandler handler,
+        bool disposeHandler)
     {
         _logger = logger;
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        _httpClient = new HttpClient(handler, disposeHandler)
+        {
+            Timeout = TimeSpan.FromSeconds(15)
+        };
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("lx-music-request/1.0");
-        _jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
     }
 
     // ================================================================
     //  内置预设源
     // ================================================================
 
-                /// <summary>
-    /// 免费音源订阅清单（lx-ikun-music-sources 仓库 v260724/online 的稳定在线源，专为在线自动更新设计）。
-    /// 每次启动由 MusicSourceService 下载并“创建或更新”（保留用户启停/默认/优先级设置），
-    /// 下载失败时回退到已持久化的旧内容（离线可用）。多为混淆脚本，由 LxScriptEngine（Jint）执行。
-    /// 注意：仓库路径更新后订阅可能失效，用户可改用“从网络导入/从本地导入”自行添加。
-    /// </summary>
-    public static readonly List<ScriptSourcePreset> SubscriptionSources = new()
-    {
-        new ScriptSourcePreset
-        {
-            Id = "hyw", Name = "HYW音乐(公益免费)",
-            Url = "https://raw.githubusercontent.com/Macrohard0001/lx-ikun-music-sources/main/V260817/%E6%8E%A8%E8%8D%90/HYWmusic_beta_%E5%85%AC%E7%9B%8A%E6%B5%8B%E8%AF%95.js",
-            Description = "HYW公益测试源（多平台，实测可用；服务可能波动，播放时自动校验可播性）"
-        },
-        new ScriptSourcePreset
-        {
-            Id = "jheapi", Name = "聚合API接口(免费)",
-            Url = "https://api.music.lerd.dpdns.org/script.js",
-            Description = "聚合API接口(CF)，多平台，实测可用"
-        },
-        new ScriptSourcePreset
-        {
-            Id = "quandouyao", Name = "全豆要(免费)",
-            Url = "https://raw.githubusercontent.com/Macrohard0001/lx-ikun-music-sources/main/V260817/%E5%85%B6%E4%BB%96/%E5%85%A8%E8%B1%86%E8%A6%81-%E8%81%9A%E5%90%88%E9%9F%B3%E6%BA%90-V4.1%EF%BC%88%E9%85%B7%E7%8B%97%E6%8C%82%E4%BA%86%EF%BC%89.js",
-            Description = "全豆要聚合音源，网易/QQ 等实测可用"
-        },
-        new ScriptSourcePreset
-        {
-            Id = "nianxin", Name = "念心音源(免费)",
-            Url = "https://raw.githubusercontent.com/Macrohard0001/lx-ikun-music-sources/main/V260817/%E5%85%B6%E4%BB%96/%E5%BF%B5%E5%BF%83%E9%9F%B3%E6%BA%90%20v1.0.2.js",
-            Description = "念心免费音源，QQ 等实测可用"
-        },
-    };
-
     // ================================================================
     //  加载脚本
     // ================================================================
 
-    /// <summary>注册内置脚本源（无需下载 JS，直接提供解析参数，如 huibq 免费源）</summary>
-    public void RegisterBuiltin(LxScriptInfo info)
+    /// <summary>下载并解析到暂存对象，不注册也不执行。</summary>
+    public async Task<LxScriptInfo?> StageFromUrlAsync(
+        string url,
+        string sourceId,
+        CancellationToken cancellationToken = default)
     {
-        if (info == null || string.IsNullOrEmpty(info.Id)) return;
+        try
+        {
+            _logger.LogInformation("暂存网络音源脚本: {Url}", url);
+            var scriptContent = await _httpClient.GetStringAsync(url, cancellationToken);
+            return ParseLxScript(scriptContent, sourceId, url, false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "暂存网络脚本失败: {Url}", url);
+            return null;
+        }
+    }
+
+    /// <summary>读取并解析到暂存对象，不注册也不执行。</summary>
+    public async Task<LxScriptInfo?> StageFromFileAsync(
+        string filePath,
+        string sourceId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            _logger.LogInformation("暂存本地音源脚本: {Path}", filePath);
+            var scriptContent = await File.ReadAllTextAsync(filePath, cancellationToken);
+            return ParseLxScript(scriptContent, sourceId, filePath, true);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "暂存本地脚本失败: {Path}", filePath);
+            return null;
+        }
+    }
+
+    /// <summary>解析已取得的内容到暂存对象，不注册也不执行。</summary>
+    public LxScriptInfo? StageFromContent(string content, string sourceId, string source, bool isLocal)
+    {
+        try
+        {
+            return ParseLxScript(content, sourceId, source, isLocal);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "暂存脚本内容失败: {SourceId}", sourceId);
+            return null;
+        }
+    }
+
+    public async Task<LxScriptInfo?> StageBundledAsync(
+        string resourceName,
+        string sourceId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var stream = typeof(ScriptMusicSource).Assembly.GetManifestResourceStream(resourceName);
+        if (stream is null) return null;
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        var content = await reader.ReadToEndAsync(cancellationToken);
+        return StageFromContent(content, sourceId, $"bundle://{resourceName}", true);
+    }
+
+    /// <summary>只有内容摘要匹配的暂存对象才能进入运行时注册表。</summary>
+    public bool RegisterVerified(LxScriptInfo info, string expectedSha256)
+    {
+        if (info is null || string.IsNullOrEmpty(info.Id) || string.IsNullOrEmpty(info.RawScript)) return false;
+        var actual = ComputeSha256(info.RawScript);
+        if (!string.Equals(actual, expectedSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("拒绝注册摘要不匹配的脚本: {SourceId}", info.Id);
+            return false;
+        }
+
         _scripts[info.Id] = info;
-        _logger.LogInformation("内置脚本源注册成功: {Name} — API: {ApiUrl}, 支持源: [{Sources}]",
-            info.Name, info.ApiUrl, string.Join(",", info.SupportedSources));
+        _logger.LogInformation("已注册验证脚本: {Name} v{Version} SHA256={Sha256}",
+            info.Name, info.Version, actual);
+        return true;
     }
 
-    /// <summary>从 URL 加载 LX Music 脚本源</summary>
-    public async Task<LxScriptInfo?> LoadFromUrlAsync(string url, string sourceId)
-    {
-        try
-        {
-            _logger.LogInformation("下载音源脚本: {Url}", url);
-            var scriptContent = await _httpClient.GetStringAsync(url);
-            return ParseAndRegister(scriptContent, sourceId, url, false);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "下载脚本失败: {Url}", url);
-            return null;
-        }
-    }
-
-    /// <summary>从本地文件加载 LX Music 脚本源</summary>
-    public async Task<LxScriptInfo?> LoadFromFileAsync(string filePath, string sourceId)
-    {
-        try
-        {
-            _logger.LogInformation("加载本地脚本: {Path}", filePath);
-            var scriptContent = await File.ReadAllTextAsync(filePath);
-            return ParseAndRegister(scriptContent, sourceId, filePath, true);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "加载本地脚本失败: {Path}", filePath);
-            return null;
-        }
-    }
-
-    /// <summary>从已存在的内容加载脚本源（用于从持久化数据恢复，不重新下载）</summary>
-    public LxScriptInfo? LoadFromContentAsync(string content, string sourceId, string source, bool isLocal)
-    {
-        try
-        {
-            _logger.LogInformation("从内容加载脚本: {SourceId}", sourceId);
-            return ParseAndRegister(content, sourceId, source, isLocal);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "从内容加载脚本失败: {SourceId}", sourceId);
-            return null;
-        }
-    }
-
-    private LxScriptInfo? ParseAndRegister(string script, string sourceId, string source, bool isLocal)
-    {
-        var info = ParseLxScript(script, sourceId, source, isLocal);
-        if (info != null)
-        {
-            _scripts[sourceId] = info;
-            _logger.LogInformation("音源脚本解析成功: {Name} v{Version} — API: {ApiUrl}, 支持源: [{Sources}]",
-                info.Name, info.Version, info.ApiUrl, string.Join(",", info.SupportedSources));
-        }
-        return info;
-    }
+    public static string ComputeSha256(string content)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
 
     // ================================================================
     //  脚本解析
@@ -259,16 +259,21 @@ public class ScriptMusicSource
             var url = BuildScriptUrl(script, lxSource, songId, quality);
             _logger.LogInformation("脚本源 [{Name}] 请求播放URL: {Url}", script.Name, url);
 
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.TryAddWithoutValidation("Content-Type", "application/json");
-            request.Headers.TryAddWithoutValidation("User-Agent", "lx-music-request/1.0");
+            var headers = new Dictionary<string, string>
+            {
+                ["Content-Type"] = "application/json",
+                ["User-Agent"] = "lx-music-request/1.0"
+            };
             if (!string.IsNullOrEmpty(script.ApiKey))
             {
-                request.Headers.TryAddWithoutValidation("X-Request-Key", script.ApiKey);
-                request.Headers.TryAddWithoutValidation("X-API-Key", script.ApiKey);
+                headers["X-Request-Key"] = script.ApiKey;
+                headers["X-API-Key"] = script.ApiKey;
             }
 
-            var response = await _httpClient.SendAsync(request);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            foreach (var header in headers)
+                request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            using var response = await _httpClient.SendAsync(request);
             response.EnsureSuccessStatusCode();
             var body = await response.Content.ReadAsStringAsync();
 
@@ -290,6 +295,7 @@ public class ScriptMusicSource
     /// <summary>移除</summary>
     public void Remove(string id) { _scripts.Remove(id); }
     public void Clear() { _scripts.Clear(); }
+    public void Dispose() => _httpClient.Dispose();
 
     // ================================================================
     //  辅助
@@ -369,14 +375,6 @@ public class ScriptMusicSource
 // ================================================================
 //  数据模型
 // ================================================================
-
-public class ScriptSourcePreset
-{
-    public string Id { get; set; } = "";
-    public string Name { get; set; } = "";
-    public string Url { get; set; } = "";
-    public string Description { get; set; } = "";
-}
 
 public class LxScriptInfo
 {

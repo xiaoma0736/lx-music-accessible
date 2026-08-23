@@ -3588,9 +3588,9 @@ public partial class MainWindow : Window
         {
             Announce("正在导入本地音源...");
             var src = await _musicSourceService!.ImportFromFileAsync(openFileDialog.FileName);
-            if (src == null) { Announce("导入失败：脚本格式无效或缺少API地址"); return; }
+            if (src == null) { Announce("导入失败：无法读取或解析脚本"); return; }
             RefreshSourceList();
-            Announce($"已导入本地音源：{src.Name} v{src.Version}");
+            await ConfirmAndActivateStagedSourceAsync(src);
         }
         catch (Exception ex) { Announce($"导入失败：{ex.Message}"); }
     }
@@ -3608,9 +3608,30 @@ public partial class MainWindow : Window
             if (src == null) { Announce("导入失败：无法下载或解析脚本"); return; }
             if (!string.IsNullOrWhiteSpace(dialog.Value2)) src.Name = dialog.Value2.Trim();
             RefreshSourceList();
-            Announce($"已导入网络音源：{src.Name} v{src.Version}");
+            await ConfirmAndActivateStagedSourceAsync(src);
         }
         catch (Exception ex) { Announce($"导入失败：{ex.Message}"); }
+    }
+
+    private async Task ConfirmAndActivateStagedSourceAsync(MusicSource source)
+    {
+        var confirmation = MessageBox.Show(
+            $"音源已暂存，尚未执行。\n\n名称：{source.Name}\n版本：{source.Version}\n来源：{source.ScriptUrl}\nSHA-256：{source.ContentSha256}\n权限：可通过音源运行时访问网络\n变化：新增独立音源，不替换当前可信版本\n\n是否验证并启用此音源？",
+            "启用暂存音源",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (confirmation != MessageBoxResult.Yes)
+        {
+            await _musicSourceService!.UpdateSourceAsync(source);
+            Announce($"已暂存但未启用：{source.Name}");
+            return;
+        }
+
+        Announce($"正在验证并启用音源：{source.Name}");
+        var result = await _musicSourceService!.EnableSourceAsync(source);
+        RefreshSourceList();
+        Announce(result.Succeeded ? $"已启用音源：{source.Name}" : result.Message);
     }
 
     private void RefreshSourcesBtn_Click(object sender, RoutedEventArgs e)
@@ -3650,17 +3671,27 @@ public partial class MainWindow : Window
     private void SourceMenu_SetDefault_Click(object sender, RoutedEventArgs e)
     {
         if (SourceList.SelectedItem is not MusicSource src) return;
+        if (src.TrustState == ScriptTrustState.Untrusted)
+        {
+            Announce("暂存音源必须先验证并启用，才能设为默认");
+            return;
+        }
         _musicSourceService?.SetDefaultSource(src.Id);
         RefreshSourceList();
         Announce($"已将 {src.Name} 设为默认音源");
     }
 
-    private void SourceMenu_Enable_Click(object sender, RoutedEventArgs e)
+    private async void SourceMenu_Enable_Click(object sender, RoutedEventArgs e)
     {
         if (SourceList.SelectedItem is not MusicSource src) return;
-        _musicSourceService?.EnableSource(src);
+        if (src.TrustState == ScriptTrustState.Untrusted)
+        {
+            await ConfirmAndActivateStagedSourceAsync(src);
+            return;
+        }
+        var result = await _musicSourceService!.EnableSourceAsync(src);
         RefreshSourceList();
-        Announce($"已启用音源：{src.Name}");
+        Announce(result.Succeeded ? $"已启用音源：{src.Name}" : result.Message);
     }
 
     private void SourceMenu_Disable_Click(object sender, RoutedEventArgs e)
@@ -3683,29 +3714,14 @@ public partial class MainWindow : Window
     private async void SourceMenu_Edit_Click(object sender, RoutedEventArgs e)
     {
         if (SourceList.SelectedItem is not MusicSource src) return;
-        if (src.Type == SourceType.BuiltIn)
-        {
-            var nameDlg = new TextInputDialog("编辑音源名称", "音源名称：", src.Name);
-            if (nameDlg.ShowDialog() != true) return;
-            var newName = nameDlg.Value?.Trim();
-            if (string.IsNullOrEmpty(newName)) { Announce("名称不能为空"); return; }
-            src.Name = newName;
-            RefreshSourceList();
-            await _musicSourceService!.UpdateSourceAsync(src);
-            Announce($"音源名称已改为 {src.Name}");
-            return;
-        }
-        var dlg = new TextInputDialog("编辑音源", "音源名称：", src.Name, "音源URL/路径：", src.ScriptUrl);
-        if (dlg.ShowDialog() != true) return;
-        var name = dlg.Value?.Trim();
-        var url = dlg.Value2?.Trim();
+        var nameDlg = new TextInputDialog("编辑音源名称", "音源名称：", src.Name);
+        if (nameDlg.ShowDialog() != true) return;
+        var name = nameDlg.Value?.Trim();
         if (string.IsNullOrEmpty(name)) { Announce("名称不能为空"); return; }
         src.Name = name;
-        if (!string.IsNullOrEmpty(url)) src.ScriptUrl = url;
         RefreshSourceList();
-        var ok = await _musicSourceService!.ReloadSourceAsync(src);
-        RefreshSourceList();
-        Announce(ok ? $"已更新音源 {src.Name}" : "更新失败：无法加载脚本");
+        await _musicSourceService!.UpdateSourceAsync(src);
+        Announce($"音源名称已改为 {src.Name}");
     }
 
     private void SourceMenu_Delete_Click(object sender, RoutedEventArgs e)

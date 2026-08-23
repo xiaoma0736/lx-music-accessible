@@ -25,21 +25,15 @@ public class MusicSourceService : IMusicSourceService
     private bool _defaultTouchedByUser = false;
     private readonly HttpClient _playUrlProbeClient = new() { Timeout = TimeSpan.FromSeconds(8) };
     private readonly Dictionary<string, ScriptHealth> _scriptHealth = new(StringComparer.OrdinalIgnoreCase);
+    private const string BundledScriptId = "bundled_verified_fallback";
+    private const string BundledScriptResource = "LXMusicAccessible.Core.MusicApi.Scripts.verified-fallback.js";
+    private const string BundledScriptSha256 = "9d4aa71b7814860242f2cdfc3370da9cd6d415e290757c9cf122e74069641d50";
 
-    /// <summary>音源列表变化事件（默认/启用/禁用/增删/订阅更新等），供界面刷新音源列表</summary>
+    /// <summary>音源列表变化事件（默认/启用/禁用/增删等），供界面刷新音源列表</summary>
     public event EventHandler? SourcesChanged;
 
     /// <summary>脚本调用 lx.send(updateAlert) 时上抛（供界面提示音源更新）</summary>
     public event EventHandler<LxScriptUpdateAlertEventArgs>? ScriptUpdateAlert;
-
-    // 已失效（下架/后端关闭）的历史预置地址，启动时清理持久化中的遗留条目
-    private static readonly string[] DeadPresetUrlMarkers =
-    {
-        "lxmusicapi.onrender.com",
-        "render.niuma666bet.buzz",
-        "/huibq-latest.js",
-        "huibq/"
-    };
 
     private void RaiseSourcesChanged() => SourcesChanged?.Invoke(this, EventArgs.Empty);
 
@@ -110,70 +104,66 @@ public class MusicSourceService : IMusicSourceService
         _logger.LogInformation("初始化 {Count} 个内置官方API完成（系统隐藏，仅作底层数据源）", _sources.Count);
     }
 
-    /// <summary>初始化脚本源（不阻塞启动）：先恢复本地持久化的音源配置，再逐条刷新订阅的免费源</summary>
-    public async Task InitializeScriptSourcesAsync()
+    /// <summary>只从随版本资源和已验证持久化内容初始化；冷启动绝不下载脚本。</summary>
+    public async Task InitializeScriptSourcesAsync(CancellationToken cancellationToken = default)
     {
         if (_scriptsInitialized) return;
         _scriptsInitialized = true;
 
-        // 1. 先恢复持久化配置（导入的源 + 订阅源的启用/禁用/默认/优先级 + 上次的脚本内容），
-        //    使第二次及以后的启动能立即展示完整音源列表，避免“首开显示不全”。
-        await LoadPersistedSourcesAsync();
+        // 先恢复持久化配置，再用随版本资源校正固定源。
+        await LoadPersistedSourcesAsync(cancellationToken);
 
-        // 1b. 清理历史遗留的失效预置（如已下架的 huibq 免费源），避免其持续出现在列表并拖慢播放
-        var deadRemoved = _sources.RemoveAll(s =>
-            !s.IsSystemHidden &&
-            (string.Equals(s.Id, "huibq", StringComparison.OrdinalIgnoreCase) ||
-             DeadPresetUrlMarkers.Any(m => s.ScriptUrl?.Contains(m, StringComparison.OrdinalIgnoreCase) == true)));
-        if (deadRemoved > 0)
-            _logger.LogInformation("已清理 {Count} 个失效历史预置音源（huibq 等）", deadRemoved);
-
-        RaiseSourcesChanged();
-
-        // 2. 后台逐条刷新订阅源（每次打开软件自动更新仓库里的免费接口），保留用户启停/默认/优先级设置
-        foreach (var sub in ScriptMusicSource.SubscriptionSources)
-        {
-            try
-            {
-                var info = await _scriptSource.LoadFromUrlAsync(sub.Url, sub.Id);
-                if (info == null)
-                {
-                    _logger.LogWarning("订阅源下载失败（保留上次内容）: {Name} ({Url})", sub.Name, sub.Url);
-                    continue;
-                }
-                var existing = _sources.FirstOrDefault(s => string.Equals(s.Id, sub.Id, StringComparison.OrdinalIgnoreCase));
-                if (existing != null)
-                {
-                    // 保留用户设置（启用/禁用/默认/优先级），仅刷新内容/版本/名称/更新时间
-                    existing.Name = info.Name;
-                    existing.Version = info.Version ?? existing.Version;
-                    existing.ScriptContent = info.RawScript;
-                    existing.ScriptUrl = sub.Url;
-                    existing.LastUpdateDate = DateTime.Now;
-                }
-                else
-                {
-                    _sources.Add(new MusicSource
-                    {
-                        Id = sub.Id, Name = info.Name, Version = info.Version ?? "1.0",
-                        ScriptUrl = sub.Url, ScriptContent = info.RawScript,
-                        Type = SourceType.Network, IsEnabled = true,
-                        Priority = 10 + _sources.Count,
-                        AddedDate = DateTime.Now, LastUpdateDate = DateTime.Now
-                    });
-                }
-                _logger.LogInformation("订阅源已更新: [{Id}] {Name} v{Version} 支持源[{Sources}]",
-                    sub.Id, info.Name, info.Version, string.Join(",", info.SupportedSources));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "订阅源刷新失败: {Name} ({Url})", sub.Name, sub.Url);
-            }
-        }
+        await LoadBundledSourceAsync(cancellationToken);
 
         await PersistSourcesAsync();
         RaiseSourcesChanged();
         _logger.LogInformation("脚本源初始化完成，共 {Count} 个音源", _sources.Count);
+    }
+
+    private async Task LoadBundledSourceAsync(CancellationToken cancellationToken)
+    {
+        var info = await _scriptSource.StageBundledAsync(
+            BundledScriptResource,
+            BundledScriptId,
+            cancellationToken);
+        if (info?.RawScript is null
+            || !string.Equals(
+                ScriptMusicSource.ComputeSha256(info.RawScript),
+                BundledScriptSha256,
+                StringComparison.OrdinalIgnoreCase)
+            || !await _scriptEngine.TestLoadAsync(info, cancellationToken)
+            || !_scriptSource.RegisterVerified(info, BundledScriptSha256))
+        {
+            _scriptSource.Remove(BundledScriptId);
+            _logger.LogError("随版本音源缺失、摘要不匹配或无法执行，已拒绝加载");
+            return;
+        }
+
+        var existing = _sources.FirstOrDefault(source =>
+            string.Equals(source.Id, BundledScriptId, StringComparison.OrdinalIgnoreCase));
+        var enabled = existing?.TrustState == ScriptTrustState.Bundled
+            ? existing.IsEnabled
+            : true;
+        if (existing is null)
+        {
+            existing = new MusicSource
+            {
+                Id = BundledScriptId,
+                Priority = 10 + _sources.Count,
+                AddedDate = DateTime.Now
+            };
+            _sources.Add(existing);
+        }
+
+        existing.Name = info.Name;
+        existing.Version = info.Version ?? "1.0.0";
+        existing.ScriptUrl = info.SourceUrl;
+        existing.ScriptContent = info.RawScript;
+        existing.Type = SourceType.Bundled;
+        existing.TrustState = ScriptTrustState.Bundled;
+        existing.ContentSha256 = BundledScriptSha256;
+        existing.IsEnabled = enabled;
+        existing.LastUpdateDate = DateTime.Now;
     }
 
     // ================================================================
@@ -648,6 +638,9 @@ public class MusicSourceService : IMusicSourceService
     /// <summary>?????????????</summary>
     public void SetDefaultSource(string id)
     {
+        var target = _sources.FirstOrDefault(source =>
+            string.Equals(source.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (target?.TrustState == ScriptTrustState.Untrusted) return;
         _defaultTouchedByUser = true;
         foreach (var s in _sources)
             s.IsDefault = string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase);
@@ -674,9 +667,75 @@ public class MusicSourceService : IMusicSourceService
         return Task.FromResult(list);
     }
 
-    public void EnableSource(MusicSource s) { s.IsEnabled = true; _ = PersistSourcesAsync(); RaiseSourcesChanged(); }
+    public async Task<ScriptActivationResult> EnableSourceAsync(
+        MusicSource s,
+        CancellationToken cancellationToken = default)
+    {
+        if (s.Type == SourceType.BuiltIn)
+        {
+            s.IsEnabled = true;
+            await _dataService.SaveMusicSourcesAsync(_sources);
+            RaiseSourcesChanged();
+            return new(true, ScriptActivationStatus.Activated, "内置音源已启用");
+        }
+
+        if (string.IsNullOrEmpty(s.ScriptContent))
+            return new(false, ScriptActivationStatus.ContentMissing, "暂存内容缺失，未启用");
+        if (string.IsNullOrWhiteSpace(s.ContentSha256)
+            || !string.Equals(
+                ScriptMusicSource.ComputeSha256(s.ScriptContent),
+                s.ContentSha256,
+                StringComparison.OrdinalIgnoreCase))
+            return new(false, ScriptActivationStatus.DigestMismatch, "脚本内容已变化或摘要不匹配，未启用");
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var candidate = _scriptSource.StageFromContent(
+                s.ScriptContent,
+                s.Id,
+                s.ScriptUrl,
+                s.Type is SourceType.Custom or SourceType.Local or SourceType.Bundled);
+            if (candidate is null || !await _scriptEngine.TestLoadAsync(candidate, cancellationToken))
+                return new(false, ScriptActivationStatus.ValidationFailed, "脚本无法注册音乐请求处理器，未启用");
+
+            var previous = _scriptSource.GetScript(s.Id);
+            var previousEnabled = s.IsEnabled;
+            var previousTrust = s.TrustState;
+            if (!_scriptSource.RegisterVerified(candidate, s.ContentSha256))
+                return new(false, ScriptActivationStatus.DigestMismatch, "脚本摘要不匹配，未启用");
+
+            s.IsEnabled = true;
+            s.TrustState = s.Type == SourceType.Bundled
+                ? ScriptTrustState.Bundled
+                : ScriptTrustState.UserApproved;
+            try
+            {
+                await _dataService.SaveMusicSourcesAsync(_sources);
+            }
+            catch (Exception ex)
+            {
+                s.IsEnabled = previousEnabled;
+                s.TrustState = previousTrust;
+                if (previous?.RawScript is not null)
+                    _scriptSource.RegisterVerified(previous, ScriptMusicSource.ComputeSha256(previous.RawScript));
+                else
+                    _scriptSource.Remove(s.Id);
+                _logger.LogError(ex, "音源激活持久化失败，已回滚: {Id}", s.Id);
+                return new(false, ScriptActivationStatus.PersistenceFailed, "保存失败，已恢复原可信版本");
+            }
+
+            ClearCache();
+            RaiseSourcesChanged();
+            return new(true, ScriptActivationStatus.Activated, "脚本已验证并启用");
+        }
+        catch (OperationCanceledException)
+        {
+            return new(false, ScriptActivationStatus.Cancelled, "启用已取消，原可信版本保持不变");
+        }
+    }
+
     public void DisableSource(MusicSource s) { s.IsEnabled = false; _ = PersistSourcesAsync(); RaiseSourcesChanged(); }
-    public void AddSource(MusicSource s) { _sources.Add(s); ClearCache(); _ = PersistSourcesAsync(); RaiseSourcesChanged(); }
     public void RemoveSource(MusicSource s)
     {
         _sources.Remove(s);
@@ -688,44 +747,67 @@ public class MusicSourceService : IMusicSourceService
     public void ClearCache() { _searchSessions.Clear(); }
     public async Task<bool> UpdateSourceAsync(MusicSource s) { s.LastUpdateDate = DateTime.Now; ClearCache(); await PersistSourcesAsync(); RaiseSourcesChanged(); return true; }
 
-    public async Task<MusicSource?> ImportFromUrlAsync(string url)
+    public async Task<MusicSource?> ImportFromUrlAsync(
+        string url,
+        CancellationToken cancellationToken = default)
     {
         var scriptId = $"script_{Guid.NewGuid():N}"[..16];
-        var info = await _scriptSource.LoadFromUrlAsync(url, scriptId);
-        if (info == null) return null;
-        if (!await _scriptEngine.TestLoadAsync(info))
-        {
-            _scriptSource.Remove(scriptId);
-            _logger.LogWarning("导入的网络脚本无法执行（Jint 校验失败）: {Url}", url);
-            return null;
-        }
-        var src = new MusicSource { Id = scriptId, Name = info.Name, Version = info.Version ?? "1.0", ScriptUrl = url, ScriptContent = info.RawScript, Type = SourceType.Network, IsEnabled = true, Priority = _sources.Count + 1, AddedDate = DateTime.Now, LastUpdateDate = DateTime.Now };
-        AddSource(src);
-        return src;
+        var info = await _scriptSource.StageFromUrlAsync(url, scriptId, cancellationToken);
+        return await PersistStagedSourceAsync(info, url, SourceType.Network, cancellationToken);
     }
 
-    public async Task<MusicSource?> ImportFromFileAsync(string filePath)
+    public async Task<MusicSource?> ImportFromFileAsync(
+        string filePath,
+        CancellationToken cancellationToken = default)
     {
         if (!File.Exists(filePath)) return null;
         var scriptId = $"script_{Guid.NewGuid():N}"[..16];
-        var info = await _scriptSource.LoadFromFileAsync(filePath, scriptId);
-        if (info == null) return null;
-        if (!await _scriptEngine.TestLoadAsync(info))
+        var info = await _scriptSource.StageFromFileAsync(filePath, scriptId, cancellationToken);
+        return await PersistStagedSourceAsync(info, filePath, SourceType.Custom, cancellationToken);
+    }
+
+    private async Task<MusicSource?> PersistStagedSourceAsync(
+        LxScriptInfo? info,
+        string location,
+        SourceType type,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (info?.RawScript is null) return null;
+        var source = new MusicSource
         {
-            _scriptSource.Remove(scriptId);
-            _logger.LogWarning("导入的本地脚本无法执行（Jint 校验失败）: {Path}", filePath);
-            return null;
+            Id = info.Id,
+            Name = info.Name,
+            Version = info.Version ?? "1.0",
+            ScriptUrl = location,
+            ScriptContent = info.RawScript,
+            ContentSha256 = ScriptMusicSource.ComputeSha256(info.RawScript),
+            TrustState = ScriptTrustState.Untrusted,
+            Type = type,
+            IsEnabled = false,
+            Priority = _sources.Count + 1,
+            AddedDate = DateTime.Now,
+            LastUpdateDate = DateTime.Now
+        };
+        _sources.Add(source);
+        try
+        {
+            await _dataService.SaveMusicSourcesAsync(_sources);
         }
-        var src = new MusicSource { Id = scriptId, Name = info.Name, Version = info.Version ?? "1.0", ScriptUrl = filePath, ScriptContent = info.RawScript, Type = SourceType.Custom, IsEnabled = true, Priority = _sources.Count + 1, AddedDate = DateTime.Now, LastUpdateDate = DateTime.Now };
-        AddSource(src);
-        return src;
+        catch
+        {
+            _sources.Remove(source);
+            throw;
+        }
+        ClearCache();
+        RaiseSourcesChanged();
+        return source;
     }
 
     public async Task<bool> TestSourceAsync(MusicSource s)
     {
         try
         {
-            // huibq 免费源：探测 API 根地址可用性（无搜索接口）
             if (s.Type == SourceType.BuiltIn)
             {
                 if (!_apiMap.TryGetValue(s.Id, out var api)) return false;
@@ -743,25 +825,13 @@ public class MusicSourceService : IMusicSourceService
         catch { return false; }
     }
 
-    /// <summary>?????????????? / ?????? / ???????????????</summary>
+    /// <summary>只从已验证的持久化内容重新加载，绝不回源下载。</summary>
     public async Task<bool> ReloadSourceAsync(MusicSource s)
     {
         try
         {
             if (s.Type == SourceType.BuiltIn) return true;
-            _scriptSource.Remove(s.Id);
-            LxScriptInfo? info = null;
-            if (s.Type == SourceType.Network && Uri.IsWellFormedUriString(s.ScriptUrl, UriKind.Absolute))
-                info = await _scriptSource.LoadFromUrlAsync(s.ScriptUrl, s.Id);
-            else if (File.Exists(s.ScriptUrl))
-                info = await _scriptSource.LoadFromFileAsync(s.ScriptUrl, s.Id);
-            else if (!string.IsNullOrEmpty(s.ScriptContent))
-                info = _scriptSource.LoadFromContentAsync(s.ScriptContent, s.Id, s.ScriptUrl, true);
-            if (info == null) return false;
-            s.Name = info.Name; s.Version = info.Version ?? s.Version;
-            s.ScriptContent = info.RawScript; s.LastUpdateDate = DateTime.Now;
-            _ = PersistSourcesAsync();
-            return true;
+            return await TryLoadTrustedScriptAsync(s, CancellationToken.None);
         }
         catch (Exception ex) { _logger.LogError(ex, "音源脚本重载失败: {Id}", s.Id); return false; }
     }
@@ -773,35 +843,14 @@ public class MusicSourceService : IMusicSourceService
         catch (Exception ex) { _logger.LogError(ex, "音源配置保存失败"); }
     }
 
-    /// <summary>???????????????????????/??/?????????</summary>
-    private async Task LoadPersistedSourcesAsync()
+    /// <summary>恢复持久化状态；未信任或摘要失败的脚本只展示为禁用，不进入执行器。</summary>
+    private async Task LoadPersistedSourcesAsync(CancellationToken cancellationToken)
     {
         try
         {
             var stored = await _dataService.GetMusicSourcesAsync();
             if (stored == null || stored.Count == 0) return;
 
-            // 一次性清理：同 ScriptUrl + 同类型 的重复导入（保留 IsDefault=1，否则保留 Priority 最小/Id 最小者）
-            var dupIds = stored.Where(s => !string.IsNullOrEmpty(s.ScriptUrl))
-                .GroupBy(s => $"{(int)s.Type}|{s.ScriptUrl}".ToLowerInvariant(), StringComparer.OrdinalIgnoreCase)
-                .Where(g => g.Count() > 1)
-                .SelectMany(g =>
-                {
-                    var keep = g.OrderByDescending(s => s.IsDefault).ThenBy(s => s.Priority).ThenBy(s => s.Id, StringComparer.OrdinalIgnoreCase).First();
-                    return g.Where(s => !string.Equals(s.Id, keep.Id, StringComparison.OrdinalIgnoreCase)).Select(s => s.Id);
-                })
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            if (dupIds.Count > 0)
-            {
-                try
-                {
-                    await _dataService.DeleteMusicSourcesAsync(dupIds);
-                    _logger.LogInformation("已清理 {Count} 条重复导入的音源", dupIds.Count);
-                    stored = stored.Where(s => !dupIds.Contains(s.Id, StringComparer.OrdinalIgnoreCase)).ToList();
-                }
-                catch (Exception ex) { _logger.LogWarning(ex, "清理重复音源失败（不影响本次加载）"); }
-            }
             foreach (var src in stored)
             {
                 var existing = _sources.FirstOrDefault(s => string.Equals(s.Id, src.Id, StringComparison.OrdinalIgnoreCase));
@@ -813,33 +862,47 @@ public class MusicSourceService : IMusicSourceService
                     existing.Priority = src.Priority;
                     continue;
                 }
-                // 去重：同一脚本地址 + 相同类型 视为重复导入，只保留第一条
-                if (!string.IsNullOrEmpty(src.ScriptUrl) &&
-                    _sources.Any(s => s.Type == src.Type &&
-                        !string.IsNullOrEmpty(s.ScriptUrl) &&
-                        string.Equals(s.ScriptUrl, src.ScriptUrl, StringComparison.OrdinalIgnoreCase)))
-                    continue;
-                LxScriptInfo? info = null;
-                if (!string.IsNullOrEmpty(src.ScriptContent))
-                    info = _scriptSource.LoadFromContentAsync(src.ScriptContent, src.Id, src.ScriptUrl, src.Type is SourceType.Custom or SourceType.Local);
-                else if (src.Type == SourceType.Network && Uri.IsWellFormedUriString(src.ScriptUrl, UriKind.Absolute))
-                    info = await _scriptSource.LoadFromUrlAsync(src.ScriptUrl, src.Id);
-                else if ((src.Type is SourceType.Custom or SourceType.Local) && File.Exists(src.ScriptUrl))
-                    info = await _scriptSource.LoadFromFileAsync(src.ScriptUrl, src.Id);
-                if (info != null)
+
+                if (src.TrustState == ScriptTrustState.Untrusted)
                 {
-                    _sources.Add(new MusicSource
-                    {
-                        Id = src.Id, Name = info.Name, Version = info.Version ?? src.Version,
-                        ScriptUrl = src.ScriptUrl, ScriptContent = src.ScriptContent,
-                        Type = src.Type, IsEnabled = src.IsEnabled, IsDefault = !_defaultTouchedByUser && src.IsDefault,
-                        Priority = src.Priority, AddedDate = src.AddedDate, LastUpdateDate = src.LastUpdateDate
-                    });
+                    src.IsEnabled = false;
+                    src.IsDefault = false;
+                }
+                _sources.Add(src);
+                if (src.IsEnabled && !await TryLoadTrustedScriptAsync(src, cancellationToken))
+                {
+                    src.IsEnabled = false;
+                    src.IsDefault = false;
+                    _logger.LogWarning("持久化脚本未通过摘要或执行校验，已禁用: {Id}", src.Id);
                 }
             }
             _logger.LogInformation("已加载持久化音源配置");
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex) { _logger.LogError(ex, "加载持久化音源配置失败"); }
+    }
+
+    private async Task<bool> TryLoadTrustedScriptAsync(
+        MusicSource source,
+        CancellationToken cancellationToken)
+    {
+        if (source.TrustState == ScriptTrustState.Untrusted
+            || string.IsNullOrEmpty(source.ScriptContent)
+            || string.IsNullOrWhiteSpace(source.ContentSha256)
+            || !string.Equals(
+                ScriptMusicSource.ComputeSha256(source.ScriptContent),
+                source.ContentSha256,
+                StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var info = _scriptSource.StageFromContent(
+            source.ScriptContent,
+            source.Id,
+            source.ScriptUrl,
+            source.Type is SourceType.Custom or SourceType.Local or SourceType.Bundled);
+        return info is not null
+            && await _scriptEngine.TestLoadAsync(info, cancellationToken)
+            && _scriptSource.RegisterVerified(info, source.ContentSha256);
     }
 
     // ================================================================

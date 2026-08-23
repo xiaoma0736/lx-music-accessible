@@ -413,7 +413,7 @@ public class HotkeysRegistrationFailedEventArgs : EventArgs
 public interface IMusicSourceService
 {
     /// <summary>
-    /// 音源列表变化事件（默认/启用/禁用/增删/订阅更新等），供界面刷新音源列表
+    /// 音源列表变化事件（默认/启用/禁用/增删等），供界面刷新音源列表
     /// </summary>
     event EventHandler? SourcesChanged;
 
@@ -490,12 +490,12 @@ public interface IMusicSourceService
     /// <summary>
     /// 浠嶶RL瀵煎叆闊虫簮
     /// </summary>
-    Task<MusicSource?> ImportFromUrlAsync(string url);
+    Task<MusicSource?> ImportFromUrlAsync(string url, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 浠庢枃浠跺鍏ラ煶婧?
     /// </summary>
-    Task<MusicSource?> ImportFromFileAsync(string filePath);
+    Task<MusicSource?> ImportFromFileAsync(string filePath, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 娴嬭瘯闊虫簮
@@ -505,7 +505,7 @@ public interface IMusicSourceService
     /// <summary>
     /// 鍚敤闊虫簮
     /// </summary>
-    void EnableSource(MusicSource source);
+    Task<ScriptActivationResult> EnableSourceAsync(MusicSource source, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 绂佺敤闊虫簮

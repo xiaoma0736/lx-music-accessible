@@ -152,7 +152,7 @@ public partial class App : Application
             await dbInitializer.InitializeAsync();
             Log.Information("数据库初始化完成");
 
-            // 异步初始化脚本源（不阻塞UI启动）
+            // 后台恢复已验证脚本并校验随版本资源；此路径不下载脚本。
             var musicSrcSvc = _host.Services.GetRequiredService<IMusicSourceService>();
             _ = Task.Run(async () =>
             {

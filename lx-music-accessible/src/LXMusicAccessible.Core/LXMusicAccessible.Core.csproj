@@ -17,4 +17,8 @@
     <ProjectReference Include="..\LXMusicAccessible.Models\LXMusicAccessible.Models.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="MusicApi\Scripts\verified-fallback.js" />
+  </ItemGroup>
+
 </Project>
