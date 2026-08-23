@@ -132,7 +132,8 @@ public class ScriptMusicSource : IDisposable
     }
 
     public static string ComputeSha256(string content)
-        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
+        => Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(content.ReplaceLineEndings("\n")))).ToLowerInvariant();
 
     // ================================================================
     //  脚本解析

@@ -26,6 +26,14 @@ public sealed class ScriptSourceLifecycleTests
         """;
 
     [Fact]
+    public void Script_digest_is_stable_across_windows_and_unix_checkouts()
+    {
+        Assert.Equal(
+            "dbea9325179efe46ea2add94f7b6b745ca983fabb208dc6d34aa064623d7ee23",
+            ScriptMusicSource.ComputeSha256("first\r\nsecond\r\n"));
+    }
+
+    [Fact]
     public async Task Cold_start_loads_verified_bundled_source_without_network()
     {
         await using var app = await TestApplicationHost.StartAsync();
