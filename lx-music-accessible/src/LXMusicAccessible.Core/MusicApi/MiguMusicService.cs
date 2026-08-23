@@ -25,14 +25,14 @@ public class MiguMusicService : IMusicApi
     }
 
     /// <summary>搜索音乐</summary>
-    public async Task<PagedResult<MusicInfo>> SearchAsync(string keyword, int page = 1, int pageSize = 30, string searchType = "song")
+    public async Task<PagedResult<MusicInfo>> SearchAsync(string keyword, int page = 1, int pageSize = 30, string searchType = "song", CancellationToken cancellationToken = default)
     {
         try
         {
             _logger.LogInformation("咪咕音乐搜索: {Keyword}, 页码: {Page}", keyword, page);
 
             if (string.Equals(searchType, "album", StringComparison.OrdinalIgnoreCase))
-                return await SearchAlbumsAsync(keyword, page, pageSize);
+                return await SearchAlbumsAsync(keyword, page, pageSize, cancellationToken);
 
             var url = $"{ApiBase}/search_all.do";
             var parameters = new Dictionary<string, string>
@@ -48,7 +48,7 @@ public class MiguMusicService : IMusicApi
                 ["Referer"] = "https://music.migu.cn/"
             };
 
-            var response = await _httpClient.GetAsync(url, parameters, headers);
+            var response = await _httpClient.GetAsync(url, parameters, headers, cancellationToken);
             var result = JsonSerializer.Deserialize<JsonElement>(response);
 
             if (result.TryGetProperty("code", out var code) && code.GetString() == "000000" &&
@@ -71,7 +71,7 @@ public class MiguMusicService : IMusicApi
     // ========== 专辑搜索 / 专辑详情 ==========
 
     /// <summary>咪咕专辑搜索：search_all.do 专辑开关 → albumResultData.result[]</summary>
-    private async Task<PagedResult<MusicInfo>> SearchAlbumsAsync(string keyword, int page, int pageSize)
+    private async Task<PagedResult<MusicInfo>> SearchAlbumsAsync(string keyword, int page, int pageSize, CancellationToken cancellationToken)
     {
         try
         {
@@ -88,7 +88,7 @@ public class MiguMusicService : IMusicApi
                 ["User-Agent"] = "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36",
                 ["Referer"] = "https://music.migu.cn/"
             };
-            var response = await _httpClient.GetAsync(url, parameters, headers);
+            var response = await _httpClient.GetAsync(url, parameters, headers, cancellationToken);
             var result = JsonSerializer.Deserialize<JsonElement>(response);
             var list = new List<MusicInfo>();
             int total = 0;
@@ -136,7 +136,7 @@ public class MiguMusicService : IMusicApi
     /// <summary>
     /// 咪咕专辑详情：原生专辑接口不可用，改用“按专辑名搜歌曲并过滤专辑”兜底。
     /// </summary>
-    public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -156,7 +156,7 @@ public class MiguMusicService : IMusicApi
                 ["User-Agent"] = "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36",
                 ["Referer"] = "https://music.migu.cn/"
             };
-            var response = await _httpClient.GetAsync(url, parameters, headers);
+            var response = await _httpClient.GetAsync(url, parameters, headers, cancellationToken);
             var result = JsonSerializer.Deserialize<JsonElement>(response);
             var list = new List<MusicInfo>();
 
@@ -275,7 +275,7 @@ public class MiguMusicService : IMusicApi
     }
 
     /// <summary>获取歌单分类 — 参考原版：musiclistplaza-taglist（扁平标签）</summary>
-    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync()
+    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("获取{Name}歌单分类", SourceName);
 
@@ -283,7 +283,7 @@ public class MiguMusicService : IMusicApi
         {
             var url = "https://app.c.nf.migu.cn/pc/v1.0/template/musiclistplaza-taglist/release";
             var headers = new Dictionary<string, string> { ["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15" };
-            var response = await _httpClient.GetAsync(url, null, headers);
+            var response = await _httpClient.GetAsync(url, null, headers, cancellationToken);
             var data = JsonSerializer.Deserialize<JsonElement>(response);
 
             var categories = new List<PlaylistCategory>
@@ -350,7 +350,7 @@ public class MiguMusicService : IMusicApi
     };
 
     /// <summary>按分类获取歌单列表 — 参考原版：square-recommend(全部) / listbytag(指定标签)</summary>
-    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30)
+    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -360,14 +360,14 @@ public class MiguMusicService : IMusicApi
             if (string.IsNullOrEmpty(categoryId) || categoryId == "all")
             {
                 var url = $"https://app.c.nf.migu.cn/pc/bmw/page-data/playlist-square-recommend/v1.0?templateVersion=2&pageNo={page}";
-                var response = await _httpClient.GetAsync(url, null, headers);
+                var response = await _httpClient.GetAsync(url, null, headers, cancellationToken);
                 var data = JsonSerializer.Deserialize<JsonElement>(response);
                 CollectMiguPlaylists(data, playlists);
                 return new PagedResult<Playlist> { CurrentPage = page, PageSize = pageSize, TotalItems = playlists.Count, Items = playlists };
             }
 
             var listUrl = $"https://app.c.nf.migu.cn/pc/v1.0/template/musiclistplaza-listbytag/release?pageNumber={page}&templateVersion=2&tagId={categoryId}";
-            var listResponse = await _httpClient.GetAsync(listUrl, null, headers);
+            var listResponse = await _httpClient.GetAsync(listUrl, null, headers, cancellationToken);
             var listData = JsonSerializer.Deserialize<JsonElement>(listResponse);
 
             if (listData.TryGetProperty("data", out var d))
@@ -449,7 +449,7 @@ public class MiguMusicService : IMusicApi
     }
 
     /// <summary>获取歌单详情 — 参考原版：MIGUM3.0/resource/playlist/song/v2.0</summary>
-    public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -459,7 +459,7 @@ public class MiguMusicService : IMusicApi
                 ["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15",
                 ["Referer"] = "https://m.music.migu.cn/"
             };
-            var response = await _httpClient.GetAsync(url, null, headers);
+            var response = await _httpClient.GetAsync(url, null, headers, cancellationToken);
             var data = JsonSerializer.Deserialize<JsonElement>(response);
             var musicList = new List<MusicInfo>(); int total = 0;
             if (data.TryGetProperty("code", out var c) && c.GetString() == "000000" && data.TryGetProperty("data", out var d))
@@ -513,7 +513,7 @@ public class MiguMusicService : IMusicApi
     }
 
     /// <summary>获取排行榜列表 — 参考原版：pc/bmw/rank/rank-index</summary>
-    public async Task<List<Ranking>> GetRankingsAsync()
+    public async Task<List<Ranking>> GetRankingsAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -524,7 +524,7 @@ public class MiguMusicService : IMusicApi
                 ["User-Agent"] = "Mozilla/5.0 (Linux; Android 5.1.1; Nexus 6 Build/LYZ28E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Mobile Safari/537.36",
                 ["channel"] = "0146921"
             };
-            var response = await _httpClient.GetAsync(url, null, headers);
+            var response = await _httpClient.GetAsync(url, null, headers, cancellationToken);
             var data = JsonSerializer.Deserialize<JsonElement>(response);
             var rankings = new List<Ranking>();
             if (data.TryGetProperty("code", out var c) && c.GetString() == "000000" && data.TryGetProperty("data", out var d))
@@ -570,7 +570,7 @@ public class MiguMusicService : IMusicApi
     }
 
     /// <summary>获取排行榜详情 — querycontentbyId.do → columnInfo.contents[].objectInfo</summary>
-    public async Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -580,7 +580,7 @@ public class MiguMusicService : IMusicApi
                 ["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15",
                 ["Referer"] = "https://m.music.migu.cn/"
             };
-            var response = await _httpClient.GetAsync(url, null, headers);
+            var response = await _httpClient.GetAsync(url, null, headers, cancellationToken);
             var data = JsonSerializer.Deserialize<JsonElement>(response);
             var allSongs = new List<MusicInfo>();
             if (data.TryGetProperty("code", out var c) && c.GetString() == "000000" &&

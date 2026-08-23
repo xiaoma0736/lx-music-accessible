@@ -28,6 +28,9 @@ public sealed class ApplicationHostTests
             app.Services.GetRequiredService<IMusicSourceService>(),
             app.Services.GetRequiredService<IMusicSourceService>());
         Assert.Same(
+            app.Services.GetRequiredService<IMusicSourceService>(),
+            app.Services.GetRequiredService<IMusicBrowseSource>());
+        Assert.Same(
             app.Services.GetRequiredService<MusicHttpClient>(),
             app.Services.GetRequiredService<MusicHttpClient>());
         Assert.Same(

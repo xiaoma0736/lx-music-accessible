@@ -26,14 +26,14 @@ public class QqMusicService : IMusicApi
     /// <summary>
     /// 搜索音乐
     /// </summary>
-    public async Task<PagedResult<MusicInfo>> SearchAsync(string keyword, int page = 1, int pageSize = 30, string searchType = "song")
+    public async Task<PagedResult<MusicInfo>> SearchAsync(string keyword, int page = 1, int pageSize = 30, string searchType = "song", CancellationToken cancellationToken = default)
     {
         try
         {
             _logger.LogInformation("QQ音乐搜索: {Keyword}, 页码: {Page}", keyword, page);
 
             if (string.Equals(searchType, "album", StringComparison.OrdinalIgnoreCase))
-                return await SearchAlbumsAsync(keyword, page, pageSize);
+                return await SearchAlbumsAsync(keyword, page, pageSize, cancellationToken);
 
             var url = $"{BaseUrl}/soso/fcgi-bin/client_search_cp";
             var parameters = new Dictionary<string, string>
@@ -54,7 +54,7 @@ public class QqMusicService : IMusicApi
                 ["Referer"] = "https://y.qq.com/",
                 ["Cookie"] = "uin=0; qm_keyst=Q_H_L_0; qqmusic_fromtag=0"
             };
-            var response = await _httpClient.GetAsync(url, parameters, searchHeaders);
+            var response = await _httpClient.GetAsync(url, parameters, searchHeaders, cancellationToken);
             var result = JsonSerializer.Deserialize<JsonElement>(response);
 
             var codeOk = false;
@@ -153,7 +153,7 @@ public class QqMusicService : IMusicApi
     // ========== 专辑搜索 / 专辑详情 ==========
 
     /// <summary>QQ 专辑搜索：musicu.fcg DoSearchForQQMusicDesktop search_type=3 → data.body.album.list</summary>
-    private async Task<PagedResult<MusicInfo>> SearchAlbumsAsync(string keyword, int page, int pageSize)
+    private async Task<PagedResult<MusicInfo>> SearchAlbumsAsync(string keyword, int page, int pageSize, CancellationToken cancellationToken)
     {
         try
         {
@@ -169,7 +169,7 @@ public class QqMusicService : IMusicApi
                 comm = new { uin = 0, format = "json", ct = 24, cv = 0 }
             };
 
-            var response = await _httpClient.PostAsync<JsonElement>(url, payload);
+            var response = await _httpClient.PostAsync<JsonElement>(url, payload, null, cancellationToken);
             var list = new List<MusicInfo>();
             int total = 0;
 
@@ -209,7 +209,7 @@ public class QqMusicService : IMusicApi
     }
 
     /// <summary>QQ 专辑详情：musicu.fcg GetAlbumDetail → data.songlist</summary>
-    public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -228,7 +228,7 @@ public class QqMusicService : IMusicApi
                 comm = new { uin = 0, format = "json", ct = 24, cv = 0 }
             };
 
-            var response = await _httpClient.PostAsync<JsonElement>(url, payload);
+            var response = await _httpClient.PostAsync<JsonElement>(url, payload, null, cancellationToken);
             var list = new List<MusicInfo>();
 
             if (response.TryGetProperty("req_0", out var req0) &&
@@ -408,7 +408,7 @@ public class QqMusicService : IMusicApi
     /// <summary>
     /// 获取歌单分类 — 参考原版 lx-music-desktop：playlist.PlaylistAllCategoriesServer/get_all_categories
     /// </summary>
-    public Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync()
+    public Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("获取{Name}歌单分类", SourceName);
 
@@ -474,7 +474,7 @@ public class QqMusicService : IMusicApi
     /// <summary>
     /// 按分类获取歌单列表 — 参考原版：get_playlist_by_tag(全部) / get_category_content(指定标签)
     /// </summary>
-    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30)
+    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -506,7 +506,7 @@ public class QqMusicService : IMusicApi
                 ["platform"] = "wk_v15.json", ["needNewCode"] = "0",
                 ["data"] = dataJson
             };
-            var response = await _httpClient.GetAsync(url, parameters);
+            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
             var data = JsonSerializer.Deserialize<JsonElement>(response);
 
             var playlists = new List<Playlist>();
@@ -566,7 +566,7 @@ public class QqMusicService : IMusicApi
     /// <summary>
     /// 获取歌单详情
     /// </summary>
-    public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -591,7 +591,7 @@ public class QqMusicService : IMusicApi
                 }
             };
 
-            var response = await _httpClient.PostAsync<JsonElement>(url, payload);
+            var response = await _httpClient.PostAsync<JsonElement>(url, payload, null, cancellationToken);
             var musicList = new List<MusicInfo>();
             int total = 0;
 
@@ -674,7 +674,7 @@ public class QqMusicService : IMusicApi
     /// <summary>
     /// 获取排行榜列表
     /// </summary>
-    public async Task<List<Ranking>> GetRankingsAsync()
+    public async Task<List<Ranking>> GetRankingsAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("获取QQ音乐排行榜");
 
@@ -691,7 +691,7 @@ public class QqMusicService : IMusicApi
                 }
             };
 
-            var response = await _httpClient.PostAsync<JsonElement>(url, payload);
+            var response = await _httpClient.PostAsync<JsonElement>(url, payload, null, cancellationToken);
             var rankings = new List<Ranking>();
 
             if (response.TryGetProperty("req_0", out var req0) &&
@@ -742,7 +742,7 @@ public class QqMusicService : IMusicApi
     /// <summary>
     /// 获取排行榜详情
     /// </summary>
-    public async Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -764,7 +764,7 @@ public class QqMusicService : IMusicApi
                 }
             };
 
-            var response = await _httpClient.PostAsync<JsonElement>(url, payload);
+            var response = await _httpClient.PostAsync<JsonElement>(url, payload, null, cancellationToken);
             var musicList = new List<MusicInfo>();
             int total = 0;
 

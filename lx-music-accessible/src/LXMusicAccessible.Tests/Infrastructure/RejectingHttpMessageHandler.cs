@@ -5,20 +5,41 @@ namespace LXMusicAccessible.Tests.Infrastructure;
 
 internal sealed class RejectingHttpMessageHandler : HttpMessageHandler
 {
-    private readonly Dictionary<(string Method, string Uri), Func<HttpResponseMessage>> _responses = new();
+    private readonly object _gate = new();
+    private readonly Dictionary<(string Method, string Uri), Func<CancellationToken, Task<HttpResponseMessage>>> _responses = new();
     private readonly List<(string Method, string Uri)> _requests = new();
 
-    public IReadOnlyList<(string Method, string Uri)> Requests => _requests;
+    public IReadOnlyList<(string Method, string Uri)> Requests
+    {
+        get
+        {
+            lock (_gate) return _requests.ToArray();
+        }
+    }
 
     public void Register(HttpMethod method, Uri uri, Func<HttpResponseMessage> responseFactory)
     {
         ArgumentNullException.ThrowIfNull(method);
         ArgumentNullException.ThrowIfNull(uri);
         ArgumentNullException.ThrowIfNull(responseFactory);
-        _responses[(method.Method, uri.AbsoluteUri)] = responseFactory;
+        lock (_gate)
+        {
+            _responses[(method.Method, uri.AbsoluteUri)] = _ => Task.FromResult(responseFactory());
+        }
     }
 
-    protected override Task<HttpResponseMessage> SendAsync(
+    public void RegisterAsync(
+        HttpMethod method,
+        Uri uri,
+        Func<CancellationToken, Task<HttpResponseMessage>> responseFactory)
+    {
+        ArgumentNullException.ThrowIfNull(method);
+        ArgumentNullException.ThrowIfNull(uri);
+        ArgumentNullException.ThrowIfNull(responseFactory);
+        lock (_gate) _responses[(method.Method, uri.AbsoluteUri)] = responseFactory;
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
@@ -26,17 +47,20 @@ internal sealed class RejectingHttpMessageHandler : HttpMessageHandler
         var uri = request.RequestUri?.AbsoluteUri
             ?? throw new InvalidOperationException("HTTP requests must have an absolute URI.");
         var key = (request.Method.Method, uri);
-        _requests.Add(key);
-
-        if (!_responses.TryGetValue(key, out var responseFactory))
+        Func<CancellationToken, Task<HttpResponseMessage>> responseFactory;
+        lock (_gate)
         {
-            throw new InvalidOperationException(
-                $"Unregistered HTTP request was blocked: {request.Method} {uri}");
+            _requests.Add(key);
+            if (!_responses.TryGetValue(key, out responseFactory!))
+            {
+                throw new InvalidOperationException(
+                    $"Unregistered HTTP request was blocked: {request.Method} {uri}");
+            }
         }
 
-        var response = responseFactory();
+        var response = await responseFactory(cancellationToken);
         response.RequestMessage = request;
-        return Task.FromResult(response);
+        return response;
     }
 
     public void RegisterText(HttpMethod method, Uri uri, string content)

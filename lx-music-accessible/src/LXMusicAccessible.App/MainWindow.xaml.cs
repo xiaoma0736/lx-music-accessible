@@ -35,6 +35,7 @@ public partial class MainWindow : Window
     private readonly PlaylistImportView _playlistImportPanel;
     private readonly ApplicationWindowFactory _windowFactory;
     private readonly IApplicationShutdown _applicationShutdown;
+    private readonly MusicBrowseWorkflow _browseWorkflow;
     private UserSettings _loadedSettings = new();
     private Task? _closeAfterShutdown;
     private bool _shutdownCloseAllowed;
@@ -100,9 +101,6 @@ public partial class MainWindow : Window
         Key.Insert, Key.Delete, Key.Clear
     };
 
-    private string _lastSearchQuery = string.Empty;
-    private string _currentSearchType = "song";
-    private string _currentSearchSource = "all";
     private bool _searchShowingAlbumDetail;
     private int _searchSelectedIndexBeforeAlbum = 0; // 打开专辑前搜索结果的光标位置（返回时恢复）
 
@@ -113,12 +111,6 @@ public partial class MainWindow : Window
     private const int MaxSearchHistory = 20;
 
     // 分页状态
-    private int _searchCurrentPage = 0;      // 已加载切片数（每片 _searchPageSize 条）
-    private readonly int _searchPageSize = 20;
-    private bool _searchHasMore = false;      // 会话是否还有更多
-    private readonly List<MusicInfo> _searchLoaded = new();  // 已累积展示的真实结果
-    private long _searchGeneration = 0;       // 搜索代数：忽略过期异步结果
-
     private int _categoryCurrentPage = 1;
     private int _categoryTotalItems = 0;
     private Playlist? _categorySelectedPlaylist;
@@ -159,7 +151,8 @@ public partial class MainWindow : Window
         IProcessLauncher processLauncher,
         PlaylistImportView playlistImportPanel,
         ApplicationWindowFactory windowFactory,
-        IApplicationShutdown applicationShutdown)
+        IApplicationShutdown applicationShutdown,
+        MusicBrowseWorkflow browseWorkflow)
     {
         _accessibilityService = accessibilityService;
         _playerService = playerService;
@@ -174,6 +167,7 @@ public partial class MainWindow : Window
         _playlistImportPanel = playlistImportPanel;
         _windowFactory = windowFactory;
         _applicationShutdown = applicationShutdown;
+        _browseWorkflow = browseWorkflow;
 
         InitializeComponent();
         if (_accessibilityService is WpfAccessibleAnnouncer wpfAnnouncer)
@@ -207,8 +201,8 @@ public partial class MainWindow : Window
         _clockTimer.Start();
 
         _ = LoadSettingsAsync();
-        _ = LoadCategoriesAsync(GetComboTag(CategorySourceCombo, "netease"));
-        _ = LoadRankingsAsync(GetComboTag(RankingSourceCombo, "netease"));
+        _browseWorkflow.SelectCategorySource(GetComboTag(CategorySourceCombo, "netease"));
+        _browseWorkflow.SelectRankingSource(GetComboTag(RankingSourceCombo, "netease"));
         _ = LoadSearchHistoryAsync();
         RefreshSourceList();
     }
@@ -694,10 +688,7 @@ public partial class MainWindow : Window
     private void ClearSearchContent()
     {
         SearchBox.Text = string.Empty;
-        _searchGeneration++;
-        _searchCurrentPage = 0;
-        _searchHasMore = false;
-        _searchLoaded.Clear();
+        _browseWorkflow.ClearSearch();
         SearchResultsList.ItemsSource = null;
         _searchShowingAlbumDetail = false;
         SearchPageInfo.Text = "请输入关键词开始搜索";
@@ -1381,7 +1372,6 @@ public partial class MainWindow : Window
 
     private async Task SearchMusicAsync(bool resetPage = true)
     {
-        if (_musicSourceService == null) return;
         var query = SearchBox.Text?.Trim();
         if (string.IsNullOrWhiteSpace(query))
         {
@@ -1390,88 +1380,56 @@ public partial class MainWindow : Window
         }
 
         _searchShowingAlbumDetail = false;
-        _lastSearchQuery = query;
-        _currentSearchSource = GetComboTag(SearchSourceCombo, "all");
-        _currentSearchType = GetComboTag(SearchTypeComboBox, "song");
-        if (_currentSearchType == "artist")
+        var searchType = GetComboTag(SearchTypeComboBox, "song");
+        if (searchType == "artist")
+        {
             Announce("提示：当前暂不支持歌手搜索，已按歌曲搜索");
+            searchType = "song";
+        }
 
         if (resetPage)
         {
-            // 新搜索：重置会话状态与已加载列表，然后加载首批
-            _searchGeneration++;
-            _searchCurrentPage = 0;
-            _searchHasMore = false;
-            _searchLoaded.Clear();
+            _browseWorkflow.SelectSearch(
+                query,
+                searchType,
+                GetComboTag(SearchSourceCombo, "all"));
             await AddSearchHistoryAsync(query);
-            var isAlbumSearch = string.Equals(_currentSearchType, "album", StringComparison.OrdinalIgnoreCase);
-            Announce(isAlbumSearch ? $"正在搜索专辑：{query}" : $"正在搜索：{query}");
-            await LoadSearchMoreAsync();
+            await LoadSearchMoreAsync(reset: true);
         }
         else
         {
-            // 刷新 / 从专辑返回：重新渲染当前已累积结果
             RenderSearchResults(0);
         }
     }
 
     /// <summary>加载下一批搜索结果并累积显示（“加载更多”/自动续播共用；结果全局去重、每批最多 pageSize 条）</summary>
-    private async Task LoadSearchMoreAsync()
+    private async Task<BrowseResult<SearchBrowseSnapshot>> LoadSearchMoreAsync(
+        bool reset = false,
+        bool applyFocus = true)
     {
-        if (_musicSourceService == null || string.IsNullOrWhiteSpace(_lastSearchQuery)) return;
-        var gen = _searchGeneration;
-        var beforeCount = _searchLoaded.Count;
-        var nextPage = _searchCurrentPage + 1;
-
-        try
+        var result = await _browseWorkflow.ActivateSearchAsync(reset);
+        if (result.Succeeded && result.Value is not null
+            && _browseWorkflow.IsCurrent(result.Revision))
         {
-            var result = await _musicSourceService.SearchAsync(
-                _lastSearchQuery, nextPage, _searchPageSize, _currentSearchType, _currentSearchSource);
-            if (gen != _searchGeneration) return; // 过期结果，忽略
-
-            _searchCurrentPage = nextPage;
-            _searchHasMore = result.HasMore;
-            if (result.Items.Count > 0)
-                _searchLoaded.AddRange(result.Items);
-
-            RenderSearchResults(beforeCount);
-
-            if (result.Items.Count > 0)
-            {
-                // 简洁播报：首屏报“找到 N 首(还有更多)”，追加只报总数与是否到底，不重复提示“加载更多”
-                if (beforeCount == 0)
-                    Announce(_searchHasMore
-                        ? $"找到 {_searchLoaded.Count} 首，还有更多"
-                        : $"找到 {_searchLoaded.Count} 首");
-                else
-                    Announce(_searchHasMore
-                        ? $"已加载 {_searchLoaded.Count} 首，还有更多"
-                        : $"已加载全部结果，共 {_searchLoaded.Count} 首");
-            }
-            else if (_searchLoaded.Count > 0)
-                Announce($"已加载全部结果，共 {_searchLoaded.Count} 首");
-            else
-                Announce($"未找到与 {_lastSearchQuery} 相关的结果");
+            RenderSearchResults(
+                applyFocus ? result.Value.PreviousCount : null,
+                result.Value);
         }
-        catch (Exception ex)
-        {
-            if (gen == _searchGeneration)
-            {
-                Announce("搜索失败，请检查网络");
-                System.Diagnostics.Debug.WriteLine($"搜索失败: {ex.Message}");
-            }
-        }
+        return result;
     }
 
     /// <summary>把已累积结果 + “加载更多”伪条目渲染到搜索结果列表</summary>
-    private void RenderSearchResults(int? selectIndex)
+    private void RenderSearchResults(
+        int? selectIndex,
+        SearchBrowseSnapshot? snapshot = null)
     {
-        var items = new List<MusicInfo>(_searchLoaded);
-        if (_searchHasMore)
-            items.Add(new MusicInfo { Id = SearchMoreId, Title = "加载更多", Artist = $"当前已显示 {_searchLoaded.Count} 首，回车继续加载" });
+        snapshot ??= _browseWorkflow.CurrentSearch;
+        var items = new List<MusicInfo>(snapshot.Items);
+        if (snapshot.HasMore)
+            items.Add(new MusicInfo { Id = SearchMoreId, Title = "加载更多", Artist = $"当前已显示 {snapshot.Items.Count} 首，回车继续加载" });
 
         SearchResultsList.ItemsSource = items;
-        SearchPageInfo.Text = $"已加载 {_searchLoaded.Count} 首" + (_searchHasMore ? "，还有更多" : "，已到底");
+        SearchPageInfo.Text = $"已加载 {snapshot.Items.Count} 首" + (snapshot.HasMore ? "，还有更多" : "，已到底");
 
         if (selectIndex.HasValue && selectIndex.Value >= 0 && selectIndex.Value < items.Count)
         {
@@ -1632,10 +1590,7 @@ public partial class MainWindow : Window
     private void SearchClearButton_Click(object sender, RoutedEventArgs e)
     {
         SearchBox.Text = string.Empty;
-        _searchGeneration++;
-        _searchCurrentPage = 0;
-        _searchHasMore = false;
-        _searchLoaded.Clear();
+        _browseWorkflow.ClearSearch();
         SearchResultsList.ItemsSource = null;
         _searchShowingAlbumDetail = false;
         SearchPageInfo.Text = "请输入关键词开始搜索";
@@ -1658,15 +1613,15 @@ public partial class MainWindow : Window
         if (music.Id == PagePrevId)
         {
             if (list == SearchResultsList) { Announce("结果已累积显示，请用向上方向键或 Home 回到前面。"); }
-            else if (list == CategorySongsList && _categorySelectedPlaylist != null) await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage - 1);
-            else if (list == RankingSongsList && _rankingSelected != null) await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage - 1);
+            else if (list == CategorySongsList && _categorySelectedPlaylist != null) await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage - 1, applyFocus: false);
+            else if (list == RankingSongsList && _rankingSelected != null) await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage - 1, applyFocus: false);
             return;
         }
         if (music.Id == PageNextId)
         {
             if (list == SearchResultsList) await LoadSearchMoreAsync();
-            else if (list == CategorySongsList && _categorySelectedPlaylist != null) await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage + 1);
-            else if (list == RankingSongsList && _rankingSelected != null) await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage + 1);
+            else if (list == CategorySongsList && _categorySelectedPlaylist != null) await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage + 1, applyFocus: false);
+            else if (list == RankingSongsList && _rankingSelected != null) await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage + 1, applyFocus: false);
             return;
         }
         // 搜索“加载更多”伪条目：继续累积加载
@@ -1693,52 +1648,32 @@ public partial class MainWindow : Window
     /// <summary>展开专辑搜索结果：分页拉取专辑全部歌曲并装入搜索结果列表，第一项为“返回专辑列表”</summary>
     private async Task OpenAlbumDetailAsync(MusicInfo album)
     {
-        if (_musicSourceService == null || album == null) return;
+        if (album == null) return;
         // 记录打开专辑前搜索结果中的光标位置，返回时恢复
         _searchSelectedIndexBeforeAlbum = Math.Max(0, SearchResultsList.SelectedIndex);
         _searchShowingAlbumDetail = true;
-        Announce($"正在打开专辑《{album.Title}》的歌曲列表，请稍候。");
-        try
-        {
-            // 分页拉取全部歌曲：网易/QQ 一次返回全量（第二页无新增即停）；酷狗/酷我/咪咕服务端分页
-            var collected = new List<MusicInfo>();
-            const int albumPageSize = 50;
-            for (int page = 1; page <= 200; page++)
-            {
-                var detail = await _musicSourceService.GetAlbumDetailAsync(album, page, albumPageSize);
-                var items = detail.Items ?? new List<MusicInfo>();
-                int before = collected.Count;
-                foreach (var m in items)
-                    if (!collected.Any(x => x.Id == m.Id
-                        && string.Equals(x.Source, m.Source, StringComparison.OrdinalIgnoreCase)))
-                        collected.Add(m);
-                if (items.Count == 0) break;              // 没有更多数据
-                if (collected.Count == before) break;     // 本页无新增（全量型源第二页起重复）
-            }
-
-            var navList = new List<MusicInfo>
-            {
-                new MusicInfo { Id = AlbumBackId, Title = "← 返回专辑列表", Artist = "回车返回专辑搜索结果" }
-            };
-            navList.AddRange(collected);
-            SearchResultsList.ItemsSource = navList;
-            if (collected.Count > 0)
-            {
-                SearchResultsList.SelectedIndex = 1;
-                FocusListContent(SearchResultsList);
-                Announce($"专辑《{album.Title}》共 {collected.Count} 首歌曲。按上下方向键浏览，回车播放；第一项“返回专辑列表”或退格键可返回。");
-            }
-            else
-            {
-                _searchShowingAlbumDetail = false;
-                Announce($"专辑《{album.Title}》暂无歌曲可显示。");
-            }
-        }
-        catch (Exception ex)
+        var result = await _browseWorkflow.ActivateAlbumAsync(album);
+        if (!result.Succeeded || result.Value is null
+            || !_browseWorkflow.IsCurrent(result.Revision))
         {
             _searchShowingAlbumDetail = false;
-            Announce("打开专辑失败：" + ex.Message);
-            System.Diagnostics.Debug.WriteLine($"打开专辑失败: {ex.Message}");
+            return;
+        }
+
+        var navList = new List<MusicInfo>
+        {
+            new() { Id = AlbumBackId, Title = "← 返回专辑列表", Artist = "回车返回专辑搜索结果" }
+        };
+        navList.AddRange(result.Value);
+        SearchResultsList.ItemsSource = navList;
+        if (result.Value.Count > 0)
+        {
+            SearchResultsList.SelectedIndex = 1;
+            ApplyBrowseFocus(result.FocusTarget);
+        }
+        else
+        {
+            _searchShowingAlbumDetail = false;
         }
     }
 
@@ -1775,94 +1710,82 @@ public partial class MainWindow : Window
 
     // ==================== 分类歌单 ====================
 
-    private async Task LoadCategoriesAsync(string sourceId)
+    private async Task LoadCategoriesAsync(string sourceId, bool applyFocus = true)
     {
-        if (_musicSourceService == null) return;
-        try
-        {
-            var cats = await _musicSourceService.GetPlaylistCategoriesAsync(sourceId);
-            CategoryList.ItemsSource = cats;
-            // 已加载数量交给读屏朗读（列表项自带无障碍名称）；仅空态提示
-            if (cats.Count == 0) Announce("暂无歌单分类");
-            if (cats.Count > 0) CategoryList.SelectedIndex = 0;
-        }
-        catch (Exception ex)
-        {
-            Announce("加载歌单分类失败，请检查网络");
-            System.Diagnostics.Debug.WriteLine($"加载歌单分类失败: {ex.Message}");
-        }
+        _browseWorkflow.SelectCategorySource(sourceId, GetComboDisplayText(CategorySourceCombo));
+        var result = await _browseWorkflow.ActivateCategorySourceAsync();
+        if (!result.Succeeded || result.Value is null
+            || !_browseWorkflow.IsCurrent(result.Revision)) return;
+
+        CategoryPlaylistsListBox.ItemsSource = null;
+        CategorySongsList.ItemsSource = null;
+        CategoryList.ItemsSource = result.Value;
+        if (result.Value.Count > 0) CategoryList.SelectedIndex = 0;
+        if (applyFocus) ApplyBrowseFocus(result.FocusTarget);
     }
 
-    private async void CategoryList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void CategoryList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (CategoryList.SelectedItem is PlaylistCategory category)
-            await LoadCategoryPlaylistsAsync(category);
+        var selection = _browseWorkflow.SelectCategory(CategoryList.SelectedItem as PlaylistCategory);
+        StatusText.Text = selection.Description;
+        _categorySelectedPlaylist = null;
     }
 
-    private async Task LoadCategoryPlaylistsAsync(PlaylistCategory category)
+    private async Task LoadCategoryPlaylistsAsync(
+        PlaylistCategory category,
+        bool applyFocus = true)
     {
-        if (_musicSourceService == null) return;
+        _browseWorkflow.SelectCategory(category);
+        var result = await _browseWorkflow.ActivateCategoryAsync();
+        if (!result.Succeeded || result.Value is null
+            || !_browseWorkflow.IsCurrent(result.Revision)) return;
+
         _categoryCurrentPage = 1;
         _categorySelectedPlaylist = null;
         _categoryTotalItems = 0;
         CategorySongsList.ItemsSource = null;
         CategoryPageInfo.Text = "第 1 页";
-        try
-        {
-            var tagId = category.Tags.FirstOrDefault()?.Id ?? "all";
-            var sourceId = GetComboTag(CategorySourceCombo, "netease");
-            var result = await _musicSourceService.GetPlaylistsByCategoryAsync(tagId, 1, 20, sourceId);
-            CategoryPlaylistsListBox.ItemsSource = result.Items;
-            if (result.Items.Count == 0)
-            {
-                Announce("该音源暂无可用歌单，建议切换到网易云音乐或查看排行榜");
-                return;
-            }
-            // 歌单数量与页码均交给读屏朗读（列表项自带无障碍名称）
-            CategoryPlaylistsListBox.SelectedIndex = 0;
-        }
-        catch (Exception ex)
-        {
-            Announce("加载歌单列表失败，请检查网络");
-            System.Diagnostics.Debug.WriteLine($"加载歌单列表失败: {ex.Message}");
-        }
+        CategoryPlaylistsListBox.ItemsSource = result.Value.Items;
+        if (result.Value.Items.Count > 0) CategoryPlaylistsListBox.SelectedIndex = 0;
+        if (applyFocus) ApplyBrowseFocus(result.FocusTarget);
     }
 
-    private async void CategoryPlaylistsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void CategoryPlaylistsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (CategoryPlaylistsListBox.SelectedItem is Playlist playlist)
-            await LoadCategoryPlaylistDetailAsync(playlist, 1);
+        _categorySelectedPlaylist = CategoryPlaylistsListBox.SelectedItem as Playlist;
+        var selection = _browseWorkflow.SelectPlaylist(_categorySelectedPlaylist);
+        StatusText.Text = selection.Description;
     }
 
-    private async Task LoadCategoryPlaylistDetailAsync(Playlist playlist, int page)
+    private async Task LoadCategoryPlaylistDetailAsync(
+        Playlist playlist,
+        int page,
+        bool applyFocus = true)
     {
-        if (_musicSourceService == null) return;
+        _browseWorkflow.SelectPlaylist(playlist);
+        var result = await _browseWorkflow.ActivatePlaylistAsync(page);
+        if (!result.Succeeded || result.Value is null
+            || !_browseWorkflow.IsCurrent(result.Revision)) return;
+
         _categorySelectedPlaylist = playlist;
         _categoryCurrentPage = page;
-        try
-        {
-            var result = await _musicSourceService.GetPlaylistDetailAsync(playlist.Id, page, 20);
-            _categoryTotalItems = result.TotalItems;
-            var totalPages = EstimateTotalPages(result.TotalItems, 20, page, result.Items.Count);
-            CategorySongsList.ItemsSource = AppendPageNav(result.Items, page, totalPages);
-            if (CategorySongsList.Items.Count > 0)
-                CategorySongsList.SelectedIndex = 0;
-            CategoryPageInfo.Text = $"第 {page}/{totalPages} 页";
-            // 页码提示交给读屏朗读（歌曲由读屏逐条朗读）
-        }
-        catch (Exception ex)
-        {
-            Announce("加载歌单歌曲失败，请检查网络");
-            System.Diagnostics.Debug.WriteLine($"加载歌单歌曲失败: {ex.Message}");
-        }
+        _categoryTotalItems = result.Value.TotalItems;
+        var totalPages = EstimateTotalPages(result.Value.TotalItems, 20, page, result.Value.Items.Count);
+        CategorySongsList.ItemsSource = AppendPageNav(result.Value.Items, page, totalPages);
+        CategoryPageInfo.Text = $"第 {page}/{totalPages} 页";
+        if (applyFocus) ApplyBrowseFocus(result.FocusTarget);
     }
 
     private void CategorySourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsLoaded) return;
-        // 音源切换结果由读屏朗读下拉框选中项，不再额外播报
-        var sourceId = GetComboTag(CategorySourceCombo, "netease");
-        _ = LoadCategoriesAsync(sourceId);
+        var selection = _browseWorkflow.SelectCategorySource(
+            GetComboTag(CategorySourceCombo, "netease"),
+            GetComboDisplayText(CategorySourceCombo));
+        StatusText.Text = selection.Description;
+        CategoryList.ItemsSource = null;
+        CategoryPlaylistsListBox.ItemsSource = null;
+        CategorySongsList.ItemsSource = null;
     }
 
     private void CategoryRefreshBtn_Click(object sender, RoutedEventArgs e)
@@ -1870,20 +1793,27 @@ public partial class MainWindow : Window
         _ = LoadCategoriesAsync(GetComboTag(CategorySourceCombo, "netease"));
     }
 
-    private void CategoryList_KeyDown(object sender, KeyEventArgs e)
+    private async void CategorySourceCombo_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter && CategoryList.SelectedItem != null)
+        if (e.Key != Key.Enter) return;
+        await LoadCategoriesAsync(GetComboTag(CategorySourceCombo, "netease"));
+        e.Handled = true;
+    }
+
+    private async void CategoryList_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && CategoryList.SelectedItem is PlaylistCategory category)
         {
-            FocusListContent(CategoryPlaylistsListBox);
+            await LoadCategoryPlaylistsAsync(category);
             e.Handled = true;
         }
     }
 
-    private void CategoryPlaylistsListBox_KeyDown(object sender, KeyEventArgs e)
+    private async void CategoryPlaylistsListBox_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter && CategoryPlaylistsListBox.SelectedItem != null)
+        if (e.Key == Key.Enter && CategoryPlaylistsListBox.SelectedItem is Playlist playlist)
         {
-            FocusListContent(CategorySongsList);
+            await LoadCategoryPlaylistDetailAsync(playlist, 1);
             e.Handled = true;
         }
     }
@@ -1912,7 +1842,7 @@ public partial class MainWindow : Window
     private async void CategoryPrevPageBtn_Click(object sender, RoutedEventArgs e)
     {
         if (_categorySelectedPlaylist == null || _categoryCurrentPage <= 1) return;
-        await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage - 1);
+        await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage - 1, applyFocus: false);
     }
 
     private async void CategoryNextPageBtn_Click(object sender, RoutedEventArgs e)
@@ -1920,62 +1850,58 @@ public partial class MainWindow : Window
         if (_categorySelectedPlaylist == null) return;
         var totalPages = Math.Max(1, (int)Math.Ceiling(_categoryTotalItems / 20.0));
         if (_categoryCurrentPage >= totalPages) return;
-        await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage + 1);
+        await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage + 1, applyFocus: false);
     }
     // ==================== 排行榜 ====================
 
-    private async Task LoadRankingsAsync(string sourceId)
+    private async Task LoadRankingsAsync(string sourceId, bool applyFocus = true)
     {
-        if (_musicSourceService == null) return;
-        try
-        {
-            var rankings = await _musicSourceService.GetRankingsAsync(sourceId);
-            RankingList.ItemsSource = rankings;
-            // 已加载数量交给读屏朗读（列表项自带无障碍名称）；仅空态提示
-            if (rankings.Count == 0) Announce("暂无排行榜");
-            if (rankings.Count > 0) RankingList.SelectedIndex = 0;
-        }
-        catch (Exception ex)
-        {
-            Announce("加载排行榜失败，请检查网络");
-            System.Diagnostics.Debug.WriteLine($"加载排行榜失败: {ex.Message}");
-        }
+        _browseWorkflow.SelectRankingSource(sourceId, GetComboDisplayText(RankingSourceCombo));
+        var result = await _browseWorkflow.ActivateRankingSourceAsync();
+        if (!result.Succeeded || result.Value is null
+            || !_browseWorkflow.IsCurrent(result.Revision)) return;
+
+        RankingSongsList.ItemsSource = null;
+        RankingList.ItemsSource = result.Value;
+        if (result.Value.Count > 0) RankingList.SelectedIndex = 0;
+        if (applyFocus) ApplyBrowseFocus(result.FocusTarget);
     }
 
-    private async void RankingList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void RankingList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (RankingList.SelectedItem is Ranking ranking)
-            await LoadRankingDetailAsync(ranking, 1);
+        _rankingSelected = RankingList.SelectedItem as Ranking;
+        var selection = _browseWorkflow.SelectRanking(_rankingSelected);
+        StatusText.Text = selection.Description;
     }
 
-    private async Task LoadRankingDetailAsync(Ranking ranking, int page)
+    private async Task LoadRankingDetailAsync(
+        Ranking ranking,
+        int page,
+        bool applyFocus = true)
     {
-        if (_musicSourceService == null) return;
+        _browseWorkflow.SelectRanking(ranking);
+        var result = await _browseWorkflow.ActivateRankingAsync(page);
+        if (!result.Succeeded || result.Value is null
+            || !_browseWorkflow.IsCurrent(result.Revision)) return;
+
         _rankingSelected = ranking;
         _rankingCurrentPage = page;
-        try
-        {
-            var result = await _musicSourceService.GetRankingDetailAsync(ranking.Id, page, 20);
-            _rankingTotalItems = result.TotalItems;
-            var totalPages = EstimateTotalPages(result.TotalItems, 20, page, result.Items.Count);
-            RankingSongsList.ItemsSource = AppendPageNav(result.Items, page, totalPages);
-            if (RankingSongsList.Items.Count > 0)
-                RankingSongsList.SelectedIndex = 0;
-            RankingPageInfo.Text = $"第 {page}/{totalPages} 页";
-            // 页码提示交给读屏朗读（歌曲由读屏逐条朗读）
-        }
-        catch (Exception ex)
-        {
-            Announce("加载榜单歌曲失败，请检查网络");
-            System.Diagnostics.Debug.WriteLine($"加载榜单歌曲失败: {ex.Message}");
-        }
+        _rankingTotalItems = result.Value.TotalItems;
+        var totalPages = EstimateTotalPages(result.Value.TotalItems, 20, page, result.Value.Items.Count);
+        RankingSongsList.ItemsSource = AppendPageNav(result.Value.Items, page, totalPages);
+        RankingPageInfo.Text = $"第 {page}/{totalPages} 页";
+        if (applyFocus) ApplyBrowseFocus(result.FocusTarget);
     }
 
     private void RankingSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsLoaded) return;
-        // 音源切换结果由读屏朗读下拉框选中项，不再额外播报
-        _ = LoadRankingsAsync(GetComboTag(RankingSourceCombo, "netease"));
+        var selection = _browseWorkflow.SelectRankingSource(
+            GetComboTag(RankingSourceCombo, "netease"),
+            GetComboDisplayText(RankingSourceCombo));
+        StatusText.Text = selection.Description;
+        RankingList.ItemsSource = null;
+        RankingSongsList.ItemsSource = null;
     }
 
     private void RefreshRankingButton_Click(object sender, RoutedEventArgs e)
@@ -1983,11 +1909,18 @@ public partial class MainWindow : Window
         _ = LoadRankingsAsync(GetComboTag(RankingSourceCombo, "netease"));
     }
 
-    private void RankingList_KeyDown(object sender, KeyEventArgs e)
+    private async void RankingSourceCombo_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter && RankingList.SelectedItem != null)
+        if (e.Key != Key.Enter) return;
+        await LoadRankingsAsync(GetComboTag(RankingSourceCombo, "netease"));
+        e.Handled = true;
+    }
+
+    private async void RankingList_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && RankingList.SelectedItem is Ranking ranking)
         {
-            FocusListContent(RankingSongsList);
+            await LoadRankingDetailAsync(ranking, 1);
             e.Handled = true;
         }
     }
@@ -2016,7 +1949,7 @@ public partial class MainWindow : Window
     private async void RankingPrevPageBtn_Click(object sender, RoutedEventArgs e)
     {
         if (_rankingSelected == null || _rankingCurrentPage <= 1) return;
-        await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage - 1);
+        await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage - 1, applyFocus: false);
     }
 
     private async void RankingNextPageBtn_Click(object sender, RoutedEventArgs e)
@@ -2024,7 +1957,7 @@ public partial class MainWindow : Window
         if (_rankingSelected == null) return;
         var totalPages = Math.Max(1, (int)Math.Ceiling(_rankingTotalItems / 20.0));
         if (_rankingCurrentPage >= totalPages) return;
-        await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage + 1);
+        await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage + 1, applyFocus: false);
     }
 
     // ==================== 播放歌曲 ====================
@@ -2120,7 +2053,7 @@ public partial class MainWindow : Window
 
         if (ReferenceEquals(list, SearchResultsList))
         {
-            if (_searchHasMore)
+            if (_browseWorkflow.CurrentSearch.HasMore)
             {
                 _autoPaging = true;
                 _ = ContinueSearchPageAsync();
@@ -2151,12 +2084,13 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (!_searchHasMore)
+            var before = _browseWorkflow.CurrentSearch;
+            if (!before.HasMore)
                 return; // 无更多结果（LoadSearchMoreAsync 已在最后一批播报过，避免重复提示）
-            var beforeCount = _searchLoaded.Count;
-            await LoadSearchMoreAsync();
-            if (_searchLoaded.Count <= beforeCount) return; // 未新增，不重播
-            var newFirst = _searchLoaded[beforeCount];
+            await LoadSearchMoreAsync(applyFocus: false);
+            var after = _browseWorkflow.CurrentSearch;
+            if (after.Items.Count <= before.Items.Count) return; // 未新增，不重播
+            var newFirst = after.Items[before.Items.Count];
             await PlayMusicAsync(newFirst, null, SearchResultsList);
         }
         finally
@@ -2173,7 +2107,7 @@ public partial class MainWindow : Window
             var next = _categoryCurrentPage + 1;
             Announce($"已自动翻页到第 {next} 页，继续播放");
             var beforeId = GetListSongs(CategorySongsList).FirstOrDefault()?.Id;
-            await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist!, next);
+            await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist!, next, applyFocus: false);
             var afterId = GetListSongs(CategorySongsList).FirstOrDefault()?.Id;
             if (string.IsNullOrEmpty(afterId) || string.Equals(afterId, beforeId, StringComparison.OrdinalIgnoreCase))
                 return;
@@ -2193,7 +2127,7 @@ public partial class MainWindow : Window
             var next = _rankingCurrentPage + 1;
             Announce($"已自动翻页到第 {next} 页，继续播放");
             var beforeId = GetListSongs(RankingSongsList).FirstOrDefault()?.Id;
-            await LoadRankingDetailAsync(_rankingSelected!, next);
+            await LoadRankingDetailAsync(_rankingSelected!, next, applyFocus: false);
             var afterId = GetListSongs(RankingSongsList).FirstOrDefault()?.Id;
             if (string.IsNullOrEmpty(afterId) || string.Equals(afterId, beforeId, StringComparison.OrdinalIgnoreCase))
                 return;
@@ -2593,67 +2527,58 @@ public partial class MainWindow : Window
                 var def = _onlinePlaylists.FirstOrDefault(p => p.Type == PlaylistType.System) ?? _onlinePlaylists.FirstOrDefault();
                 if (def != null) OnlinePlaylistList.SelectedItem = def;
             }
-            if (OnlinePlaylistList.SelectedItem is Playlist sel)
-                await SelectOnlinePlaylistAsync(sel);
         }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"加载在线歌单失败: {ex.Message}"); }
     }
 
-    private async Task SelectOnlinePlaylistAsync(Playlist playlist)
+    private async Task<BrowseFocusTarget> ActivateOnlinePlaylistAsync(Playlist playlist)
     {
-        _selectedOnlinePlaylist = playlist;
-        if (playlist == null) return;
+        if (playlist == null) return BrowseFocusTarget.KeepCurrent;
         // 快照歌单（从平台导入的个人歌单）：优先读取本地已存歌曲，离线可播
         var stored = await _dataService!.GetPlaylistItemsAsync(playlist.Id);
+        if (!string.Equals(_selectedOnlinePlaylist?.Id, playlist.Id, StringComparison.Ordinal))
+            return BrowseFocusTarget.KeepCurrent;
         if (stored.Count > 0 || playlist.IsSnapshot)
         {
             FavoriteSongsList.ItemsSource = null;
             FavoriteSongsList.ItemsSource = stored;
             FavoriteCountText.Text = $"共 {stored.Count} 首";
-            return;
+            Announce($"已加载 {stored.Count} 首收藏歌曲", AnnouncementKind.Success);
+            return BrowseFocusTarget.SavedPlaylistSongs;
         }
-        try
+        if (!string.IsNullOrEmpty(playlist.RemoteId))
         {
-            if (!string.IsNullOrEmpty(playlist.RemoteId))
+            var result = await _browseWorkflow.ActivateSavedPlaylistAsync(playlist);
+            if (!result.Succeeded || result.Value is null
+                || !_browseWorkflow.IsCurrent(result.Revision)
+                || !string.Equals(_selectedOnlinePlaylist?.Id, playlist.Id, StringComparison.Ordinal))
             {
-                // 远程收藏的歌单：按需联网加载（排行榜用 GetRankingDetailAsync，其余用 GetPlaylistDetailAsync）
-                List<MusicInfo> songs;
-                if (playlist.Type == PlaylistType.Recommend && _musicSourceService != null)
-                    songs = (await _musicSourceService.GetRankingDetailAsync(playlist.RemoteId, 1, 50)).Items;
-                else if (_musicSourceService != null)
-                    songs = (await _musicSourceService.GetPlaylistDetailAsync(playlist.RemoteId, 1, 50)).Items;
-                else
-                    songs = new List<MusicInfo>();
-                FavoriteSongsList.ItemsSource = null;
-                FavoriteSongsList.ItemsSource = songs;
-                FavoriteCountText.Text = $"共 {songs.Count} 首";
-                Announce($"正在加载远程歌单：{playlist.Name}");
-                return;
+                return BrowseFocusTarget.KeepCurrent;
             }
+            FavoriteSongsList.ItemsSource = result.Value.Items;
+            FavoriteCountText.Text = $"共 {result.Value.Items.Count} 首";
+            return result.FocusTarget;
+        }
 
-            // 非快照在线歌单且本地无歌曲：显示为空
-            FavoriteSongsList.ItemsSource = null;
-            FavoriteSongsList.ItemsSource = Array.Empty<MusicInfo>();
-            FavoriteCountText.Text = "共 0 首";
-        }
-        catch (Exception ex)
-        {
-            Announce("加载歌单歌曲失败，请检查网络");
-            System.Diagnostics.Debug.WriteLine($"加载在线歌单失败: {ex.Message}");
-        }
+        FavoriteSongsList.ItemsSource = Array.Empty<MusicInfo>();
+        FavoriteCountText.Text = "共 0 首";
+        return BrowseFocusTarget.SavedPlaylistSongs;
     }
 
-    private async void OnlinePlaylistList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void OnlinePlaylistList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (OnlinePlaylistList.SelectedItem is Playlist p)
-            await SelectOnlinePlaylistAsync(p);
+        _selectedOnlinePlaylist = OnlinePlaylistList.SelectedItem as Playlist;
+        var selection = _browseWorkflow.SelectPlaylist(_selectedOnlinePlaylist);
+        StatusText.Text = selection.Description;
+        FavoriteSongsList.ItemsSource = null;
+        FavoriteCountText.Text = "按 Enter 加载歌曲";
     }
 
-    private void OnlinePlaylistList_KeyDown(object sender, KeyEventArgs e)
+    private async void OnlinePlaylistList_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter && OnlinePlaylistList.SelectedItem != null)
+        if (e.Key == Key.Enter && OnlinePlaylistList.SelectedItem is Playlist playlist)
         {
-            FocusListContent(FavoriteSongsList);
+            ApplyBrowseFocus(await ActivateOnlinePlaylistAsync(playlist));
             e.Handled = true;
         }
         else if (e.Key == Key.Delete && OnlinePlaylistList.SelectedItem is Playlist p)
@@ -2748,7 +2673,7 @@ public partial class MainWindow : Window
     {
         if (_dataService == null || music == null || _selectedOnlinePlaylist == null) return;
         await _dataService.RemoveSongFromPlaylistAsync(_selectedOnlinePlaylist.Id, music);
-        await SelectOnlinePlaylistAsync(_selectedOnlinePlaylist);
+        await ActivateOnlinePlaylistAsync(_selectedOnlinePlaylist);
         Announce($"已从{_selectedOnlinePlaylist.Name}移除：{music.Title}");
     }
 
@@ -2800,7 +2725,7 @@ public partial class MainWindow : Window
         var result = MessageBox.Show($"确定清空在线歌单“{_selectedOnlinePlaylist.Name}”（共 {count} 首）吗？", "确认清空", MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (result != MessageBoxResult.Yes) return;
         await _dataService.ClearPlaylistItemsAsync(_selectedOnlinePlaylist.Id);
-        await SelectOnlinePlaylistAsync(_selectedOnlinePlaylist);
+        await ActivateOnlinePlaylistAsync(_selectedOnlinePlaylist);
         Announce($"在线歌单已清空：{_selectedOnlinePlaylist.Name}");
     }
 
@@ -3255,21 +3180,12 @@ public partial class MainWindow : Window
     /// <summary>按页拉取专辑的全部歌曲（与展开专辑共用分页逻辑）</summary>
     private async Task<List<MusicInfo>> FetchAlbumSongsAsync(MusicInfo album)
     {
-        var collected = new List<MusicInfo>();
-        if (_musicSourceService == null || album == null) return collected;
-        const int albumPageSize = 50;
-        for (int page = 1; page <= 200; page++)
-        {
-            var detail = await _musicSourceService.GetAlbumDetailAsync(album, page, albumPageSize);
-            var items = detail.Items ?? new List<MusicInfo>();
-            int before = collected.Count;
-            foreach (var m in items)
-                if (!collected.Any(x => x.Id == m.Id && string.Equals(x.Source, m.Source, StringComparison.OrdinalIgnoreCase)))
-                    collected.Add(m);
-            if (items.Count == 0) break;
-            if (collected.Count == before) break;
-        }
-        return collected;
+        if (album == null) return [];
+        var result = await _browseWorkflow.ActivateAlbumAsync(album);
+        return result.Succeeded && result.Value is not null
+            && _browseWorkflow.IsCurrent(result.Revision)
+            ? result.Value.ToList()
+            : [];
     }
 
     /// <summary>获取列表中可批量下载的在线歌曲（排除分页/返回/加载更多等伪条目与本地歌曲）</summary>
@@ -4113,6 +4029,10 @@ public partial class MainWindow : Window
         return (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? defaultValue;
     }
 
+    private static string GetComboDisplayText(ComboBox combo) =>
+        (combo.SelectedItem as ComboBoxItem)?.Content?.ToString()
+        ?? GetComboTag(combo, string.Empty);
+
 
     // ==================== 快捷键 ====================
 
@@ -4708,6 +4628,22 @@ public partial class MainWindow : Window
             return;
         }
         FocusControl(element);
+    }
+
+    private void ApplyBrowseFocus(BrowseFocusTarget target)
+    {
+        var element = target switch
+        {
+            BrowseFocusTarget.SearchResults => SearchResultsList,
+            BrowseFocusTarget.CategoryList => CategoryList,
+            BrowseFocusTarget.CategoryPlaylists => CategoryPlaylistsListBox,
+            BrowseFocusTarget.CategorySongs => CategorySongsList,
+            BrowseFocusTarget.SavedPlaylistSongs => FavoriteSongsList,
+            BrowseFocusTarget.RankingList => RankingList,
+            BrowseFocusTarget.RankingSongs => RankingSongsList,
+            _ => null
+        };
+        if (element is not null) FocusListContent(element);
     }
 
     /// <summary>聚焦控件；延迟重试带页面令牌校验，避免切页后延迟抢焦导致焦点乱跳。

@@ -8,7 +8,7 @@ namespace LXMusicAccessible.Services;
 /// <summary>
 /// 音源管理服务 — 统一调度 5 大内置音源 + 外部脚本源
 /// </summary>
-public class MusicSourceService : IMusicSourceService
+public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
 {
     private readonly ILogger<MusicSourceService> _logger;
     private readonly NeteaseMusicService _netease;
@@ -183,7 +183,13 @@ public class MusicSourceService : IMusicSourceService
     // ================================================================
     //  搜索
     // ================================================================
-    public async Task<PagedResult<MusicInfo>> SearchAsync(string query, int page = 1, int pageSize = 20, string searchType = "song", string sourceId = "all")
+    public async Task<PagedResult<MusicInfo>> SearchAsync(
+        string query,
+        int page = 1,
+        int pageSize = 20,
+        string searchType = "song",
+        string sourceId = "all",
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(query)) return PagedResult<MusicInfo>.Empty(page, pageSize);
         if (page < 1) page = 1;
@@ -205,7 +211,16 @@ public class MusicSourceService : IMusicSourceService
             // 循环抓取，直到缓冲足以覆盖本页，或没有更多结果 / 达到轮数上限
             var batchSize = Math.Max(40, pageSize * 2);
             for (int round = 0; round < MaxSearchFetchRounds && session.Buffer.Count < page * pageSize && session.HasMore; round++)
-                await FetchNextSearchRoundAsync(session, enabled, query, searchType, batchSize);
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await FetchNextSearchRoundAsync(
+                    session,
+                    enabled,
+                    query,
+                    searchType,
+                    batchSize,
+                    cancellationToken);
+            }
 
             return new PagedResult<MusicInfo>
             {
@@ -215,6 +230,10 @@ public class MusicSourceService : IMusicSourceService
                 Items = session.Buffer.Skip((page - 1) * pageSize).Take(pageSize).ToList()
             };
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "聚合搜索失败: {Query}", query);
@@ -223,11 +242,18 @@ public class MusicSourceService : IMusicSourceService
     }
 
     /// <summary>从单个音源抓取一页原始搜索结果（不额外过滤，尊重平台原生搜索规则）</summary>
-    private async Task<PagedResult<MusicInfo>> SearchSourcePageAsync(string sourceId, string query, int page, int pageSize, string searchType = "song")
+    private async Task<PagedResult<MusicInfo>> SearchSourcePageAsync(
+        string sourceId,
+        string query,
+        int page,
+        int pageSize,
+        string searchType,
+        CancellationToken cancellationToken)
     {
         if (!_apiMap.TryGetValue(sourceId, out var api))
             return PagedResult<MusicInfo>.Empty(page, pageSize);
-        try { return await api.SearchAsync(query, page, pageSize, searchType); }
+        try { return await api.SearchAsync(query, page, pageSize, searchType, cancellationToken).WaitAsync(cancellationToken); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex) { _logger.LogError(ex, "音源 [{SourceId}] 搜索失败", sourceId); return PagedResult<MusicInfo>.Empty(page, pageSize); }
     }
 
@@ -276,10 +302,23 @@ public class MusicSourceService : IMusicSourceService
     }
 
     /// <summary>抓取一轮：各源取下一页原始结果，全局去重后按固定源顺序追加到会话缓冲</summary>
-    private async Task FetchNextSearchRoundAsync(SearchSession session, List<MusicSource> sources, string query, string searchType, int batchSize)
+    private async Task FetchNextSearchRoundAsync(
+        SearchSession session,
+        List<MusicSource> sources,
+        string query,
+        string searchType,
+        int batchSize,
+        CancellationToken cancellationToken)
     {
-        var tasks = sources.Select(s => SearchSourcePageAsync(s.Id, query, session.Cursor.GetValueOrDefault(s.Id, 0) + 1, batchSize, searchType)).ToArray();
+        var tasks = sources.Select(s => SearchSourcePageAsync(
+            s.Id,
+            query,
+            session.Cursor.GetValueOrDefault(s.Id, 0) + 1,
+            batchSize,
+            searchType,
+            cancellationToken)).ToArray();
         var pages = await Task.WhenAll(tasks);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var anyMore = false;
         var seen = new HashSet<string>(session.Buffer.Select(BuildSearchDedupKey), StringComparer.OrdinalIgnoreCase);
@@ -325,13 +364,18 @@ public class MusicSourceService : IMusicSourceService
 
 
     /// <summary>获取专辑详情（歌曲列表），按专辑行的来源路由到对应平台</summary>
-    public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(
+        MusicInfo album,
+        int page = 1,
+        int pageSize = 50,
+        CancellationToken cancellationToken = default)
     {
         if (album == null) return PagedResult<MusicInfo>.Empty(page, pageSize);
         var source = string.IsNullOrWhiteSpace(album.Source) ? "netease" : album.Source;
         if (_apiMap.TryGetValue(source, out var api))
         {
-            try { return await api.GetAlbumDetailAsync(album, page, pageSize); }
+            try { return await api.GetAlbumDetailAsync(album, page, pageSize, cancellationToken).WaitAsync(cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception ex) { _logger.LogError(ex, "获取专辑详情失败: {Album}", album.Title); }
         }
         return PagedResult<MusicInfo>.Empty(page, pageSize);
@@ -679,21 +723,30 @@ public class MusicSourceService : IMusicSourceService
     //  分类 / 歌单 / 排行榜 — 委托给内置 API
     // ================================================================
 
-    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(string sourceId = "netease")
+    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(
+        string sourceId = "netease",
+        CancellationToken cancellationToken = default)
     {
         if (_apiMap.TryGetValue(sourceId, out var api))
         {
-            try { return await api.GetPlaylistCategoriesAsync(); }
+            try { return await api.GetPlaylistCategoriesAsync(cancellationToken).WaitAsync(cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception ex) { _logger.LogError(ex, "获取歌单分类失败: {SourceId}", sourceId); }
         }
         return new List<PlaylistCategory>();
     }
 
-    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string category, int page = 1, int pageSize = 30, string sourceId = "netease")
+    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(
+        string category,
+        int page = 1,
+        int pageSize = 30,
+        string sourceId = "netease",
+        CancellationToken cancellationToken = default)
     {
         if (_apiMap.TryGetValue(sourceId, out var api))
         {
-            try { return await api.GetPlaylistsByCategoryAsync(category, page, pageSize); }
+            try { return await api.GetPlaylistsByCategoryAsync(category, page, pageSize, cancellationToken).WaitAsync(cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception ex) { _logger.LogError(ex, "获取歌单列表失败"); }
         }
         return PagedResult<Playlist>.Empty(page, pageSize);
@@ -702,33 +755,46 @@ public class MusicSourceService : IMusicSourceService
     public async Task<PagedResult<Playlist>> GetPlaylistsAsync(int page = 1, int pageSize = 20, string category = "全部")
         => await GetPlaylistsByCategoryAsync(category, page, pageSize, "netease");
 
-    public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(
+        string playlistId,
+        int page = 1,
+        int pageSize = 50,
+        CancellationToken cancellationToken = default)
     {
         var (sourceId, cleanId) = ParseSourceId(playlistId, "netease");
         if (_apiMap.TryGetValue(sourceId, out var api))
         {
-            try { return await api.GetPlaylistDetailAsync(cleanId, page, pageSize); }
+            try { return await api.GetPlaylistDetailAsync(cleanId, page, pageSize, cancellationToken).WaitAsync(cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception ex) { _logger.LogError(ex, "获取歌单详情失败: {PlaylistId}", playlistId); }
         }
         return PagedResult<MusicInfo>.Empty(page, pageSize);
     }
 
-    public async Task<List<Ranking>> GetRankingsAsync(string sourceId = "netease")
+    public async Task<List<Ranking>> GetRankingsAsync(
+        string sourceId = "netease",
+        CancellationToken cancellationToken = default)
     {
         if (_apiMap.TryGetValue(sourceId, out var api))
         {
-            try { return await api.GetRankingsAsync(); }
+            try { return await api.GetRankingsAsync(cancellationToken).WaitAsync(cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception ex) { _logger.LogError(ex, "获取排行榜失败: {SourceId}", sourceId); }
         }
         return new List<Ranking>();
     }
 
-    public async Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetRankingDetailAsync(
+        string rankingId,
+        int page = 1,
+        int pageSize = 50,
+        CancellationToken cancellationToken = default)
     {
         var (sourceId, cleanId) = ParseSourceId(rankingId, "netease");
         if (_apiMap.TryGetValue(sourceId, out var api))
         {
-            try { return await api.GetRankingDetailAsync(cleanId, page, pageSize); }
+            try { return await api.GetRankingDetailAsync(cleanId, page, pageSize, cancellationToken).WaitAsync(cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception ex) { _logger.LogError(ex, "获取排行榜详情失败: {RankingId}", rankingId); }
         }
         return PagedResult<MusicInfo>.Empty(page, pageSize);

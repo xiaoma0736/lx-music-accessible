@@ -28,14 +28,14 @@ public class KugouMusicService : IMusicApi
     /// <summary>
     /// 搜索音乐
     /// </summary>
-    public async Task<PagedResult<MusicInfo>> SearchAsync(string keyword, int page = 1, int pageSize = 30, string searchType = "song")
+    public async Task<PagedResult<MusicInfo>> SearchAsync(string keyword, int page = 1, int pageSize = 30, string searchType = "song", CancellationToken cancellationToken = default)
     {
         try
         {
             _logger.LogInformation("酷狗音乐搜索: {Keyword}, 页码: {Page}", keyword, page);
 
             if (string.Equals(searchType, "album", StringComparison.OrdinalIgnoreCase))
-                return await SearchAlbumsAsync(keyword, page, pageSize);
+                return await SearchAlbumsAsync(keyword, page, pageSize, cancellationToken);
 
             var url = $"{ApiBaseV3}/search/song";
             var parameters = new Dictionary<string, string>
@@ -47,7 +47,7 @@ public class KugouMusicService : IMusicApi
                 ["showtype"] = "1"
             };
 
-            var response = await _httpClient.GetAsync(url, parameters);
+            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
             var result = JsonSerializer.Deserialize<KugouSearchResult>(response);
 
             if (result?.ErrorCode == 0 && result.Data?.Info != null)
@@ -88,7 +88,7 @@ public class KugouMusicService : IMusicApi
     // ========== 专辑搜索 / 专辑详情 ==========
 
     /// <summary>酷狗专辑搜索：/api/v3/search/album → data.info[]</summary>
-    private async Task<PagedResult<MusicInfo>> SearchAlbumsAsync(string keyword, int page, int pageSize)
+    private async Task<PagedResult<MusicInfo>> SearchAlbumsAsync(string keyword, int page, int pageSize, CancellationToken cancellationToken)
     {
         try
         {
@@ -100,7 +100,7 @@ public class KugouMusicService : IMusicApi
                 ["pagesize"] = pageSize.ToString(),
                 ["format"] = "json"
             };
-            var response = await _httpClient.GetAsync(url, parameters);
+            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
             var result = JsonSerializer.Deserialize<JsonElement>(response);
             var list = new List<MusicInfo>();
             int total = 0;
@@ -135,7 +135,7 @@ public class KugouMusicService : IMusicApi
     }
 
     /// <summary>酷狗专辑详情：/api/v3/album/song → data.info[]（hash 歌曲）</summary>
-    public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -150,7 +150,7 @@ public class KugouMusicService : IMusicApi
                 ["pagesize"] = pageSize.ToString(),
                 ["format"] = "json"
             };
-            var response = await _httpClient.GetAsync(url, parameters);
+            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
             var result = JsonSerializer.Deserialize<JsonElement>(response);
             var list = new List<MusicInfo>();
             int total = 0;
@@ -317,7 +317,7 @@ public class KugouMusicService : IMusicApi
     /// <summary>
     /// 获取歌单分类 — 参考原版 lx-music-desktop：www2 getSpecial?is_smarty=1 → data.tagids
     /// </summary>
-    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync()
+    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("获取{Name}歌单分类", SourceName);
 
@@ -327,7 +327,7 @@ public class KugouMusicService : IMusicApi
             var response = await _httpClient.GetAsync(url, new Dictionary<string, string>
             {
                 ["is_smarty"] = "1", ["cdn"] = "cdn", ["t"] = "5"
-            });
+            }, null, cancellationToken);
             var data = JsonSerializer.Deserialize<JsonElement>(response);
 
             var categories = new List<PlaylistCategory>
@@ -394,7 +394,7 @@ public class KugouMusicService : IMusicApi
     /// <summary>
     /// 按分类获取歌单列表 — 参考原版：getSpecial?is_ajax=1 → special_db
     /// </summary>
-    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30)
+    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -407,7 +407,7 @@ public class KugouMusicService : IMusicApi
                 ["c"] = categoryId ?? "", ["p"] = page.ToString()
             };
 
-            var response = await _httpClient.GetAsync(url, parameters);
+            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
             var result = JsonSerializer.Deserialize<JsonElement>(response);
 
             var playlists = new List<Playlist>();
@@ -454,7 +454,7 @@ public class KugouMusicService : IMusicApi
     /// <summary>
     /// 获取歌单详情 — /api/v3/special/song，歌曲字段为 filename(歌手 - 歌名)/hash/duration
     /// </summary>
-    public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -469,7 +469,7 @@ public class KugouMusicService : IMusicApi
                 ["format"] = "json"
             };
 
-            var response = await _httpClient.GetAsync(url, parameters);
+            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
             var result = JsonSerializer.Deserialize<JsonElement>(response);
 
             var musicList = new List<MusicInfo>();
@@ -651,7 +651,7 @@ public class KugouMusicService : IMusicApi
     /// <summary>
     /// 获取排行榜列表
     /// </summary>
-    public async Task<List<Ranking>> GetRankingsAsync()
+    public async Task<List<Ranking>> GetRankingsAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("获取酷狗排行榜");
 
@@ -660,7 +660,7 @@ public class KugouMusicService : IMusicApi
             var url = $"{ApiBaseV3}/rank/list";
             var parameters = new Dictionary<string, string> { ["format"] = "json", ["pid"] = "1", ["withsong"] = "0" };
 
-            var response = await _httpClient.GetAsync(url, parameters);
+            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
             var result = JsonSerializer.Deserialize<JsonElement>(response);
 
             var rankings = new List<Ranking>();
@@ -710,7 +710,7 @@ public class KugouMusicService : IMusicApi
     /// <summary>
     /// 获取排行榜详情
     /// </summary>
-    public async Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -725,7 +725,7 @@ public class KugouMusicService : IMusicApi
                 ["format"] = "json"
             };
 
-            var response = await _httpClient.GetAsync(url, parameters);
+            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
             var result = JsonSerializer.Deserialize<JsonElement>(response);
 
             var musicList = new List<MusicInfo>();

@@ -438,7 +438,13 @@ public interface IMusicSourceService
     /// <summary>
     /// 搜索音乐
     /// </summary>
-    Task<PagedResult<MusicInfo>> SearchAsync(string query, int page = 1, int pageSize = 20, string searchType = "song", string sourceId = "all");
+    Task<PagedResult<MusicInfo>> SearchAsync(
+        string query,
+        int page = 1,
+        int pageSize = 20,
+        string searchType = "song",
+        string sourceId = "all",
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取音乐信息
@@ -471,28 +477,49 @@ public interface IMusicSourceService
     /// <summary>
     /// 获取歌单分类
     /// </summary>
-    Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(string sourceId = "netease");
+    Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(
+        string sourceId = "netease",
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取歌单详情
     /// </summary>
-    Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50);
-    Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string category, int page = 1, int pageSize = 30, string sourceId = "netease");
+    Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(
+        string playlistId,
+        int page = 1,
+        int pageSize = 50,
+        CancellationToken cancellationToken = default);
+    Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(
+        string category,
+        int page = 1,
+        int pageSize = 30,
+        string sourceId = "netease",
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取排行榜
     /// </summary>
-    Task<List<Ranking>> GetRankingsAsync(string sourceId = "netease");
+    Task<List<Ranking>> GetRankingsAsync(
+        string sourceId = "netease",
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取排行榜详情
     /// </summary>
-    Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50);
+    Task<PagedResult<MusicInfo>> GetRankingDetailAsync(
+        string rankingId,
+        int page = 1,
+        int pageSize = 50,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取专辑详情及歌曲列表
     /// </summary>
-    Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50);
+    Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(
+        MusicInfo album,
+        int page = 1,
+        int pageSize = 50,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取指定音源 API，供歌词等功能使用

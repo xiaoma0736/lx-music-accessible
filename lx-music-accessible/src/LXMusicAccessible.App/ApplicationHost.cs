@@ -81,7 +81,10 @@ public static class ApplicationHost
                     sp.GetRequiredService<BackgroundWorkHost>(),
                     sp.GetRequiredService<HttpClient>(),
                     Path.Combine(dataDir, "cache")));
-                services.AddSingleton<IMusicSourceService, MusicSourceService>();
+                services.AddSingleton<MusicSourceService>();
+                services.AddSingleton<IMusicSourceService>(sp => sp.GetRequiredService<MusicSourceService>());
+                services.AddSingleton<IMusicBrowseSource>(sp => sp.GetRequiredService<MusicSourceService>());
+                services.AddSingleton<MusicBrowseWorkflow>();
                 services.AddSingleton<IDownloadService, DownloadService>();
                 services.AddSingleton<ILyricService, LyricService>();
                 services.AddSingleton<LxScriptEngine>();

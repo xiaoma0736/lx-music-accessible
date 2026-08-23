@@ -35,14 +35,14 @@ public class NeteaseMusicService : IMusicApi
 
     // ========== 搜索 ==========
 
-    public async Task<PagedResult<MusicInfo>> SearchAsync(string keyword, int page = 1, int pageSize = 30, string searchType = "song")
+    public async Task<PagedResult<MusicInfo>> SearchAsync(string keyword, int page = 1, int pageSize = 30, string searchType = "song", CancellationToken cancellationToken = default)
     {
         try
         {
             _logger.LogInformation("搜索音乐: {Keyword}, 页码: {Page}", keyword, page);
 
             if (string.Equals(searchType, "album", StringComparison.OrdinalIgnoreCase))
-                return await SearchAlbumsAsync(keyword, page, pageSize);
+                return await SearchAlbumsAsync(keyword, page, pageSize, cancellationToken);
 
             var result = await _httpClient.PostEapiAsync<NeteaseEapiSearchResult>(
                 "/api/search/song/list/page",
@@ -56,7 +56,8 @@ public class NeteaseMusicService : IMusicApi
                     total = page == 1,
                     limit = pageSize
                 },
-                DefaultHeaders);
+                DefaultHeaders,
+                cancellationToken);
 
             if (result?.Data?.Resources == null)
                 return PagedResult<MusicInfo>.Empty(page, pageSize);
@@ -94,14 +95,15 @@ public class NeteaseMusicService : IMusicApi
     // ========== 专辑搜索 / 专辑详情 ==========
 
     /// <summary>专辑搜索：eapi /api/cloudsearch/pc type=10，返回 result.albums[]</summary>
-    private async Task<PagedResult<MusicInfo>> SearchAlbumsAsync(string keyword, int page, int pageSize)
+    private async Task<PagedResult<MusicInfo>> SearchAlbumsAsync(string keyword, int page, int pageSize, CancellationToken cancellationToken)
     {
         try
         {
             var result = await _httpClient.PostEapiAsync<JsonElement>(
                 "/api/cloudsearch/pc",
                 new { s = keyword, type = 10, limit = pageSize, offset = pageSize * (page - 1) },
-                DefaultHeaders);
+                DefaultHeaders,
+                cancellationToken);
 
             if (result.ValueKind != JsonValueKind.Object ||
                 !result.TryGetProperty("result", out var res) || res.ValueKind != JsonValueKind.Object)
@@ -138,7 +140,7 @@ public class NeteaseMusicService : IMusicApi
     }
 
     /// <summary>专辑详情：eapi /api/v1/album/{id}，返回 songs[]</summary>
-    public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -148,7 +150,8 @@ public class NeteaseMusicService : IMusicApi
             var result = await _httpClient.PostEapiAsync<JsonElement>(
                 $"/api/v1/album/{album.Id}",
                 new { id = album.Id },
-                DefaultHeaders);
+                DefaultHeaders,
+                cancellationToken);
 
             if (result.ValueKind != JsonValueKind.Object ||
                 !result.TryGetProperty("songs", out var songs) || songs.ValueKind != JsonValueKind.Array)
@@ -306,14 +309,15 @@ public class NeteaseMusicService : IMusicApi
 
     // ========== 排行榜 ==========
 
-    public async Task<List<Ranking>> GetRankingsAsync()
+    public async Task<List<Ranking>> GetRankingsAsync(CancellationToken cancellationToken = default)
     {
         try
         {
             var result = await _httpClient.PostWeapiAsync<NeteaseTopList>(
                 $"{WeapiBaseUrl}/toplist",
                 new { },
-                DefaultHeaders);
+                DefaultHeaders,
+                cancellationToken);
 
             if (result?.List == null)
                 return GetDefaultRankings();
@@ -335,14 +339,15 @@ public class NeteaseMusicService : IMusicApi
         }
     }
 
-    public async Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
             var result = await _httpClient.PostWeapiAsync<NeteasePlaylistDetailResp>(
                 $"{WeapiBaseUrl}/v3/playlist/detail",
                 new { id = rankingId, n = pageSize, p = page, s = 8 },
-                DefaultHeaders);
+                DefaultHeaders,
+                cancellationToken);
 
             if (result?.Playlist?.Tracks == null)
                 return PagedResult<MusicInfo>.Empty(page, pageSize);
@@ -376,14 +381,15 @@ public class NeteaseMusicService : IMusicApi
 
     // ========== 歌单分类 ==========
 
-    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync()
+    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
     {
         try
         {
             var result = await _httpClient.PostWeapiAsync<NeteaseCategoryResult>(
                 $"{WeapiBaseUrl}/playlist/catalogue",
                 new { },
-                DefaultHeaders);
+                DefaultHeaders,
+                cancellationToken);
 
             if (result?.Sub == null || result.Categories == null)
                 return GetDefaultCategories();
@@ -417,14 +423,15 @@ public class NeteaseMusicService : IMusicApi
 
     // ========== 歌单列表 ==========
 
-    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30)
+    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
     {
         try
         {
             var result = await _httpClient.PostWeapiAsync<NeteasePlaylistResult>(
                 $"{WeapiBaseUrl}/playlist/list",
                 new { cat = categoryId, order = "hot", limit = pageSize, offset = pageSize * (page - 1), total = true },
-                DefaultHeaders);
+                DefaultHeaders,
+                cancellationToken);
 
             if (result?.Playlists == null)
                 return PagedResult<Playlist>.Empty(page, pageSize);
@@ -457,7 +464,7 @@ public class NeteaseMusicService : IMusicApi
 
     // ========== 歌单详情 ==========
 
-    public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50)
+    public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -468,7 +475,8 @@ public class NeteaseMusicService : IMusicApi
                     url = "https://music.163.com/api/v3/playlist/detail",
                     @params = new { id = playlistId, n = pageSize, s = 8 }
                 },
-                DefaultHeaders);
+                DefaultHeaders,
+                cancellationToken);
 
             if (result?.Playlist?.Tracks == null)
                 return PagedResult<MusicInfo>.Empty(page, pageSize);

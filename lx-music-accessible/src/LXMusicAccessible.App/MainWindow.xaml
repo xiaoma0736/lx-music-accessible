@@ -277,7 +277,7 @@
                                 <Label Content="音源：" Target="{Binding ElementName=CategorySourceCombo}"
                                        VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
                                 <ComboBox x:Name="CategorySourceCombo" Width="140" Height="28" Margin="0,0,10,0" KeyboardNavigation.TabIndex="31"
-                                          AutomationProperties.Name="歌单音源" SelectionChanged="CategorySourceCombo_SelectionChanged" IsTabStop="True">
+                                          AutomationProperties.Name="歌单音源" AutomationProperties.HelpText="上下方向键选择音源，按 Enter 或刷新按钮加载分类" SelectionChanged="CategorySourceCombo_SelectionChanged" KeyDown="CategorySourceCombo_KeyDown" IsTabStop="True">
                                     <ComboBoxItem Content="网易云音乐" Tag="netease" IsSelected="True"/>
                                     <ComboBoxItem Content="QQ音乐" Tag="qq"/>
                                     <ComboBoxItem Content="酷狗音乐" Tag="kg"/>
@@ -298,7 +298,7 @@
                                     <ListBox x:Name="CategoryList" KeyboardNavigation.TabIndex="33"
                                              DisplayMemberPath="Name"
                                              AutomationProperties.Name="分类列表"
-                                             AutomationProperties.HelpText="上下方向键选择分类"
+                                             AutomationProperties.HelpText="上下方向键选择分类，按 Enter 加载歌单"
                                              SelectionChanged="CategoryList_SelectionChanged"
                                              KeyDown="CategoryList_KeyDown" IsTabStop="False">
                                         <ListBox.ItemContainerStyle>
@@ -383,7 +383,7 @@
                                 <Label Content="音源：" Target="{Binding ElementName=RankingSourceCombo}"
                                        VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
                                 <ComboBox x:Name="RankingSourceCombo" Width="140" Height="28" Margin="0,0,10,0" KeyboardNavigation.TabIndex="40"
-                                          AutomationProperties.Name="排行榜音源" SelectionChanged="RankingSourceCombo_SelectionChanged" IsTabStop="True">
+                                          AutomationProperties.Name="排行榜音源" AutomationProperties.HelpText="上下方向键选择音源，按 Enter 或刷新按钮加载排行榜" SelectionChanged="RankingSourceCombo_SelectionChanged" KeyDown="RankingSourceCombo_KeyDown" IsTabStop="True">
                                     <ComboBoxItem Content="网易云音乐" Tag="netease" IsSelected="True"/>
                                     <ComboBoxItem Content="QQ音乐" Tag="qq"/>
                                     <ComboBoxItem Content="酷狗音乐" Tag="kg"/>
@@ -403,7 +403,7 @@
                                     <ListBox x:Name="RankingList" KeyboardNavigation.TabIndex="42"
                                              DisplayMemberPath="Name"
                                              AutomationProperties.Name="排行榜列表"
-                                             AutomationProperties.HelpText="上下方向键选择排行榜"
+                                             AutomationProperties.HelpText="上下方向键选择排行榜，按 Enter 加载歌曲"
                                              SelectionChanged="RankingList_SelectionChanged"
                                              KeyDown="RankingList_KeyDown"
                                              ContextMenuOpening="PlaylistList_ContextMenuOpening" IsTabStop="False">
