@@ -26,6 +26,11 @@ A ticket is on the implementation frontier when all of its blockers are closed a
 - The shared worktree permits only one active implementation ticket at a time. Start the next ticket only after the current ticket has committed its work and left the worktree in a handoff-safe state.
 - Do not close a partially completed or blocked ticket. If required authority, human verification, or environment state is unavailable, keep the issue open and report the blocker.
 
+## Scope decisions
+
+- T11 / #12 is cancelled as `NOT_PLANNED`, not completed. Do not use it as evidence that installer accessibility was implemented.
+- The authoritative automated-versus-human accessibility boundary and pre-release checklist live in `tasks/comprehensive-remediation-spec-2026-08-23.md` under **Testing Decisions**.
+
 ## Skill operations
 
 - When a skill says to publish to the issue tracker, create a GitHub issue.

@@ -10,6 +10,8 @@ Each implementation ticket is owned end-to-end by exactly one dedicated sub-agen
 
 Ticket closure uses the repository's local `verify.ps1` quality gate. This repository does not use a remote CI/CD workflow.
 
+Deterministic accessibility semantics, UI Automation events, focus side effects, and business behavior remain locally automated. Real or synthesized keyboard driving and Narrator/NVDA/JAWS workflows are human pre-release checks; they do not block an implementation ticket from closing. See `tasks/comprehensive-remediation-spec-2026-08-23.md` under **Testing Decisions** for the authoritative boundary and checklist.
+
 ### Triage labels
 
 Use the repository's canonical five-role triage vocabulary. See `docs/agents/triage-labels.md`.
