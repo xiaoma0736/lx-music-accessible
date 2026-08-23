@@ -5,7 +5,9 @@ using LXMusicAccessible.Services;
 namespace LXMusicAccessible.App;
 
 /// <summary>Creates runtime-dependent secondary windows from the Host-owned dependency graph.</summary>
-public sealed class ApplicationWindowFactory(IAccessibleAnnouncer announcer)
+public sealed class ApplicationWindowFactory(
+    IAccessibleAnnouncer announcer,
+    LyricsWorkflow lyrics)
 {
     public UserGuideWindow CreateUserGuide(Window? owner) =>
         WithOwner(new UserGuideWindow(announcer), owner);
@@ -16,7 +18,7 @@ public sealed class ApplicationWindowFactory(IAccessibleAnnouncer announcer)
     public LyricsWindow CreateLyrics(Func<KeyEventArgs, bool> handleHotkey)
     {
         ArgumentNullException.ThrowIfNull(handleHotkey);
-        return new LyricsWindow(handleHotkey);
+        return new LyricsWindow(lyrics, handleHotkey);
     }
 
     private static T WithOwner<T>(T window, Window? owner) where T : Window

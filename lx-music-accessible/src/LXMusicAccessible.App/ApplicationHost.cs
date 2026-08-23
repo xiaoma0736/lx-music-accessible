@@ -93,6 +93,7 @@ public static class ApplicationHost
                 services.AddSingleton<MusicBrowseWorkflow>();
                 services.AddSingleton<IDownloadService, DownloadService>();
                 services.AddSingleton<ILyricService, LyricService>();
+                services.AddSingleton<LyricsWorkflow>();
                 services.AddSingleton<LxScriptEngine>();
                 services.AddSingleton<ITtsService, RoutingTtsService>();
                 services.AddSingleton<IDataStorageService>(_ =>

@@ -63,18 +63,6 @@ public enum PlayerState
 }
 
 /// <summary>
-/// 歌词行变化事件参数
-/// </summary>
-public class LyricLineChangedEventArgs : EventArgs
-{
-    public LyricLine? CurrentLine { get; set; }
-    public LyricLine? PreviousLine { get; set; }
-    public TimeSpan Position { get; set; }
-    public int CurrentIndex { get; set; }
-    public int PreviousIndex { get; set; }
-}
-
-/// <summary>
 /// 快捷键
 /// </summary>
 public class Hotkey

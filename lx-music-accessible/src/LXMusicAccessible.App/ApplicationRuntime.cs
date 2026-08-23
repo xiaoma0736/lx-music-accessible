@@ -210,6 +210,7 @@ internal sealed class ProductionStartupInitializer(string dataDirectory) : IStar
         _ = services.GetRequiredService<IMusicSourceService>();
         _ = services.GetRequiredService<IDownloadService>();
         _ = services.GetRequiredService<ILyricService>();
+        _ = services.GetRequiredService<LyricsWorkflow>();
         _ = services.GetRequiredService<IHotkeyManager>();
         _ = services.GetRequiredService<IPlaylistImportService>();
         cancellationToken.ThrowIfCancellationRequested();

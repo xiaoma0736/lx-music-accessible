@@ -15,11 +15,6 @@ public class LyricService : ILyricService
     private readonly ConcurrentDictionary<string, LyricResult> _cache = new();
     // ConcurrentDictionary 不允许 null 值，未命中（已搜索无果）单独用标记集记录，避免同一首歌反复搜索
     private readonly ConcurrentDictionary<string, byte> _missed = new();
-    private Lyric? _currentLyric;
-    private int _currentIndex = -1;
-
-    public event EventHandler<LyricLineChangedEventArgs>? LineChanged;
-
     public LyricService(ILogger<LyricService> logger, IMusicSourceService musicSource)
     {
         _logger = logger;
@@ -116,28 +111,36 @@ public class LyricService : ILyricService
     }
 
     /// <summary>解析脚本源返回的原始 LRC 文本（含翻译），无时间戳时整段作为无时间歌词</summary>
-    private static Lyric? ParseLrc(LxLyricRaw raw)
+    internal static Lyric? ParseLrc(LxLyricRaw raw)
     {
         var lines = new List<LyricLine>();
         var tMap = ParseTranslate(raw.Tlyric);
         foreach (var line in raw.Lyric.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            var m = System.Text.RegularExpressions.Regex.Match(line.Trim(), @"^\[(\d{2}):(\d{2})(?:\.(\d+))?\](.*)");
-            if (!m.Success) continue;
-            var min = int.Parse(m.Groups[1].Value);
-            var sec = int.Parse(m.Groups[2].Value);
-            var ms = m.Groups[3].Success ? int.Parse(m.Groups[3].Value.PadRight(3, '0')[..3]) : 0;
-            var idx = min * 60000 + sec * 1000 + ms;
-            lines.Add(new LyricLine
+            var trimmed = line.Trim();
+            var matches = System.Text.RegularExpressions.Regex.Matches(
+                trimmed,
+                @"\[(\d{1,3}):(\d{2})(?:[.:](\d+))?\]");
+            if (matches.Count == 0) continue;
+            var text = trimmed[(matches[^1].Index + matches[^1].Length)..].Trim();
+            foreach (System.Text.RegularExpressions.Match match in matches)
             {
-                Time = new TimeSpan(0, 0, min, sec, ms),
-                Text = m.Groups[4].Value.Trim(),
-                Translation = tMap.TryGetValue(idx, out var t) ? t : null
-            });
+                var time = ParseTimestamp(match);
+                lines.Add(new LyricLine
+                {
+                    Time = time,
+                    Text = text,
+                    Translation = tMap.TryGetValue((int)time.TotalMilliseconds, out var translation)
+                        ? translation
+                        : null
+                });
+            }
         }
         if (lines.Count == 0 && !string.IsNullOrWhiteSpace(raw.Lyric))
             lines.Add(new LyricLine { Time = TimeSpan.Zero, Text = raw.Lyric.Trim() });
-        return lines.Count > 0 ? new Lyric { Lines = lines } : null;
+        return lines.Count > 0
+            ? new Lyric { Lines = lines.OrderBy(line => line.Time).ToList() }
+            : null;
     }
 
     private static Dictionary<int, string> ParseTranslate(string? tLrc)
@@ -146,14 +149,29 @@ public class LyricService : ILyricService
         if (string.IsNullOrWhiteSpace(tLrc)) return map;
         foreach (var line in tLrc.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            var m = System.Text.RegularExpressions.Regex.Match(line.Trim(), @"^\[(\d{2}):(\d{2})(?:\.(\d+))?\](.*)");
-            if (m.Success)
+            var trimmed = line.Trim();
+            var matches = System.Text.RegularExpressions.Regex.Matches(
+                trimmed,
+                @"\[(\d{1,3}):(\d{2})(?:[.:](\d+))?\]");
+            if (matches.Count > 0)
             {
-                var idx = int.Parse(m.Groups[1].Value) * 60000 + int.Parse(m.Groups[2].Value) * 1000;
-                map[idx] = m.Groups[4].Value.Trim();
+                var text = trimmed[(matches[^1].Index + matches[^1].Length)..].Trim();
+                foreach (System.Text.RegularExpressions.Match match in matches)
+                    map[(int)ParseTimestamp(match).TotalMilliseconds] = text;
             }
         }
         return map;
+    }
+
+    private static TimeSpan ParseTimestamp(System.Text.RegularExpressions.Match match)
+    {
+        var minutes = int.Parse(match.Groups[1].Value);
+        var seconds = int.Parse(match.Groups[2].Value);
+        var fraction = match.Groups[3].Success
+            ? match.Groups[3].Value.PadRight(3, '0')[..3]
+            : "0";
+        return TimeSpan.FromMilliseconds(
+            minutes * 60000L + seconds * 1000L + int.Parse(fraction));
     }
 
     /// <summary>跨平台搜索：按 标题+歌手 检索并对每个源取歌词，标题/歌手相似度打分取最优</summary>
@@ -186,54 +204,4 @@ public class LyricService : ILyricService
         return null;
     }
 
-    // ================================================================
-    //  当前播放歌词状态（供界面高亮/朗读）
-    // ================================================================
-
-    public LyricLine? GetCurrentLine(TimeSpan position)
-    {
-        if (_currentLyric == null || _currentLyric.Lines.Count == 0)
-            return null;
-
-        for (int i = 0; i < _currentLyric.Lines.Count; i++)
-        {
-            if (position >= _currentLyric.Lines[i].Time)
-            {
-                if (i != _currentIndex)
-                {
-                    var previousIndex = _currentIndex;
-                    var previousLine = previousIndex >= 0 ? _currentLyric.Lines[previousIndex] : null;
-                    _currentIndex = i;
-                    LineChanged?.Invoke(this, new LyricLineChangedEventArgs
-                    {
-                        CurrentLine = _currentLyric.Lines[i],
-                        PreviousLine = previousLine,
-                        CurrentIndex = i,
-                        PreviousIndex = previousIndex
-                    });
-                }
-                return _currentLyric.Lines[i];
-            }
-        }
-        return null;
-    }
-
-    public List<LyricLine> GetAllLines() => _currentLyric?.Lines ?? new List<LyricLine>();
-
-    public void SetLyric(Lyric lyric)
-    {
-        _currentLyric = lyric;
-        _currentIndex = -1;
-        _logger.LogInformation("设置歌词，共 {Count} 行", lyric.Lines.Count);
-    }
-
-    public void Reset()
-    {
-        _currentLyric = null;
-        _currentIndex = -1;
-    }
-
-    public Lyric? GetCurrentLyric() => _currentLyric;
-
-    public int GetCurrentIndex() => _currentIndex;
 }

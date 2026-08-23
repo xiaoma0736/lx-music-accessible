@@ -28,7 +28,7 @@ public partial class MainWindow : Window
     private readonly IHotkeyManager _hotkeyManager;
     private readonly ITtsService _ttsService;
     private readonly IMusicSourceService _musicSourceService;
-    private readonly ILyricService _lyricService;
+    private readonly LyricsWorkflow _lyrics;
     private readonly IDownloadService _downloadService;
     private readonly IDataStorageService _dataStorageService;
     private readonly IProcessLauncher _processLauncher;
@@ -43,9 +43,6 @@ public partial class MainWindow : Window
     private string _defaultQuality = "128k";
     private string _defaultDownloadQuality = "128k";
     private string _currentPlayingQuality = "128k"; // 最近一次播放使用的音质（查看歌曲详情用）
-    private bool _lyricAnnounce = true;
-    private bool _lyricAutoScroll = true;
-
     private bool _voiceAnnouncementEnabled = true;
     private bool _settingsLoaded = false;
     private bool _suppressPlaybackSettingChanges;
@@ -56,7 +53,6 @@ public partial class MainWindow : Window
     private bool _hotkeyConflictDialogOpen;
     private int _tabFocusToken;
     private bool _suppressTabContentFocus;
-    private bool _deviceAnnouncePending;
     private const int WM_HOTKEY = 0x0312;
 
     // ===== 小键盘误触发方向键热键修复（NumLock 关闭时小键盘 4/6/2/8 上报为方向键） =====
@@ -113,14 +109,6 @@ public partial class MainWindow : Window
     private int _rankingTotalItems = 0;
     private Ranking? _rankingSelected;
 
-    // 歌词状态
-    private Lyric? _currentLyric;
-    private int _currentLyricIndex = -1;
-    private List<LyricLineItem> _lyricLines = new();
-    private long _lyricAnnounceBlockUntilTick; // monotonic deadline (Environment.TickCount64, ms); 0 = none
-    private bool _lyricAnnounceQueued;
-    private int _lyricOffsetMs; // user lyric-time offset; positive delays selection (fixes reading ahead)
-    private Dictionary<string, int> _lyricOffsets = new();
     private LyricsWindow? _lyricsWindow;
 
     private ContextMenu _sourceContextMenu = null!;
@@ -140,7 +128,7 @@ public partial class MainWindow : Window
         IHotkeyManager hotkeyManager,
         ITtsService ttsService,
         IMusicSourceService musicSourceService,
-        ILyricService lyricService,
+        LyricsWorkflow lyrics,
         IDownloadService downloadService,
         IDataStorageService dataStorageService,
         IProcessLauncher processLauncher,
@@ -156,7 +144,7 @@ public partial class MainWindow : Window
         _hotkeyManager = hotkeyManager;
         _ttsService = ttsService;
         _musicSourceService = musicSourceService;
-        _lyricService = lyricService;
+        _lyrics = lyrics;
         _downloadService = downloadService;
         _dataStorageService = dataStorageService;
         _processLauncher = processLauncher;
@@ -170,7 +158,6 @@ public partial class MainWindow : Window
             wpfAnnouncer.Attach(LiveRegion);
         _accessibilityService.SpeechEnabled = _voiceAnnouncementEnabled;
         PlaylistImportHost.Content = _playlistImportPanel;
-        SetLyricsText("暂无歌词");
         StatusText.Text = "正在初始化...";
         InitializePlayMode();
         _positionTimer.Tick += PositionTimer_Tick;
@@ -262,137 +249,6 @@ public partial class MainWindow : Window
         var dur = _playerService.Duration;
         PositionText.Text = $"{FormatTime(pos)} / {FormatTime(dur)}";
 
-        // 播放中同步当前歌词句：歌词显示始终跟随播放位置（与“自动朗读”开关无关），朗读按开关控制
-        if (_playback.IsPlaying && _currentLyric != null && _currentLyric.Lines.Count > 0)
-        {
-            try
-            {
-                var idx = FindLyricIndex(pos);
-                bool idxChanged = idx >= 0 && idx != _currentLyricIndex;
-                if (idxChanged)
-                {
-                    _currentLyricIndex = idx;
-                    if (_lyricAutoScroll)
-                        SyncLyricsLine(idx);
-                }
-                if (idx < 0) return;
-
-                // After a seek (fast-forward/rewind/slider drag) the spoken line is
-                // deferred ~1s until the audio has fully settled at the new position
-                // (past any reader pre-roll), so the voice never runs ahead of audio.
-                bool blockOver = _lyricAnnounceBlockUntilTick <= 0 || Environment.TickCount64 >= _lyricAnnounceBlockUntilTick;
-                if (_lyricAnnounceQueued)
-                {
-                    if (blockOver)
-                    {
-                        if (_lyricAnnounce && !_deviceAnnouncePending)
-                            AnnounceLyric(_currentLyric.Lines[idx].Text);
-                        _lyricAnnounceQueued = false;
-                    }
-                }
-                else if (idxChanged && blockOver && _lyricAnnounce && !_deviceAnnouncePending)
-                {
-                    AnnounceLyric(_currentLyric.Lines[idx].Text);
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine("Lyric announce error: " + ex.Message);
-            }
-        }
-        else
-        {
-            // Clear a pending seek announcement when paused/stopped/loading or no lyrics.
-            _lyricAnnounceQueued = false;
-        }
-    }
-
-    /// <summary>按播放位置定位当前歌词行号（线性查找，歌词行按时间升序）</summary>
-    private int FindLyricIndex(TimeSpan pos)
-    {
-        if (_currentLyric == null || _currentLyric.Lines.Count == 0) return -1;
-        // Apply the user lyric-time offset: a positive offset delays lyric selection,
-        // compensating for lyrics whose timestamps are earlier than the audio (e.g.
-        // AI-generated or a different version), so lyrics stop reading ahead.
-        pos -= TimeSpan.FromMilliseconds(_lyricOffsetMs);
-        var idx = -1;
-        for (int i = 0; i < _currentLyric.Lines.Count; i++)
-        {
-            if (pos >= _currentLyric.Lines[i].Time) idx = i;
-            else break;
-        }
-        return idx;
-    }
-
-    /// <summary>Adjust the current song's lyric time offset by +-0.5s and persist it per song.
-    /// Positive offset delays the lyric selection, fixing lyrics that read ahead of the audio.</summary>
-    private void AdjustLyricOffset(int deltaMs)
-    {
-        _lyricOffsetMs = Math.Clamp(_lyricOffsetMs + deltaMs, -30000, 30000);
-        if (_playback.CurrentMusic is MusicInfo cm && !string.IsNullOrEmpty(cm.Id))
-            _lyricOffsets[$"{cm.Source}|{cm.Id}"] = _lyricOffsetMs;
-        _ = SaveLyricOffsetsAsync();
-        _currentLyricIndex = -1;
-        SyncLyricsDisplay(_playerService?.Position ?? TimeSpan.Zero);
-        var dir = deltaMs > 0 ? "\u5ef6\u540e" : "\u63d0\u524d"; // delay / advance
-        var offsetSec = _lyricOffsetMs / 1000.0;
-        Announce($"\u6b4c\u8bcd\u5df2{dir}\uff0c\u5f53\u524d\u504f\u79fb {offsetSec:+#.##;-#.##;0} \u79d2");
-    }
-
-    /// <summary>Persist the per-song lyric offsets to settings immediately.</summary>
-    private async Task SaveLyricOffsetsAsync()
-    {
-        if (_dataService == null) return;
-        try
-        {
-            var settings = await _dataService.GetSettingsAsync() ?? new UserSettings();
-            settings.LyricOffsets = _lyricOffsets;
-            await _dataService.SaveSettingsAsync(settings);
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine("Save lyric offsets failed: " + ex.Message);
-        }
-    }
-
-    /// <summary>将歌词视图同步到指定行：高亮+放大当前行并滚动到可见（不移动选中项，不影响读屏逐行浏览）</summary>
-    private void SyncLyricsLine(int idx)
-    {
-        if (idx < 0 || idx >= _lyricLines.Count) return;
-        for (var i = 0; i < _lyricLines.Count; i++)
-            _lyricLines[i].IsCurrent = i == idx;
-        _lyricsWindow?.ScrollToLine(idx);
-    }
-
-    /// <summary>
-    /// 仅立即更新歌词显示（高亮+滚动）到指定播放位置，不改变朗读状态、不朗读。
-    /// 供快进/快退/拖动进度条后即时跟随歌词使用，朗读交给下一次定时器。
-    /// </summary>
-    private void SyncLyricsDisplay(TimeSpan pos)
-    {
-        if (_currentLyric == null || _currentLyric.Lines.Count == 0 || !_lyricAutoScroll) return;
-        var idx = FindLyricIndex(pos);
-        if (idx >= 0 && idx < _lyricLines.Count)
-            SyncLyricsLine(idx);
-    }
-
-    /// <summary>After a seek, sync the lyric display immediately and defer the spoken
-    /// line to the position timer once the audio settles (~600ms), so the voice never
-    /// runs ahead of playback.</summary>
-    private void ApplySeek(TimeSpan target)
-    {
-        _currentLyricIndex = -1;
-        SyncLyricsDisplay(target);
-        _lyricAnnounceBlockUntilTick = Environment.TickCount64 + 1000;
-        _lyricAnnounceQueued = true;
-    }
-
-    /// <summary>设置歌词文本（每行一个列表项，供读屏逐行浏览/高亮当前句）</summary>
-    private void SetLyricsText(string text)
-    {
-        var lines = string.IsNullOrEmpty(text) ? new[] { "暂无歌词" } : text.Split('\n');
-        _lyricLines = lines.Select(l => new LyricLineItem { Text = l }).ToList();
-        _lyricsWindow?.SetLyrics(_lyricLines);
     }
 
     private void ClockTimer_Tick(object? sender, EventArgs e)
@@ -851,9 +707,6 @@ public partial class MainWindow : Window
                 StatusText.Text = text;
                 if (e.NewState is Models.PlayerState.Playing or Models.PlayerState.Paused or Models.PlayerState.Stopped)
                     Announce(text);
-                // 任意进入播放状态（直接播放/上一首/下一首/恢复）都刷新歌词
-                if (e.NewState == Models.PlayerState.Playing && e.CurrentMusic != null)
-                    _ = LoadLyricsAsync(e.CurrentMusic);
             });
         };
     }
@@ -887,7 +740,6 @@ public partial class MainWindow : Window
         {
             var settings = await _dataService.GetSettingsAsync();
             _loadedSettings = CloneForShutdown(settings ?? new UserSettings());
-            _lyricOffsets = settings?.LyricOffsets ?? new();
             if (settings != null)
             {
                 ApplyVolume(settings.DefaultVolume, announce: false);
@@ -910,10 +762,12 @@ public partial class MainWindow : Window
                 DataDirBox.Text = AppDataPaths.ResolveDataDir();
                 if (ThirdPartyPlayerPathBox != null)
                     ThirdPartyPlayerPathBox.Text = settings.ThirdPartyPlayerPath ?? string.Empty;
-                _lyricAnnounce = settings.LyricAutoAnnounce;
-                LyricAnnounceCheckBox.IsChecked = _lyricAnnounce;
-                _lyricAutoScroll = settings.LyricAutoScroll;
-                LyricScrollCheckBox.IsChecked = _lyricAutoScroll;
+                _lyrics.ApplySettings(
+                    settings.LyricAutoAnnounce,
+                    settings.LyricAutoScroll,
+                    settings.LyricOffsets);
+                LyricAnnounceCheckBox.IsChecked = _lyrics.AutoAnnounce;
+                LyricScrollCheckBox.IsChecked = _lyrics.AutoScroll;
                 SelectComboByTag(SearchSourceCombo, settings.DefaultSearchSource);
                 _playback.Mode = settings.ShuffleMode
                     ? PlayMode.Shuffle
@@ -1024,15 +878,15 @@ public partial class MainWindow : Window
     private void LyricAnnounceCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         if (!_settingsLoaded) return;
-        _lyricAnnounce = LyricAnnounceCheckBox.IsChecked == true;
-        Announce(_lyricAnnounce ? "已开启歌词自动朗读" : "已关闭歌词自动朗读");
+        _lyrics.AutoAnnounce = LyricAnnounceCheckBox.IsChecked == true;
+        Announce(_lyrics.AutoAnnounce ? "已开启歌词自动朗读" : "已关闭歌词自动朗读");
     }
 
     private void LyricScrollCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         if (!_settingsLoaded) return;
-        _lyricAutoScroll = LyricScrollCheckBox.IsChecked == true;
-        Announce(_lyricAutoScroll ? "已开启歌词自动滚动" : "已关闭歌词自动滚动");
+        _lyrics.AutoScroll = LyricScrollCheckBox.IsChecked == true;
+        Announce(_lyrics.AutoScroll ? "已开启歌词自动滚动" : "已关闭歌词自动滚动");
     }
 
     /// <summary>清理歌曲缓存等临时文件（%TEMP% 下的 lxmusic_*.tmp 与 lxmusic_ext_*），跳过正在占用的文件</summary>
@@ -1300,7 +1154,7 @@ public partial class MainWindow : Window
                 : 1.0;
         settings.CustomHotkeys = CloneForShutdown(_hotkeyManager.GetAllHotkeys());
         settings.OutputDeviceIndex = _playerService.CurrentOutputDeviceIndex;
-        settings.LyricOffsets = new Dictionary<string, int>(_lyricOffsets);
+        settings.LyricOffsets = new Dictionary<string, int>(_lyrics.GetOffsetsSnapshot());
         settings.HideToTrayOnAltF4 = _hideToTrayOnAltF4;
         settings.Playback = new PlaybackSessionState
         {
@@ -2118,82 +1972,6 @@ public partial class MainWindow : Window
     }
 
 
-    private async Task LoadLyricsAsync(MusicInfo music)
-    {
-        try
-        {
-            _lyricOffsetMs = _lyricOffsets.TryGetValue($"{music.Source}|{music.Id}", out var off) ? off : 0;
-            if (string.Equals(music.Source, "Local", StringComparison.OrdinalIgnoreCase))
-            {
-                SetLyricsText("暂无歌词");
-                _currentLyric = null;
-                _currentLyricIndex = -1;
-                if (_lyricsWindow is { IsVisible: true })
-                    AnnounceLyric("本地歌曲暂不支持歌词");
-                return;
-            }
-
-            if (_lyricService == null)
-            {
-                SetLyricsText("暂无歌词");
-                _currentLyric = null;
-                _currentLyricIndex = -1;
-                if (_lyricsWindow is { IsVisible: true })
-                    AnnounceLyric("当前音源不支持歌词");
-                return;
-            }
-
-            SetLyricsText("歌词加载中...");
-            _currentLyric = null;
-            _currentLyricIndex = -1;
-
-            var result = await _lyricService.GetLyricAsync(music);
-            if (result?.Lyric is { Lines.Count: > 0 } lyric)
-            {
-                _currentLyric = lyric;
-                // If the served audio is much shorter than the lyric timeline, the
-                // audio is likely a clip/partial or a different version; log it and
-                // warn once so the user knows lyrics may be out of sync with the audio.
-                var audioDurSec = _playerService?.Duration.TotalSeconds ?? 0;
-                if (audioDurSec > 0 && lyric.Lines.Count > 0)
-                {
-                    var lyricLastSec = lyric.Lines.Max(l => l.Time.TotalSeconds);
-                    if (lyricLastSec > audioDurSec + 10)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Lyric/audio duration mismatch: lyric last {lyricLastSec:F0}s vs audio {audioDurSec:F0}s ({music.Title})");
-                        if (_lyricsWindow is { IsVisible: true })
-                            AnnounceLyric("提示：当前音频时长较短，歌词可能与音频不同步");
-                    }
-                }
-                _currentLyricIndex = -1;
-                SetLyricsText(string.Join("\n", lyric.Lines.Select(l => l.Text)));
-                if (_lyricAutoScroll)
-                {
-                    var idx = FindLyricIndex(_playerService?.Position ?? TimeSpan.Zero);
-                    if (idx >= 0) SyncLyricsLine(idx);
-                }
-                if (_lyricsWindow is { IsVisible: true })
-                    AnnounceLyric(result.FromSearch
-                        ? $"已从{GetSourceDisplayName(result.SourceId)}搜索到歌词，共 {lyric.Lines.Count} 行"
-                        : $"已加载歌词，共 {lyric.Lines.Count} 行");
-            }
-            else
-            {
-                SetLyricsText("暂无歌词");
-                if (_lyricsWindow is { IsVisible: true })
-                    AnnounceLyric("未找到歌词");
-            }
-        }
-        catch
-        {
-            SetLyricsText("暂无歌词");
-            _currentLyric = null;
-            _currentLyricIndex = -1;
-            if (_lyricsWindow is { IsVisible: true })
-                AnnounceLyric("歌词加载失败");
-        }
-    }
-
     /// <summary>音源 id → 显示名称（歌词播报用）</summary>
     private static string GetSourceDisplayName(string sourceId) => sourceId.ToLowerInvariant() switch
     {
@@ -2246,33 +2024,6 @@ public partial class MainWindow : Window
         return string.IsNullOrWhiteSpace(result) ? "整张专辑" : result;
     }
 
-    /// <summary>歌词作为高频进度播报，同一活动只保留最新一句。</summary>
-    private void AnnounceLyric(string text)
-    {
-        if (string.IsNullOrEmpty(text)) return;
-        _accessibilityService.Announce(new AccessibleAnnouncement(
-            text,
-            AnnouncementKind.Progress,
-            "lyrics",
-            AnnouncementSpeech.Always));
-    }
-
-    /// <summary>朗读当前歌词行（进入歌词页时调用；无歌词则提示）</summary>
-    private void AnnounceCurrentLyricLine()
-    {
-        if (_deviceAnnouncePending) return; // 设备播报排队朗读期间不抢读
-        if (_currentLyric == null || _currentLyric.Lines.Count == 0)
-        {
-            AnnounceLyric("暂无歌词");
-            return;
-        }
-
-        var idx = FindLyricIndex(_playerService?.Position ?? TimeSpan.Zero);
-        if (idx < 0) idx = 0;
-        _currentLyricIndex = idx;
-        AnnounceLyric(_currentLyric.Lines[idx].Text);
-    }
-
     // ==================== 独立歌词窗口 ====================
 
     private LyricsWindow EnsureLyricsWindow()
@@ -2283,27 +2034,22 @@ public partial class MainWindow : Window
     }
 
     /// <summary>打开（或显示）独立歌词窗口：推送当前歌词、滚动到当前行并聚焦列表（焦点修复点）</summary>
-    private void OpenLyricsWindow(string? title = null)
+    private void OpenLyricsWindow()
     {
         var w = EnsureLyricsWindow();
         if (!w.IsVisible)
             w.Show();
-        w.SetLyrics(_lyricLines);
-        w.SetTitle(title ?? _playback.CurrentMusic?.Title ?? "");
-        var idx = _currentLyricIndex >= 0 ? _currentLyricIndex : FindLyricIndex(_playerService?.Position ?? TimeSpan.Zero);
-        if (idx >= 0)
-            w.ScrollToLine(idx);
         w.Activate();
         w.FocusLyricsList();
-        AnnounceCurrentLyricLine();
+        _lyrics.AnnounceCurrentLine();
     }
 
     /// <summary>为指定歌曲打开歌词窗口（右键“查看歌词”/Shift+回车共用）</summary>
     private async void ShowLyricsForSong(MusicInfo music)
     {
-        await LoadLyricsAsync(music);
+        if (!await _lyrics.LoadAsync(music)) return;
         Announce($"正在查看歌词：{music.Title}");
-        OpenLyricsWindow(music.Title);
+        OpenLyricsWindow();
     }
 
     /// <summary>歌词窗口内局部热键处理：匹配局部快捷键并执行（F1~F12、Shift+F7/F8 等），返回是否已处理</summary>
@@ -3595,9 +3341,9 @@ public partial class MainWindow : Window
 
     private void NextDeviceMenu_Click(object sender, RoutedEventArgs e) => SwitchOutputDevice(1);
 
-    private void LyricDelayMenu_Click(object sender, RoutedEventArgs e) => AdjustLyricOffset(500);
+    private void LyricDelayMenu_Click(object sender, RoutedEventArgs e) => _lyrics.AdjustOffset(500);
 
-    private void LyricAdvanceMenu_Click(object sender, RoutedEventArgs e) => AdjustLyricOffset(-500);
+    private void LyricAdvanceMenu_Click(object sender, RoutedEventArgs e) => _lyrics.AdjustOffset(-500);
 
     private void DownloadMenu_Click(object sender, RoutedEventArgs e) => DownloadCurrentSong();
 
@@ -4240,10 +3986,10 @@ public partial class MainWindow : Window
                 SwitchOutputDevice(-1);
                 break;
             case HotkeyActions.LyricDelay:
-                AdjustLyricOffset(500);
+                _lyrics.AdjustOffset(500);
                 break;
             case HotkeyActions.LyricAdvance:
-                AdjustLyricOffset(-500);
+                _lyrics.AdjustOffset(-500);
                 break;
             case HotkeyActions.ToggleWindow:
                 ToggleWindowVisibility();
@@ -4264,7 +4010,7 @@ public partial class MainWindow : Window
     private async void AnnounceDevice(string message)
     {
         if (string.IsNullOrEmpty(message)) return;
-        _deviceAnnouncePending = true;
+        _lyrics.SpeechSuppressed = true;
         try
         {
             Announce(message, AnnouncementKind.Status, "audio-device", AnnouncementSpeech.Queued);
@@ -4274,7 +4020,7 @@ public partial class MainWindow : Window
         catch { }
         finally
         {
-            _deviceAnnouncePending = false;
+            _lyrics.SpeechSuppressed = false;
         }
     }
 
@@ -4335,7 +4081,7 @@ public partial class MainWindow : Window
         _playerService.SeekTo(target);
         // After a seek, immediately sync the display; the spoken line is deferred to
         // the timer once the audio settles, so the voice never runs ahead of playback.
-        ApplySeek(target);
+        _lyrics.Seek(target);
         Announce($"{(seconds > 0 ? "快进" : "快退")}十秒，当前 {FormatTime(target)}");
     }
 
@@ -4548,29 +4294,6 @@ public partial class MainWindow : Window
         _clockTimer.Stop();
     }
 
-    /// <summary>歌词列表项：文本 + 是否为当前播放句（用于高亮/放大）</summary>
-    private sealed class LyricLineItem : System.ComponentModel.INotifyPropertyChanged
-    {
-        private string _text = string.Empty;
-        private bool _isCurrent;
-
-        public string Text
-        {
-            get => _text;
-            set { _text = value; OnPropertyChanged(nameof(Text)); }
-        }
-
-        public bool IsCurrent
-        {
-            get => _isCurrent;
-            set { _isCurrent = value; OnPropertyChanged(nameof(IsCurrent)); }
-        }
-
-        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
-
-        private void OnPropertyChanged(string propertyName) =>
-            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(propertyName));
-    }
 }
 
 /// <summary>

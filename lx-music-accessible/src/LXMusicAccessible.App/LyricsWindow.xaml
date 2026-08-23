@@ -23,7 +23,7 @@
                  IsTabStop="False">
             <ListBox.ItemContainerStyle>
                 <Style TargetType="ListBoxItem">
-                    <Setter Property="AutomationProperties.Name" Value="{Binding Text}"/>
+                    <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleText}"/>
                     <Setter Property="Padding" Value="4,2"/>
                     <Setter Property="FontSize" Value="16"/>
                     <Style.Triggers>
@@ -36,7 +36,7 @@
             </ListBox.ItemContainerStyle>
             <ListBox.ItemTemplate>
                 <DataTemplate>
-                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap"/>
+                    <TextBlock Text="{Binding DisplayText}" TextWrapping="Wrap"/>
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>

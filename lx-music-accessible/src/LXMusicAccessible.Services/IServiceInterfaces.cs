@@ -203,26 +203,6 @@ public interface ILyricService
     Task<LyricResult?> GetLyricAsync(
         MusicInfo music,
         CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 获取当前歌词行
-    /// </summary>
-    LyricLine? GetCurrentLine(TimeSpan position);
-
-    /// <summary>
-    /// 获取所有歌词行
-    /// </summary>
-    List<LyricLine> GetAllLines();
-
-    /// <summary>
-    /// 歌词行变化事件
-    /// </summary>
-    event EventHandler<LyricLineChangedEventArgs>? LineChanged;
-
-    /// <summary>
-    /// 设置歌词
-    /// </summary>
-    void SetLyric(Lyric lyric);
 }
 
 /// <summary>
