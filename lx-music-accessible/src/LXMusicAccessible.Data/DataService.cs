@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
 using Dapper;
 using LXMusicAccessible.Models;
+using System.Text;
 using System.Text.Json;
 
 namespace LXMusicAccessible.Data;
@@ -460,7 +461,9 @@ public class DatabaseInitializer
 /// </summary>
 internal static class SqliteDatabaseConnection
 {
-    public static async Task<SqliteConnection> OpenAsync(string dbFilePath)
+    public static async Task<SqliteConnection> OpenAsync(
+        string dbFilePath,
+        CancellationToken cancellationToken = default)
     {
         var connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
@@ -470,8 +473,10 @@ internal static class SqliteDatabaseConnection
 
         try
         {
-            await connection.OpenAsync();
-            if (await connection.QuerySingleAsync<int>("PRAGMA foreign_keys") != 1)
+            await connection.OpenAsync(cancellationToken);
+            if (await connection.QuerySingleAsync<int>(new CommandDefinition(
+                    "PRAGMA foreign_keys",
+                    cancellationToken: cancellationToken)) != 1)
                 throw new InvalidOperationException("SQLite foreign key enforcement is disabled.");
             return connection;
         }
@@ -485,6 +490,22 @@ internal static class SqliteDatabaseConnection
 
 public class DataService : IDataService
 {
+    private const int SnapshotBatchSize = 100;
+    private const string UpsertPlaylistSql = @"
+        INSERT INTO Playlists
+        (Id, Name, Description, Tags, Type, IsLocal, CreatedDate, ModifiedDate, Source, RemoteId, IsSnapshot)
+        VALUES (@Id, @Name, @Description, @Tags, @Type, @IsLocal, @CreatedDate, @ModifiedDate, @Source, @RemoteId, @IsSnapshot)
+        ON CONFLICT(Id) DO UPDATE SET
+            Name = excluded.Name,
+            Description = excluded.Description,
+            Tags = excluded.Tags,
+            Type = excluded.Type,
+            IsLocal = excluded.IsLocal,
+            CreatedDate = excluded.CreatedDate,
+            ModifiedDate = excluded.ModifiedDate,
+            Source = excluded.Source,
+            RemoteId = excluded.RemoteId,
+            IsSnapshot = excluded.IsSnapshot";
     private readonly ILogger<DataService> _logger;
     private readonly string _dataDir;
     private const string DbFileName = "lxmusic.db";
@@ -495,10 +516,12 @@ public class DataService : IDataService
         _dataDir = dataDir;
     }
 
-    private async Task<SqliteConnection> GetConnectionAsync()
+    private async Task<SqliteConnection> GetConnectionAsync(
+        CancellationToken cancellationToken = default)
     {
         return await SqliteDatabaseConnection.OpenAsync(
-            Path.Combine(_dataDir, DbFileName));
+            Path.Combine(_dataDir, DbFileName),
+            cancellationToken);
     }
 
     /// <summary>把数据库中的 Tags 文本解析为标签列表（空/无效返回空列表；兼容逗号分隔旧格式）</summary>
@@ -522,41 +545,163 @@ public class DataService : IDataService
         try { return JsonSerializer.Serialize(tags ?? new List<string>()); }
         catch { return string.Empty; }
     }
+
+    public async Task<PlaylistSnapshotReplacement> ReplacePlaylistSnapshotAsync(
+        Playlist playlist,
+        IEnumerable<MusicInfo> songs,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(playlist);
+        ArgumentNullException.ThrowIfNull(songs);
+        if (string.IsNullOrWhiteSpace(playlist.Id))
+            throw new ArgumentException("Playlist Id is required.", nameof(playlist));
+
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var connection = await GetConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                UpsertPlaylistSql,
+                CreatePlaylistParameters(playlist),
+                transaction,
+                cancellationToken: cancellationToken));
+            await connection.ExecuteAsync(new CommandDefinition(
+                "DELETE FROM PlaylistItems WHERE PlaylistId = @PlaylistId",
+                new { PlaylistId = playlist.Id },
+                transaction,
+                cancellationToken: cancellationToken));
+
+            var seen = new HashSet<(string MusicId, string MusicSource)>();
+            var batch = new List<SnapshotItem>(SnapshotBatchSize);
+            var imported = 0;
+            var skipped = 0;
+            var addedDate = DateTime.Now.ToString("o");
+
+            foreach (var music in songs)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (music is null)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                var musicId = string.IsNullOrEmpty(music.Id)
+                    ? music.PlayUrl ?? Guid.NewGuid().ToString()
+                    : music.Id;
+                var musicSource = string.IsNullOrEmpty(music.Source) ? "Local" : music.Source;
+                if (!seen.Add((musicId, musicSource)))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                batch.Add(new SnapshotItem(
+                    Guid.NewGuid().ToString(),
+                    playlist.Id,
+                    JsonSerializer.Serialize(music),
+                    musicId,
+                    musicSource,
+                    imported++,
+                    addedDate));
+
+                if (batch.Count == SnapshotBatchSize)
+                {
+                    await WriteSnapshotBatchAsync(connection, transaction, batch, cancellationToken);
+                    batch.Clear();
+                }
+            }
+
+            if (batch.Count != 0)
+                await WriteSnapshotBatchAsync(connection, transaction, batch, cancellationToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            await transaction.CommitAsync(cancellationToken);
+            return new PlaylistSnapshotReplacement(imported, skipped);
+        }
+        catch
+        {
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+            catch (Exception rollbackException)
+            {
+                _logger.LogError(rollbackException, "Failed to roll back playlist snapshot {PlaylistId}", playlist.Id);
+            }
+            throw;
+        }
+    }
+
+    private static async Task WriteSnapshotBatchAsync(
+        SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction,
+        IReadOnlyList<SnapshotItem> batch,
+        CancellationToken cancellationToken)
+    {
+        var sql = new StringBuilder(@"
+            INSERT INTO PlaylistItems
+            (Id, PlaylistId, MusicData, MusicId, MusicSource, OrderNum, AddedDate)
+            VALUES ");
+        var parameters = new DynamicParameters();
+        for (var index = 0; index < batch.Count; index++)
+        {
+            if (index != 0) sql.Append(',');
+            sql.Append($"(@Id{index}, @PlaylistId{index}, @MusicData{index}, @MusicId{index}, @MusicSource{index}, @OrderNum{index}, @AddedDate{index})");
+            var item = batch[index];
+            parameters.Add($"Id{index}", item.Id);
+            parameters.Add($"PlaylistId{index}", item.PlaylistId);
+            parameters.Add($"MusicData{index}", item.MusicData);
+            parameters.Add($"MusicId{index}", item.MusicId);
+            parameters.Add($"MusicSource{index}", item.MusicSource);
+            parameters.Add($"OrderNum{index}", item.OrderNum);
+            parameters.Add($"AddedDate{index}", item.AddedDate);
+        }
+        sql.Append(@"
+            ON CONFLICT(PlaylistId, MusicId, MusicSource) DO UPDATE SET
+                MusicData = excluded.MusicData,
+                OrderNum = excluded.OrderNum,
+                AddedDate = excluded.AddedDate");
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            sql.ToString(),
+            parameters,
+            transaction,
+            cancellationToken: cancellationToken));
+    }
+
+    private static object CreatePlaylistParameters(Playlist playlist) => new
+    {
+        playlist.Id,
+        playlist.Name,
+        playlist.Description,
+        Tags = SerializeTags(playlist.Tags),
+        Type = playlist.Type,
+        IsLocal = playlist.IsLocal ? 1 : 0,
+        CreatedDate = playlist.CreatedDate.ToString("o"),
+        ModifiedDate = playlist.ModifiedDate.ToString("o"),
+        Source = string.IsNullOrEmpty(playlist.Source) ? null : playlist.Source,
+        RemoteId = string.IsNullOrEmpty(playlist.RemoteId) ? null : playlist.RemoteId,
+        IsSnapshot = playlist.IsSnapshot ? 1 : 0
+    };
+
+    private sealed record SnapshotItem(
+        string Id,
+        string PlaylistId,
+        string MusicData,
+        string MusicId,
+        string MusicSource,
+        int OrderNum,
+        string AddedDate);
+
     public async Task SavePlaylistAsync(Playlist playlist)
     {
         _logger.LogInformation("保存播放列表: {Name}", playlist.Name);
         
         using var connection = await GetConnectionAsync();
         
-        await connection.ExecuteAsync(@"
-            INSERT INTO Playlists
-            (Id, Name, Description, Tags, Type, IsLocal, CreatedDate, ModifiedDate, Source, RemoteId, IsSnapshot)
-            VALUES (@Id, @Name, @Description, @Tags, @Type, @IsLocal, @CreatedDate, @ModifiedDate, @Source, @RemoteId, @IsSnapshot)
-            ON CONFLICT(Id) DO UPDATE SET
-                Name = excluded.Name,
-                Description = excluded.Description,
-                Tags = excluded.Tags,
-                Type = excluded.Type,
-                IsLocal = excluded.IsLocal,
-                CreatedDate = excluded.CreatedDate,
-                ModifiedDate = excluded.ModifiedDate,
-                Source = excluded.Source,
-                RemoteId = excluded.RemoteId,
-                IsSnapshot = excluded.IsSnapshot",
-            new
-            {
-                Id = playlist.Id,
-                Name = playlist.Name,
-                Description = playlist.Description,
-                Tags = SerializeTags(playlist.Tags),
-                Type = playlist.Type,
-                IsLocal = playlist.IsLocal ? 1 : 0,
-                CreatedDate = playlist.CreatedDate.ToString("o"),
-                ModifiedDate = playlist.ModifiedDate.ToString("o"),
-                Source = string.IsNullOrEmpty(playlist.Source) ? null : playlist.Source,
-                RemoteId = string.IsNullOrEmpty(playlist.RemoteId) ? null : playlist.RemoteId,
-                IsSnapshot = playlist.IsSnapshot ? 1 : 0
-            });
+        await connection.ExecuteAsync(UpsertPlaylistSql, CreatePlaylistParameters(playlist));
     }
 
     public async Task<List<Playlist>> GetPlaylistsAsync()

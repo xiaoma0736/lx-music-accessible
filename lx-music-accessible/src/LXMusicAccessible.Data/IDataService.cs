@@ -8,6 +8,15 @@ namespace LXMusicAccessible.Data;
 public interface IDataService
 {
     /// <summary>
+    /// 原子替换播放列表快照。元数据、旧项目删除和新项目写入要么全部提交，要么全部回滚。
+    /// 歌曲按 Id（缺失时按 PlayUrl）与 Source 去重并保留首次出现顺序；大型快照有界分批、单次提交。
+    /// </summary>
+    Task<PlaylistSnapshotReplacement> ReplacePlaylistSnapshotAsync(
+        Playlist playlist,
+        IEnumerable<MusicInfo> songs,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// 保存播放列表
     /// </summary>
     Task SavePlaylistAsync(Playlist playlist);
@@ -148,3 +157,5 @@ public interface IDataService
     /// </summary>
     Task SetSettingValueAsync(string key, string? value);
 }
+
+public readonly record struct PlaylistSnapshotReplacement(int ImportedCount, int SkippedCount);

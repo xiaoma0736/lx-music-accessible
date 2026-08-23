@@ -39,7 +39,11 @@ public interface IPlaylistImportService
     Task<List<MusicInfo>> GetPlaylistSongsPreviewAsync(string platformId, RemotePlaylist remote);
 
     /// <summary>把指定远程歌单导入为本地快照歌单（已存在同名同源快照则覆盖更新），返回导入结果</summary>
-    Task<PlaylistImportResult> ImportPlaylistAsync(string platformId, RemotePlaylist remote, Action<string>? announce = null);
+    Task<PlaylistImportResult> ImportPlaylistAsync(
+        string platformId,
+        RemotePlaylist remote,
+        Action<string>? announce = null,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -151,13 +155,19 @@ public class PlaylistImportService : IPlaylistImportService
         return await p.GetPlaylistSongsAsync(remote);
     }
 
-    public async Task<PlaylistImportResult> ImportPlaylistAsync(string platformId, RemotePlaylist remote, Action<string>? announce = null)
+    public async Task<PlaylistImportResult> ImportPlaylistAsync(
+        string platformId,
+        RemotePlaylist remote,
+        Action<string>? announce = null,
+        CancellationToken cancellationToken = default)
     {
         if (remote == null) throw new ArgumentNullException(nameof(remote));
+        cancellationToken.ThrowIfCancellationRequested();
         var p = GetProvider(platformId) ?? throw new InvalidOperationException("不支持的平台");
 
         announce?.Invoke($"正在获取歌单《{remote.Name}》的歌曲，请稍候...");
         var songs = await p.GetPlaylistSongsAsync(remote);
+        cancellationToken.ThrowIfCancellationRequested();
 
         // 已存在同名同源同远端 id 的快照歌单则覆盖更新，否则新建
         var remoteKey = $"{platformId}_{remote.RemoteId}";
@@ -170,10 +180,8 @@ public class PlaylistImportService : IPlaylistImportService
         if (existing != null)
         {
             playlist = existing;
-            await _dataService.ClearPlaylistItemsAsync(playlist.Id);
             playlist.Name = remote.Name;
             playlist.ModifiedDate = DateTime.Now;
-            await _dataService.SavePlaylistAsync(playlist);
         }
         else
         {
@@ -190,17 +198,19 @@ public class PlaylistImportService : IPlaylistImportService
                 CreatedDate = DateTime.Now,
                 ModifiedDate = DateTime.Now
             };
-            await _dataService.SavePlaylistAsync(playlist);
         }
 
-        await _dataService.AddSongsToPlaylistAsync(playlist.Id, songs);
+        var replacement = await _dataService.ReplacePlaylistSnapshotAsync(
+            playlist,
+            songs,
+            cancellationToken);
 
         return new PlaylistImportResult
         {
             PlaylistId = playlist.Id,
             PlaylistName = playlist.Name,
-            ImportedCount = songs.Count,
-            SkippedCount = 0
+            ImportedCount = replacement.ImportedCount,
+            SkippedCount = replacement.SkippedCount
         };
     }
 }
