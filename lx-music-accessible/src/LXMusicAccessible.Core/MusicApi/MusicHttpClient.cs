@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 namespace LXMusicAccessible.Core.MusicApi;
 
 /// <summary>
-/// HTTP瀹㈡埛绔湇鍔★紝鐢ㄤ簬闊充箰API璋冪敤
+/// HTTP 客户端服务，用于音乐 API 调用
 /// </summary>
 public class MusicHttpClient : IDisposable
 {
@@ -52,7 +52,7 @@ public class MusicHttpClient : IDisposable
     }
 
     /// <summary>
-    /// 鍙戦€丟ET璇锋眰
+    /// 发送 GET 请求
     /// </summary>
     public async Task<string> GetAsync(string url, Dictionary<string, string>? parameters = null, Dictionary<string, string>? headers = null)
     {
@@ -91,7 +91,7 @@ public class MusicHttpClient : IDisposable
     }
 
     /// <summary>
-    /// 鍙戦€丟ET璇锋眰锛堟硾鍨嬶級
+    /// 发送 GET 请求并反序列化响应
     /// </summary>
     public async Task<T?> GetAsync<T>(string url, Dictionary<string, string>? headers = null)
     {
@@ -125,7 +125,7 @@ public class MusicHttpClient : IDisposable
     }
 
     /// <summary>
-    /// 鍙戦€丳OST璇锋眰
+    /// 发送 POST 请求
     /// </summary>
     public async Task<T?> PostAsync<T>(string url, object? data = null, Dictionary<string, string>? headers = null)
     {
@@ -165,7 +165,7 @@ public class MusicHttpClient : IDisposable
     }
 
     /// <summary>
-    /// 鍙戦€丳OST琛ㄥ崟璇锋眰
+    /// 发送 POST 表单请求
     /// </summary>
     public async Task<T?> PostFormAsync<T>(string url, Dictionary<string, string> formData, Dictionary<string, string>? headers = null)
     {
@@ -199,10 +199,6 @@ public class MusicHttpClient : IDisposable
             throw;
         }
     }
-
-    /// <summary>
-    /// 璁剧疆瓒呮椂鏃堕棿
-    /// </summary>
 
     /// <summary>
     /// 发送 weapi 加密 POST 请求（网易云音乐）
@@ -417,13 +413,14 @@ public class MusicHttpClient : IDisposable
         }
         catch { }
     }
+    /// <summary>设置超时时间</summary>
     public void SetTimeout(TimeSpan timeout)
     {
         _httpClient.Timeout = timeout;
     }
 
     /// <summary>
-    /// 璁剧疆User-Agent
+    /// 设置 User-Agent
     /// </summary>
     public void SetUserAgent(string userAgent)
     {

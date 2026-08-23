@@ -3,7 +3,7 @@
 namespace LXMusicAccessible.Models;
 
 /// <summary>
-/// 闊充箰淇℃伅
+/// 音乐信息
 /// </summary>
 public class MusicInfo
 {
@@ -72,7 +72,7 @@ public class MusicInfo
 }
 
 /// <summary>
-/// 姝岃瘝琛?
+/// 歌词行
 /// </summary>
 public class LyricLine
 {
@@ -82,7 +82,7 @@ public class LyricLine
 }
 
 /// <summary>
-/// 姝岃瘝
+/// 歌词
 /// </summary>
 public class Lyric
 {
@@ -93,7 +93,7 @@ public class Lyric
 }
 
 /// <summary>
-/// 鎾斁鍒楄〃椤?
+/// 播放列表项
 /// </summary>
 public class PlaylistItem
 {
@@ -105,7 +105,7 @@ public class PlaylistItem
 }
 
 /// <summary>
-/// 鎾斁鍒楄〃
+/// 播放列表
 /// </summary>
 public class Playlist
 {
@@ -136,19 +136,19 @@ public class Playlist
 }
 
 /// <summary>
-/// 鎾斁鍒楄〃绫诲瀷
+/// 播放列表类型
 /// </summary>
 public enum PlaylistType
 {
-    User,           // 鐢ㄦ埛鍒涘缓鐨勬瓕鍗?
-    Local,          // 鏈湴瀵煎叆鐨勬瓕鍗?
-    System,         // 绯荤粺榛樿姝屽崟
-    Cloud,          // 浜戠鍚屾姝屽崟
-    Recommend       // 鎺ㄨ崘姝屽崟
+    User,           // 用户创建的歌单
+    Local,          // 本地导入的歌单
+    System,         // 系统默认歌单
+    Cloud,          // 云端同步歌单
+    Recommend       // 推荐歌单
 }
 
 /// <summary>
-/// 鎼滅储缁撴灉
+/// 搜索结果
 /// </summary>
 public class SearchResult
 {
@@ -163,7 +163,7 @@ public class SearchResult
 }
 
 /// <summary>
-/// 鎺掕姒?
+/// 排行榜
 /// </summary>
 public class Ranking
 {
@@ -182,19 +182,19 @@ public class Ranking
 }
 
 /// <summary>
-/// 鎺掕姒滅被鍨?
+/// 排行榜类型
 /// </summary>
 public enum RankingType
 {
-    Hot,            // 鐑瓕姒?
-    New,            // 鏂版瓕姒?
-    Original,       // 鍘熷垱姒?
-    Rising,         // 椋欏崌姒?
-    Other           // 鍏朵粬
+    Hot,            // 热歌榜
+    New,            // 新歌榜
+    Original,       // 原创榜
+    Rising,         // 飙升榜
+    Other           // 其他
 }
 
 /// <summary>
-/// 闊充箰婧?
+/// 音乐源
 /// </summary>
 public class MusicSource
 {
@@ -246,14 +246,14 @@ public class MusicSource
 }
 
 /// <summary>
-/// 闊充箰婧愮被鍨?
+/// 音乐源类型
 /// </summary>
 public enum SourceType
 {
-    BuiltIn,        // 鍐呯疆闊充箰婧?
-    Custom,         // 鑷畾涔夐煶涔愭簮
-    Network,        // 缃戠粶闊充箰婧?
-    Local,          // 鏈湴闊充箰婧?
+    BuiltIn,        // 内置音乐源
+    Custom,         // 自定义音乐源
+    Network,        // 网络音乐源
+    Local,          // 本地音乐源
     Bundled
 }
 
@@ -280,7 +280,7 @@ public sealed record ScriptActivationResult(
     string Message);
 
 /// <summary>
-/// 姝屽崟鍒嗙被
+/// 歌单分类
 /// </summary>
 public class PlaylistCategory
 {
@@ -295,7 +295,7 @@ public class PlaylistCategory
 }
 
 /// <summary>
-/// 姝屽崟鏍囩
+/// 歌单标签
 /// </summary>
 public class PlaylistTag
 {
@@ -309,37 +309,37 @@ public class PlaylistTag
 }
 
 /// <summary>
-/// 闊充箰婧愭灇涓?
+/// 音乐源枚举
 /// </summary>
 public enum MusicSourceEnum
 {
     /// <summary>
-    /// 缃戞槗浜戦煶涔愭簮
+    /// 网易云音乐源
     /// </summary>
     Netease,
 
     /// <summary>
-    /// QQ闊充箰婧?
+    /// QQ 音乐源
     /// </summary>
     QQ,
 
     /// <summary>
-    /// 閰风嫍闊充箰婧?
+    /// 酷狗音乐源
     /// </summary>
     Kugou,
 
     /// <summary>
-    /// 閰锋垜闊充箰婧?
+    /// 酷我音乐源
     /// </summary>
     Kuwo,
 
     /// <summary>
-    /// 鍜挄闊充箰婧?
+    /// 咪咕音乐源
     /// </summary>
     Migu,
 
     /// <summary>
-    /// 鍏ㄩ儴
+    /// 全部
     /// </summary>
     All
 }

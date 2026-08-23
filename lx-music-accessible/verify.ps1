@@ -98,10 +98,8 @@ try {
     Write-Host "== 6/6 Text checks =="
     & git diff --check
     if ($LASTEXITCODE -ne 0) { throw "Git text checks failed." }
-    if (Test-Path -LiteralPath $textCheck) {
-        & $textCheck
-        if ($LASTEXITCODE -ne 0) { throw "Repository text checks failed." }
-    }
+    & $textCheck
+    if ($LASTEXITCODE -ne 0) { throw "Repository text checks failed." }
 
     Write-Host "Local quality gate passed."
 }

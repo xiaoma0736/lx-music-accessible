@@ -196,10 +196,11 @@ public class NeteaseMusicService : IMusicApi
 
     // ========== 播放URL ==========
 
-        /// <summary>??????????</summary>
+    /// <summary>获取支持的音质列表</summary>
     public List<string> GetSupportedQualities() => new() { "128k", "192k", "320k", "flac", "flac24bit" };
 
-public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128k")
+    /// <summary>获取播放 URL</summary>
+    public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128k")
     {
         try
         {

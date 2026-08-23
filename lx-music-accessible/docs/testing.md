@@ -6,7 +6,7 @@ Run the deterministic Windows gate locally from the repository root:
 .\verify.ps1
 ```
 
-The script restores packages, rejects High/Critical dependency advisories, builds Release, runs tests with public-network proxy variables pointed at a closed loopback port, requires at least one executed test, and performs applicable text checks. T08 may add `scripts/check-text.ps1`; the gate runs it automatically when present.
+The script restores packages, rejects High/Critical dependency advisories, builds Release, runs tests with public-network proxy variables pointed at a closed loopback port, requires at least one executed test, and runs `scripts/check-text.ps1`. The text check strictly decodes tracked first-party text as UTF-8 and rejects replacement characters, Unicode private-use characters, long question-mark runs, and known mojibake fragments. Binary files are excluded by the explicit text-extension allowlist; production source files are not excluded.
 
 `LXMusicAccessible.Tests` starts the same `ApplicationHost` registrations as the desktop app. Its fixture uses a unique temporary data directory and real file-backed SQLite, then removes that directory when the fixture is disposed. HTTP requests must be registered with the rejecting handler; unknown requests fail immediately. Browser/process launches, announcements, speech, and native audio are replaced by recording adapters.
 

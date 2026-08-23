@@ -631,11 +631,11 @@ public class MusicSourceService : IMusicSourceService
     public List<MusicSource> GetAllSources() => _sources.Where(s => !s.IsSystemHidden).ToList();
     public List<MusicSource> GetEnabledSources() => _sources.Where(s => s.IsEnabled).OrderBy(s => s.Priority).ToList();
 
-    /// <summary>??????????????????</summary>
+    /// <summary>获取默认音源</summary>
     public MusicSource? GetDefaultSource()
         => _sources.FirstOrDefault(s => s.IsDefault) ?? _sources.FirstOrDefault(s => string.Equals(s.Id, "netease", StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>?????????????</summary>
+    /// <summary>设置默认音源</summary>
     public void SetDefaultSource(string id)
     {
         var target = _sources.FirstOrDefault(source =>
@@ -649,7 +649,7 @@ public class MusicSourceService : IMusicSourceService
         RaiseSourcesChanged();
     }
 
-    /// <summary>???????????????????</summary>
+    /// <summary>获取指定音源支持的音质列表</summary>
     public Task<List<string>> GetQualitiesForSourceAsync(string sourceId)
     {
         var list = new List<string>();
@@ -836,7 +836,7 @@ public class MusicSourceService : IMusicSourceService
         catch (Exception ex) { _logger.LogError(ex, "音源脚本重载失败: {Id}", s.Id); return false; }
     }
 
-    /// <summary>???????????????/?????</summary>
+    /// <summary>持久化全部音源配置，失败时记录日志</summary>
     public async Task PersistSourcesAsync()
     {
         try { await _dataService.SaveMusicSourcesAsync(_sources); }
