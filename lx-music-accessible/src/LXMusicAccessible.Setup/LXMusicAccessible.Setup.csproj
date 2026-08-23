@@ -19,6 +19,7 @@
   <ItemGroup>
     <InstallerApplicationProject Include="..\LXMusicAccessible.App\LXMusicAccessible.App.csproj" />
     <ProjectReference Include="@(InstallerApplicationProject)" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\LXMusicAccessible.Core\LXMusicAccessible.Core.csproj" />
     <EmbeddedResource Include="$(InstallerPayloadArchive)" LogicalName="LXMusicAccessible.Setup.payload.zip" />
   </ItemGroup>
 

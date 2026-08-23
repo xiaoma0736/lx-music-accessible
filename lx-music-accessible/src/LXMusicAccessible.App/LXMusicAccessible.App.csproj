@@ -51,6 +51,7 @@
     <Content Include="Native\PRISM_LICENSE.txt" Link="PRISM_LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
     <!-- 使用说明文档：随包复制到输出目录 Docs\ 下 -->
     <Content Include="Docs\使用说明.md" Link="Docs\使用说明.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="UninstallCleanup.ps1" Link="UninstallCleanup.ps1" CopyToOutputDirectory="PreserveNewest" />
     <!-- 固定备用脚本作为 Core 嵌入资源交付，并在运行前校验内置 SHA-256。 -->
     <!-- 赞助二维码（用户扫码赞助入口；请用真实收款码替换 Resources\sponsor_qr.png 后重新构建） -->
     <Resource Include="Resources\sponsor_qr.png" />

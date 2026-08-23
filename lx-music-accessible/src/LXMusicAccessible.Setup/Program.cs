@@ -1,8 +1,8 @@
 using System;
 using System.Drawing;
 using System.IO;
-using System.IO.Compression;
 using System.Windows.Forms;
+using LXMusicAccessible.Core;
 
 namespace LXMusicAccessible.Setup;
 
@@ -12,11 +12,18 @@ namespace LXMusicAccessible.Setup;
 /// </summary>
 static class Program
 {
-    private const string DefaultInstallDir = @"D:\Program Files\LxMusic";
-
     [STAThread]
-    static int Main()
+    static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--install-parent")
+            return RunNonInteractiveInstall(args[1]);
+        if (args.Length == 3 && args[0] == "--uninstall-target" && Guid.TryParse(args[2], out var ownershipId))
+        {
+            var result = InstallDirectoryOwnership.Clean(args[1], ownershipId);
+            Console.WriteLine($"accepted={result.Accepted}; failures={result.Failures.Count}; preserved={result.PreservedUnknownContent}");
+            return result.Succeeded ? 0 : 1;
+        }
+
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
@@ -29,12 +36,12 @@ static class Program
             return 1;
         }
 
-        var (target, createDesktopShortcut) = ShowInstallDialog();
-        if (string.IsNullOrEmpty(target)) return 0; // 用户取消
+        var (parent, createDesktopShortcut) = ShowInstallDialog();
+        if (string.IsNullOrEmpty(parent)) return 0; // 用户取消
 
         try
         {
-            Directory.CreateDirectory(target);
+            var target = InstallDirectoryOwnership.ResolveTargetDirectory(parent);
             var exe = Path.Combine(target, "落雪音乐无障碍版V2.0.exe");
             if (File.Exists(exe))
             {
@@ -46,10 +53,7 @@ static class Program
             MessageBox.Show($"正在安装到：\n{target}\n\n解压完成后会自动创建开始菜单快捷方式，请稍候...",
                 "落雪音乐无障碍版 安装", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-            using (var archive = new ZipArchive(payloadStream, ZipArchiveMode.Read))
-            {
-                archive.ExtractToDirectory(target, overwriteFiles: true);
-            }
+            InstallDirectoryOwnership.InstallFromZip(payloadStream, parent);
 
             var startMenu = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs");
@@ -86,7 +90,24 @@ static class Program
         }
     }
 
-    /// <summary>显示安装目录选择对话框：默认 D:\Program Files\LxMusic，可浏览修改，可勾选创建桌面快捷方式</summary>
+    private static int RunNonInteractiveInstall(string parent)
+    {
+        try
+        {
+            using var payload = typeof(Program).Assembly.GetManifestResourceStream("LXMusicAccessible.Setup.payload.zip")
+                ?? throw new InvalidDataException("Installer payload is missing.");
+            var installed = InstallDirectoryOwnership.InstallFromZip(payload, parent);
+            Console.WriteLine($"path={installed.Path}; ownership={installed.OwnershipId}");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return 1;
+        }
+    }
+
+    /// <summary>选择父目录；实际安装位置始终是该目录下的专属应用子目录。</summary>
     private static (string Dir, bool CreateDesktopShortcut) ShowInstallDialog()
     {
         using var form = new Form
@@ -99,13 +120,13 @@ static class Program
             ClientSize = new Size(590, 185)
         };
 
-        var lblDir = new Label { Text = "安装目录：", Location = new Point(18, 28), AutoSize = true };
-        var txtDir = new TextBox { Text = DefaultInstallDir, Location = new Point(105, 24), Width = 335 };
+        var lblDir = new Label { Text = "安装位置：", Location = new Point(18, 28), AutoSize = true };
+        var txtDir = new TextBox { Text = InstallDirectoryOwnership.DefaultParentDirectory, Location = new Point(105, 24), Width = 335 };
         var btnBrowse = new Button { Text = "浏览...", Location = new Point(448, 22), Width = 102 };
         var chkDesktop = new CheckBox { Text = "创建桌面快捷方式", Location = new Point(105, 62), AutoSize = true, Checked = true };
         var lblNote = new Label
         {
-            Text = "程序将安装到所选目录，并创建开始菜单快捷方式。",
+            Text = $"程序将在所选位置创建 {InstallDirectoryOwnership.ApplicationDirectoryName} 专属子目录。",
             Location = new Point(105, 92), AutoSize = true, ForeColor = SystemColors.GrayText
         };
         var btnOk = new Button { Text = "安装", DialogResult = DialogResult.OK, Location = new Point(366, 130), Width = 96, Height = 30 };
@@ -117,7 +138,7 @@ static class Program
             {
                 using var dlg = new FolderBrowserDialog
                 {
-                    Description = "请选择 落雪音乐无障碍版 的安装目录",
+                    Description = "请选择安装位置（程序会创建专属子目录）",
                     UseDescriptionForTitle = true
                 };
                 if (Directory.Exists(txtDir.Text.Trim())) dlg.SelectedPath = txtDir.Text.Trim();
@@ -137,7 +158,7 @@ static class Program
         if (form.ShowDialog() != DialogResult.OK) return ("", false);
 
         var dir = txtDir.Text.Trim().TrimEnd('\\', '/').Trim();
-        if (string.IsNullOrEmpty(dir)) dir = DefaultInstallDir;
+        if (string.IsNullOrEmpty(dir)) dir = InstallDirectoryOwnership.DefaultParentDirectory;
         return (dir, chkDesktop.Checked);
     }
 

@@ -44,6 +44,11 @@ function Assert-ZipPayload([string]$ArchivePath, [string[]]$RequiredFiles) {
     }
 }
 
+function Invoke-Installer([string]$Installer, [string[]]$Arguments, [string]$FailureMessage) {
+    & $Installer @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "$FailureMessage ExitCode=$LASTEXITCODE" }
+}
+
 $releaseRoot = [System.IO.Path]::GetFullPath($releaseRoot)
 $staging = [System.IO.Path]::GetFullPath($staging)
 if (-not $releaseRoot.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
@@ -94,6 +99,7 @@ $requiredPayload = @(
     "prism.dll",
     "tolk.dll",
     "PRISM_LICENSE.txt",
+    "UninstallCleanup.ps1",
     $userDocuments[0]
 )
 
@@ -106,7 +112,7 @@ foreach ($knownOutput in @($selfContainedZip, $frameworkDependentZip, $setupArti
     if (Test-Path -LiteralPath $knownOutput) { Remove-Item -LiteralPath $knownOutput -Force }
 }
 
-Write-Host "== 1/5 Build installer and its explicit self-contained payload =="
+Write-Host "== 1/6 Build installer and its explicit self-contained payload =="
 Invoke-DotNet @(
     "publish", $setupProject,
     "--configuration", "Release",
@@ -132,7 +138,7 @@ if (-not $appVersion.StartsWith($version, [System.StringComparison]::Ordinal) -o
     throw "Artifact version mismatch. Expected $version; app=$appVersion; setup=$setupVersion"
 }
 
-Write-Host "== 2/5 Build framework-dependent application =="
+Write-Host "== 2/6 Build framework-dependent application =="
 Invoke-DotNet @(
     "publish", $appProject,
     "--configuration", "Release",
@@ -142,7 +148,7 @@ Invoke-DotNet @(
 ) "Framework-dependent publish failed."
 Assert-Payload $frameworkDependent $requiredPayload
 
-Write-Host "== 3/5 Create release artifacts =="
+Write-Host "== 3/6 Create release artifacts =="
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
     $selfContained,
     $selfContainedZip,
@@ -155,7 +161,7 @@ Write-Host "== 3/5 Create release artifacts =="
     $false)
 Copy-Item -LiteralPath $setupExecutable -Destination $setupArtifact -Force
 
-Write-Host "== 4/5 Validate artifact contents and versions =="
+Write-Host "== 4/6 Validate artifact contents and versions =="
 Assert-ZipPayload $selfContainedZip $requiredPayload
 Assert-ZipPayload $frameworkDependentZip $requiredPayload
 
@@ -187,7 +193,7 @@ $manifest = [ordered]@{
 $manifestJson = $manifest | ConvertTo-Json -Depth 5
 [System.IO.File]::WriteAllText($manifestPath, $manifestJson + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
 
-Write-Host "== 5/5 Verify recorded SHA-256 values =="
+Write-Host "== 5/6 Verify recorded SHA-256 values =="
 $savedManifest = [System.IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json
 if ($savedManifest.version -ne $version) { throw "Release manifest version mismatch." }
 foreach ($artifact in $savedManifest.artifacts) {
@@ -195,6 +201,63 @@ foreach ($artifact in $savedManifest.artifacts) {
     $actualHash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actualHash -ne $artifact.sha256) {
         throw "Release artifact hash mismatch: $($artifact.file)"
+    }
+}
+
+Write-Host "== 6/6 Smoke-test the generated installer lifecycle =="
+$smokeParent = Join-Path $staging "installer-smoke-parent"
+$smokeTarget = Join-Path $smokeParent "LXMusicAccessible"
+$parentSentinel = Join-Path $smokeParent "parent-sentinel.txt"
+$dataSentinel = Join-Path $smokeParent "retained-user-data.txt"
+$unknownInstallFile = Join-Path $smokeTarget "unknown-user-file.txt"
+$smokeParent = [System.IO.Path]::GetFullPath($smokeParent)
+$stagingPrefix = $staging.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+if (-not $smokeParent.StartsWith($stagingPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+    [System.IO.Path]::GetFileName($smokeParent) -ne "installer-smoke-parent") {
+    throw "Installer smoke path is unsafe: $smokeParent"
+}
+
+try {
+    New-Item -ItemType Directory -Path $smokeParent -Force | Out-Null
+    [System.IO.File]::WriteAllText($parentSentinel, "keep")
+    [System.IO.File]::WriteAllText($dataSentinel, "keep")
+
+    Invoke-Installer $setupArtifact @("--install-parent", $smokeParent) "First install smoke test failed."
+    $markerPath = Join-Path $smokeTarget ".lxmusic-install-owner.json"
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) { throw "Install ownership marker is missing." }
+    $firstMarker = [System.IO.File]::ReadAllText($markerPath) | ConvertFrom-Json
+
+    Invoke-Installer $setupArtifact @("--install-parent", $smokeParent) "Upgrade smoke test failed."
+    $upgradedMarker = [System.IO.File]::ReadAllText($markerPath) | ConvertFrom-Json
+    if ($upgradedMarker.OwnershipId -ne $firstMarker.OwnershipId) {
+        throw "Upgrade changed the install ownership identity."
+    }
+
+    [System.IO.File]::WriteAllText($unknownInstallFile, "keep")
+    Invoke-Installer $setupArtifact @("--uninstall-target", $smokeTarget, $firstMarker.OwnershipId) "Preserving uninstall smoke test failed."
+    if (-not (Test-Path -LiteralPath $unknownInstallFile -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $parentSentinel -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $dataSentinel -PathType Leaf)) {
+        throw "Uninstall removed unknown, parent, or retained user data."
+    }
+
+    Remove-Item -LiteralPath $unknownInstallFile -Force
+    Invoke-Installer $setupArtifact @("--uninstall-target", $smokeTarget, $firstMarker.OwnershipId) "Complete uninstall smoke test failed."
+    Invoke-Installer $setupArtifact @("--uninstall-target", $smokeTarget, $firstMarker.OwnershipId) "Repeated uninstall smoke test failed."
+    if (Test-Path -LiteralPath $smokeTarget) { throw "Complete uninstall left the application directory behind." }
+    if (-not (Test-Path -LiteralPath $parentSentinel -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $dataSentinel -PathType Leaf)) {
+        throw "Complete uninstall removed parent or retained user data."
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $smokeParent) {
+        $resolvedSmokeParent = (Resolve-Path -LiteralPath $smokeParent).Path
+        if (-not $resolvedSmokeParent.StartsWith($stagingPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+            [System.IO.Path]::GetFileName($resolvedSmokeParent) -ne "installer-smoke-parent") {
+            throw "Refusing unsafe installer smoke cleanup: $resolvedSmokeParent"
+        }
+        Remove-Item -LiteralPath $resolvedSmokeParent -Recurse -Force
     }
 }
 

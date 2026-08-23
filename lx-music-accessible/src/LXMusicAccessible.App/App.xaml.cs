@@ -8,6 +8,7 @@ using Serilog;
 using System.Windows;
 using LXMusicAccessible.Services;
 using LXMusicAccessible.Data;
+using LXMusicAccessible.Core;
 
 namespace LXMusicAccessible.App;
 
@@ -218,8 +219,29 @@ public partial class App : Application
                 "落雪音乐无障碍版 卸载", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
             if (confirm != MessageBoxResult.Yes) return;
 
+            var installDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
+            if (!InstallDirectoryOwnership.TryRead(installDir, out var ownedInstall))
+            {
+                MessageBox.Show(
+                    "无法证明当前程序目录属于本安装器。为保护现有文件，程序目录、快捷方式和卸载登记均已保留。旧版或便携版请手动迁移后再处置原目录。",
+                    "落雪音乐无障碍版 卸载",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
             var delData = MessageBox.Show("是否同时删除所有用户数据（歌单、收藏、设置、音源、搜索历史等）？\n选择“否”将保留数据，便于以后重新安装后继续使用。",
                 "落雪音乐无障碍版 卸载", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes) == MessageBoxResult.Yes;
+
+            if (!ScheduleInstallDirDeletion(ownedInstall))
+            {
+                MessageBox.Show(
+                    "无法启动安全清理程序，安装目录、快捷方式和卸载登记均已保留。",
+                    "落雪音乐无障碍版 卸载",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
 
             DeleteShortcuts("落雪音乐无障碍版*.lnk");
             DeleteUninstallRegistry();
@@ -233,10 +255,11 @@ public partial class App : Application
                     MessageBoxImage.Warning);
             }
 
-            var installDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
-            ScheduleInstallDirDeletion(installDir);
-
-            MessageBox.Show("卸载完成。", "落雪音乐无障碍版 卸载", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(
+                "卸载登记已移除；关闭此窗口后将完成安装文件清理。任何未知或被修改的内容都会保留在原目录。",
+                "落雪音乐无障碍版 卸载",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
@@ -313,24 +336,33 @@ public partial class App : Application
         return results.Count > 0
             && results.All(result => result.Succeeded && !result.PreservedUnknownContent);
     }
-    private static void ScheduleInstallDirDeletion(string installDir)
+    private static bool ScheduleInstallDirDeletion(OwnedInstallDirectory install)
     {
         try
         {
+            const string cleanupFileName = "UninstallCleanup.ps1";
+            var cleanupRecord = install.Files.SingleOrDefault(file =>
+                string.Equals(file.RelativePath, cleanupFileName, StringComparison.OrdinalIgnoreCase));
+            var source = Path.Combine(install.Path, cleanupFileName);
+            if (cleanupRecord is null || !InstallDirectoryOwnership.MatchesManifest(install.Path, cleanupRecord))
+                return false;
+
             var ps1 = Path.Combine(Path.GetTempPath(), $"lxmusic_uninstall_{Guid.NewGuid():N}.ps1");
-            var escaped = installDir.Replace("'", "''");
-            var script = $"Start-Sleep -Seconds 3\nRemove-Item -LiteralPath '{escaped}' -Recurse -Force -ErrorAction SilentlyContinue\nRemove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue\n";
-            File.WriteAllText(ps1, script, new System.Text.UTF8Encoding(false));
+            File.Copy(source, ps1, overwrite: false);
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{ps1}\"",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{ps1}\" -InstallDirectory \"{install.Path}\" -OwnershipId \"{install.OwnershipId:D}\" -WaitForProcessId {Environment.ProcessId}",
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            System.Diagnostics.Process.Start(psi);
+            return System.Diagnostics.Process.Start(psi) is not null;
         }
-        catch { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            System.Diagnostics.Debug.WriteLine($"Safe install cleanup could not start: {ex.GetType().Name}");
+            return false;
+        }
     }
     protected override async void OnExit(ExitEventArgs e)
     {
