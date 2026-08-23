@@ -20,6 +20,7 @@ A ticket is on the implementation frontier when all of its blockers are closed a
 
 - Each implementation issue is permanently owned by exactly one dedicated sub-agent from first read through closure.
 - The ticket sub-agent performs the implementation, regression tests, self-review against both the issue specification and repository standards, fixes review findings, runs final validation, creates the final commit, records the commit and validation summary, and closes the issue.
+- Final validation uses the repository's local `verify.ps1` gate. The ticket comment records exact local results and executed test count; no remote workflow or PR check is required or expected.
 - A ticket sub-agent must not spawn another agent for implementation or review. If more work is needed in a later turn, resume the same canonical agent instead of creating a replacement.
 - The root agent only selects tickets on the implementation frontier, starts or resumes the owning sub-agent, monitors status, and maintains the dependency graph. It does not edit implementation files, perform the ticket review, create the ticket commit, or close the issue on the sub-agent's behalf.
 - The shared worktree permits only one active implementation ticket at a time. Start the next ticket only after the current ticket has committed its work and left the worktree in a handoff-safe state.
