@@ -204,8 +204,9 @@ internal sealed class ProductionStartupInitializer(string dataDirectory) : IStar
             throw new InvalidOperationException(migration.Message);
 
         _ = services.GetRequiredService<IDataService>();
-        _ = services.GetRequiredService<IAccessibleAnnouncer>();
-        _ = services.GetRequiredService<IMusicPlayerService>();
+            _ = services.GetRequiredService<IAccessibleAnnouncer>();
+            _ = services.GetRequiredService<IPlaybackCoordinator>();
+            _ = services.GetRequiredService<IAudioPlaybackControl>();
         _ = services.GetRequiredService<IMusicSourceService>();
         _ = services.GetRequiredService<IDownloadService>();
         _ = services.GetRequiredService<ILyricService>();

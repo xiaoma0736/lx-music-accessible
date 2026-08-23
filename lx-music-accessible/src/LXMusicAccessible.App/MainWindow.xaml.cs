@@ -21,8 +21,8 @@ namespace LXMusicAccessible.App;
 public partial class MainWindow : Window
 {
     private readonly IAccessibleAnnouncer _accessibilityService;
-    private readonly IMusicPlayerService _playerService;
-    private ListBox? _playbackSourceList;
+    private readonly IPlaybackCoordinator _playback;
+    private readonly IAudioPlaybackControl _playerService;
     private bool _autoPaging;
     private readonly IDataService _dataService;
     private readonly IHotkeyManager _hotkeyManager;
@@ -46,15 +46,9 @@ public partial class MainWindow : Window
     private bool _lyricAnnounce = true;
     private bool _lyricAutoScroll = true;
 
-    // 播放失败自动换源状态
-    private bool _playRetrying;
-    private bool _retryDialogOpen;
-    private readonly HashSet<string> _retryAttemptedKeys = new(StringComparer.OrdinalIgnoreCase);
-
-    private PlayMode _currentPlayMode = PlayMode.Sequential;
-    private readonly string[] _playModeNames = { "顺序播放", "循环播放", "随机播放" };
     private bool _voiceAnnouncementEnabled = true;
     private bool _settingsLoaded = false;
+    private bool _suppressPlaybackSettingChanges;
     private bool _hideToTrayOnAltF4 = false;
     private System.Windows.Forms.NotifyIcon? _trayIcon;
     private ObservableCollection<HotkeySettingItem> _hotkeySettingItems = new();
@@ -140,7 +134,8 @@ public partial class MainWindow : Window
 
     public MainWindow(
         IAccessibleAnnouncer accessibilityService,
-        IMusicPlayerService playerService,
+        IPlaybackCoordinator playback,
+        IAudioPlaybackControl playerService,
         IDataService dataService,
         IHotkeyManager hotkeyManager,
         ITtsService ttsService,
@@ -155,6 +150,7 @@ public partial class MainWindow : Window
         MusicBrowseWorkflow browseWorkflow)
     {
         _accessibilityService = accessibilityService;
+        _playback = playback;
         _playerService = playerService;
         _dataService = dataService;
         _hotkeyManager = hotkeyManager;
@@ -182,7 +178,7 @@ public partial class MainWindow : Window
         AssignSongContextMenus();
         _sourceContextMenu = (ContextMenu)FindResource("SourceContextMenu");
         _sourceContextMenu.PreviewKeyUp += ContextMenu_PreviewKeyUp;
-        _playerService.QueueCompleted += PlayerService_QueueCompleted;
+        _playback.QueueCompleted += PlayerService_QueueCompleted;
         _hotkeyManager.HotkeyPressed += HotkeyManager_HotkeyPressed;
         _hotkeyManager.HotkeysRegistrationFailed += HotkeyManager_HotkeysRegistrationFailed;
         _musicSourceService.SourcesChanged += MusicSourceService_SourcesChanged;
@@ -267,7 +263,7 @@ public partial class MainWindow : Window
         PositionText.Text = $"{FormatTime(pos)} / {FormatTime(dur)}";
 
         // 播放中同步当前歌词句：歌词显示始终跟随播放位置（与“自动朗读”开关无关），朗读按开关控制
-        if (_playerService.IsPlaying && _currentLyric != null && _currentLyric.Lines.Count > 0)
+        if (_playback.IsPlaying && _currentLyric != null && _currentLyric.Lines.Count > 0)
         {
             try
             {
@@ -333,7 +329,7 @@ public partial class MainWindow : Window
     private void AdjustLyricOffset(int deltaMs)
     {
         _lyricOffsetMs = Math.Clamp(_lyricOffsetMs + deltaMs, -30000, 30000);
-        if (_playerService?.CurrentMusic is MusicInfo cm && !string.IsNullOrEmpty(cm.Id))
+        if (_playback.CurrentMusic is MusicInfo cm && !string.IsNullOrEmpty(cm.Id))
             _lyricOffsets[$"{cm.Source}|{cm.Id}"] = _lyricOffsetMs;
         _ = SaveLyricOffsetsAsync();
         _currentLyricIndex = -1;
@@ -832,10 +828,9 @@ public partial class MainWindow : Window
 
     private void SetupEventHandlers()
     {
-        if (_playerService == null) return;
-        _playerService.StateChanged += (s, e) =>
+        _playback.StateChanged += (s, e) =>
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(() =>
             {
                 if (e.CurrentMusic != null)
                 {
@@ -920,12 +915,11 @@ public partial class MainWindow : Window
                 _lyricAutoScroll = settings.LyricAutoScroll;
                 LyricScrollCheckBox.IsChecked = _lyricAutoScroll;
                 SelectComboByTag(SearchSourceCombo, settings.DefaultSearchSource);
-                if (_playerService != null)
-                {
-                    _playerService.IsShuffleMode = settings.ShuffleMode;
-                    _playerService.IsLoopMode = settings.LoopMode;
-                    _playerService.DefaultQuality = _defaultQuality;
-                }
+                _playback.Mode = settings.ShuffleMode
+                    ? PlayMode.Shuffle
+                    : settings.LoopMode ? PlayMode.Loop : PlayMode.Sequential;
+                _playback.DefaultQuality = _defaultQuality;
+                UpdatePlayModeDisplay();
 
                 _hideToTrayOnAltF4 = settings.HideToTrayOnAltF4;
                 if (CloseBehaviorCombo != null)
@@ -972,14 +966,20 @@ public partial class MainWindow : Window
 
     private void ShufflePlayCheckBox_Changed(object sender, RoutedEventArgs e)
     {
-        if (!_settingsLoaded || _playerService == null) return;
-        _playerService.IsShuffleMode = ShufflePlayCheckBox.IsChecked == true;
+        if (!_settingsLoaded || _suppressPlaybackSettingChanges) return;
+        _playback.Mode = ShufflePlayCheckBox.IsChecked == true
+            ? PlayMode.Shuffle
+            : RepeatPlayCheckBox.IsChecked == true ? PlayMode.Loop : PlayMode.Sequential;
+        UpdatePlayModeDisplay();
     }
 
     private void RepeatPlayCheckBox_Changed(object sender, RoutedEventArgs e)
     {
-        if (!_settingsLoaded || _playerService == null) return;
-        _playerService.IsLoopMode = RepeatPlayCheckBox.IsChecked == true;
+        if (!_settingsLoaded || _suppressPlaybackSettingChanges) return;
+        _playback.Mode = ShufflePlayCheckBox.IsChecked == true
+            ? PlayMode.Shuffle
+            : RepeatPlayCheckBox.IsChecked == true ? PlayMode.Loop : PlayMode.Sequential;
+        UpdatePlayModeDisplay();
     }
 
     private void VoiceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1002,7 +1002,7 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(q)) return;
         _defaultQuality = q;
         if (_playerService != null)
-            _playerService.DefaultQuality = q;
+            _playback.DefaultQuality = q;
     }
 
     private void SpeechRateCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1304,12 +1304,12 @@ public partial class MainWindow : Window
         settings.HideToTrayOnAltF4 = _hideToTrayOnAltF4;
         settings.Playback = new PlaybackSessionState
         {
-            CurrentMusic = _playerService.CurrentMusic is null
+            CurrentMusic = _playback.CurrentMusic is null
                 ? null
-                : CapturePlaybackMusic(_playerService.CurrentMusic),
+                : CapturePlaybackMusic(_playback.CurrentMusic),
             PositionSeconds = Math.Max(0, _playerService.Position.TotalSeconds),
-            WasPlaying = _playerService.IsPlaying,
-            WasPaused = _playerService.IsPaused
+            WasPlaying = _playback.IsPlaying,
+            WasPaused = _playback.IsPaused
         };
         var sources = CloneForShutdown(_musicSourceService.GetAllSources());
 
@@ -1321,7 +1321,7 @@ public partial class MainWindow : Window
         UninstallNumpadHook();
         _musicSourceService.SourcesChanged -= MusicSourceService_SourcesChanged;
         _musicSourceService.ScriptUpdateAlert -= MusicSourceService_ScriptUpdateAlert;
-        _playerService.QueueCompleted -= PlayerService_QueueCompleted;
+        _playback.QueueCompleted -= PlayerService_QueueCompleted;
         _downloadService.TaskCompleted -= DownloadService_TaskCompleted;
         DisposeTrayIcon();
 
@@ -1968,61 +1968,24 @@ public partial class MainWindow : Window
         var q = string.IsNullOrEmpty(quality) ? _defaultQuality : quality;
         _currentPlayingQuality = q; // 记录本次播放音质，供"查看歌曲详情"展示
         Announce($"正在播放：{music.Title}，{music.Artist}");
-        try
-        {
-            // 记录播放来源列表（用于队列播完后的自动翻页续播）
-            if (sourceList != null)
-                _playbackSourceList = sourceList;
-            // 设置播放队列（整列表顺序播放）：从来源列表构建队列，使上一首/下一首/自动连播作用于整个列表
-            if (sourceList != null)
-                ApplyPlaybackQueue(sourceList, music);
-
-            bool isLocal = string.Equals(music.Source, "Local", StringComparison.OrdinalIgnoreCase);
-            // 本地歌曲直接用本地路径；在线歌曲：无链接或指定了新音质时重新取链
-            if ((!isLocal && string.IsNullOrEmpty(music.PlayUrl)) || (!isLocal && quality != null))
-            {
-                var playUrl = await _musicSourceService!.GetPlayUrlAsync(music, music.Source, q);
-                if (string.IsNullOrEmpty(playUrl))
-                {
-                    // 当前音源拿不到播放链接 → 自动切换其他音源/脚本重试，失败再询问
-                    await HandlePlayFailureAsync(music, q);
-                    return;
-                }
-                music.PlayUrl = playUrl;
-            }
-
-            if (string.IsNullOrWhiteSpace(music.PlayUrl))
-            {
-                Announce("无法播放：歌曲地址为空");
-                return;
-            }
-
-            await _playerService.PlayAsync(music.PlayUrl, music);
-
-            // 播放器加载/播放失败（URL 无效、文件损坏等）→ 自动换源重试
-            if (!_playerService.IsPlaying)
-            {
-                await HandlePlayFailureAsync(music, q);
-                return;
-            }
-
-            UpdatePlayingUI(music);
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"播放失败: {ex.Message}");
-            await HandlePlayFailureAsync(music, q);
-        }
+        var queue = sourceList is null ? new List<MusicInfo> { music } : GetListSongs(sourceList);
+        var result = await _playback.PlayAsync(new PlaybackRequest(
+            queue,
+            music,
+            q,
+            GetPlaybackOrigin(sourceList),
+            ForceResolve: quality is not null));
+        if (result.Status == PlaybackResultStatus.Playing && result.Music is not null)
+            UpdatePlayingUI(result.Music);
     }
 
-    /// <summary>根据来源列表构建播放队列并定位当前歌曲，使上一首/下一首/自动连播作用于整个列表</summary>
-    private void ApplyPlaybackQueue(ListBox list, MusicInfo current)
+    private PlaybackQueueOrigin GetPlaybackOrigin(ListBox? list) => list switch
     {
-        if (_playerService == null || list == null) return;
-        var queue = GetListSongs(list);
-        if (queue.Count == 0) return;
-        _playerService.SetQueue(queue, current);
-    }
+        _ when ReferenceEquals(list, SearchResultsList) => PlaybackQueueOrigin.Search,
+        _ when ReferenceEquals(list, CategorySongsList) => PlaybackQueueOrigin.Category,
+        _ when ReferenceEquals(list, RankingSongsList) => PlaybackQueueOrigin.Ranking,
+        _ => PlaybackQueueOrigin.Static
+    };
 
     /// <summary>取列表中的歌曲项（排除“上一页/下一页”伪条目）</summary>
     private static List<MusicInfo> GetListSongs(ListBox? list)
@@ -2037,21 +2000,17 @@ public partial class MainWindow : Window
     // ==================== 自动翻页续播 ====================
 
     /// <summary>当前播放队列已播完（自动连播/手动下一首到列表末尾）：对分页列表自动加载下一页并续播</summary>
-    private void PlayerService_QueueCompleted(object? sender, EventArgs e)
+    private void PlayerService_QueueCompleted(object? sender, PlaybackQueueCompletedEventArgs e)
     {
-        Dispatcher.BeginInvoke(new Action(ContinuePlayToNextPage),
+        Dispatcher.BeginInvoke(new Action(() => ContinuePlayToNextPage(e.Origin)),
             System.Windows.Threading.DispatcherPriority.Background);
     }
 
     /// <summary>根据播放来源列表自动翻页续播；非分页列表（播放列表/收藏/本地）队列播完即停</summary>
-    private void ContinuePlayToNextPage()
+    private void ContinuePlayToNextPage(PlaybackQueueOrigin origin)
     {
-        if (_playerService == null) return;
         if (_autoPaging) return; // 已在自动翻页加载中，忽略重复触发（防连按“下一首”导致重复翻页）
-        var list = _playbackSourceList;
-        if (list == null) return;
-
-        if (ReferenceEquals(list, SearchResultsList))
+        if (origin == PlaybackQueueOrigin.Search)
         {
             if (_browseWorkflow.CurrentSearch.HasMore)
             {
@@ -2059,7 +2018,7 @@ public partial class MainWindow : Window
                 _ = ContinueSearchPageAsync();
             }
         }
-        else if (ReferenceEquals(list, CategorySongsList) && _categorySelectedPlaylist != null)
+        else if (origin == PlaybackQueueOrigin.Category && _categorySelectedPlaylist != null)
         {
             var totalPages = EstimateTotalPages(_categoryTotalItems, 20, _categoryCurrentPage, GetListSongs(CategorySongsList).Count);
             if (_categoryCurrentPage < totalPages)
@@ -2068,7 +2027,7 @@ public partial class MainWindow : Window
                 _ = ContinueCategoryPageAsync();
             }
         }
-        else if (ReferenceEquals(list, RankingSongsList) && _rankingSelected != null)
+        else if (origin == PlaybackQueueOrigin.Ranking && _rankingSelected != null)
         {
             var totalPages = EstimateTotalPages(_rankingTotalItems, 20, _rankingCurrentPage, GetListSongs(RankingSongsList).Count);
             if (_rankingCurrentPage < totalPages)
@@ -2147,157 +2106,6 @@ public partial class MainWindow : Window
         _ = PlayMusicAsync(songs[0], null, list);
     }
 
-    /// <summary>播放失败处理：自动跨源重试一次，仍失败则弹窗询问是否继续搜索</summary>
-    private async Task HandlePlayFailureAsync(MusicInfo music, string quality)
-    {
-        if (_playRetrying || _retryDialogOpen) return;
-        if (music == null || _playerService == null) return;
-
-        bool isLocal = string.Equals(music.Source, "Local", StringComparison.OrdinalIgnoreCase);
-        if (isLocal)
-        {
-            Announce("本地歌曲播放失败");
-            return;
-        }
-
-        var key = $"{music.Source}|{MusicSearchMatcher.Normalize(music.Title)}|{MusicSearchMatcher.Normalize(music.Artist)}|{music.Duration}";
-        if (_retryAttemptedKeys.Contains(key))
-        {
-            // 已自动重试过（防循环），直接询问用户
-            await AskAutoSearchAsync(music, quality);
-            return;
-        }
-        _retryAttemptedKeys.Add(key);
-
-        _playRetrying = true;
-        try
-        {
-            Announce("该歌曲无法播放，正在自动搜索其他音源...");
-            var alt = await FindAndPlayFromOtherSourceAsync(music, quality);
-            if (alt != null)
-            {
-                Announce($"已自动切换到{GetSourceDisplayName(alt.Source)}播放");
-            }
-            else
-            {
-                Announce("未找到可播放的相同歌曲");
-                await AskAutoSearchAsync(music, quality);
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"自动换源失败: {ex.Message}");
-            await AskAutoSearchAsync(music, quality);
-        }
-        finally
-        {
-            _playRetrying = false;
-        }
-    }
-
-    /// <summary>在其他平台搜索相同歌曲并尝试播放（自动换源）</summary>
-    /// <summary>Candidate source ids for auto-switch: enabled built-in sources by
-    /// priority, excluding the current one.</summary>
-    private IEnumerable<string> GetSwitchCandidates(string currentSource)
-    {
-        if (_musicSourceService == null) yield break;
-        foreach (var sv in _musicSourceService.GetEnabledSources())
-        {
-            if (!sv.IsEnabled) continue;
-            if (string.Equals(sv.Id, currentSource, StringComparison.OrdinalIgnoreCase)) continue;
-            if (sv.Type != SourceType.BuiltIn) continue;
-            yield return sv.Id;
-        }
-    }
-
-    private async Task<MusicInfo?> FindAndPlayFromOtherSourceAsync(MusicInfo music, string quality)
-    {
-        if (_musicSourceService == null || _playerService == null) return null;
-        foreach (var sid in GetSwitchCandidates(music.Source))
-        {
-            if (string.Equals(sid, music.Source, StringComparison.OrdinalIgnoreCase)) continue;
-            try
-            {
-                var results = await _musicSourceService.SearchAsync(
-                    MusicSearchMatcher.BuildSearchKeyword(music), 1, 20, "song", sid);
-                // 严格匹配：只接受与当前歌曲同一首的候选，绝不静默播放不同歌曲
-                foreach (var best in MusicSearchMatcher.FindBestMatches(results.Items, music))
-                {
-                    if (!MusicSearchMatcher.IsSameSong(best, music)) continue;
-                    var url = await _musicSourceService.GetPlayUrlAsync(best, best.Source, quality);
-                    if (string.IsNullOrEmpty(url)) continue;
-                    best.PlayUrl = url;
-                    // 先替换播放队列中的原条目（同曲换源，保持上一首/下一首位置正确），再播放
-                    _playerService.ReplaceQueueItem(music, best);
-                    await _playerService.PlayAsync(url, best);
-                    if (_playerService.IsPlaying)
-                    {
-                        UpdatePlayingUI(best);
-                        return best;
-                    }
-                }
-            }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("自动换源失败 [" + sid + "]: " + ex.Message); }
-        }
-        return null;
-    }
-    /// <summary>弹窗询问：是否自动搜索其他音源的相同歌曲</summary>
-    private async Task AskAutoSearchAsync(MusicInfo music, string quality)
-    {
-        if (_retryDialogOpen || _playerService == null) return;
-        _retryDialogOpen = true;
-        try
-        {
-            var answer = MessageBox.Show(
-                $"《{music.Title} - {music.Artist}》无法播放。\n是否自动搜索其他音源的相同歌曲？",
-                "播放失败", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (answer == MessageBoxResult.Yes)
-            {
-                Announce("正在搜索其他音源的相同歌曲...");
-                var ok = await SearchAndPlayAnywhereAsync(music, quality);
-                Announce(ok ? "已找到并开始播放其他音源版本" : "未找到可播放的相同歌曲");
-            }
-        }
-        finally
-        {
-            _retryDialogOpen = false;
-        }
-    }
-
-    /// <summary>全平台搜索并尝试播放第一个可播放版本（弹窗确认后使用）</summary>
-    /// <summary>全平台搜索并尝试播放同一首歌（弹窗确认后使用；严格匹配，绝不播放不同歌曲）</summary>
-    private async Task<bool> SearchAndPlayAnywhereAsync(MusicInfo music, string quality)
-    {
-        if (_musicSourceService == null || _playerService == null) return false;
-        foreach (var sid in GetSwitchCandidates(music.Source))
-        {
-            try
-            {
-                var results = await _musicSourceService.SearchAsync(
-                    MusicSearchMatcher.BuildSearchKeyword(music), 1, 20, "song", sid);
-                foreach (var candidate in MusicSearchMatcher.FindBestMatches(results.Items, music))
-                {
-                    if (!MusicSearchMatcher.IsSameSong(candidate, music)) continue;
-                    try
-                    {
-                        var url = await _musicSourceService.GetPlayUrlAsync(candidate, candidate.Source, quality);
-                        if (string.IsNullOrEmpty(url)) continue;
-                        candidate.PlayUrl = url;
-                        _playerService.ReplaceQueueItem(music, candidate);
-                        await _playerService.PlayAsync(url, candidate);
-                        if (_playerService.IsPlaying)
-                        {
-                            UpdatePlayingUI(candidate);
-                            return true;
-                        }
-                    }
-                    catch { }
-                }
-            }
-            catch { }
-        }
-        return false;
-    }
     /// <summary>播放成功后的界面刷新（标题/歌手/专辑/播放按钮/内部列表）</summary>
     private void UpdatePlayingUI(MusicInfo music)
     {
@@ -2306,7 +2114,7 @@ public partial class MainWindow : Window
         CurrentArtist.Text = music.Artist;
         CurrentAlbum.Text = music.Album;
         UpdatePlayPauseMenuHeader("暂停");
-        // 播放队列由 ApplyPlaybackQueue 管理；不再把播放中的歌曲写入本地收藏歌单
+        // 队列由播放协调模块拥有；界面只呈现当前歌曲。
     }
 
 
@@ -2481,7 +2289,7 @@ public partial class MainWindow : Window
         if (!w.IsVisible)
             w.Show();
         w.SetLyrics(_lyricLines);
-        w.SetTitle(title ?? _playerService?.CurrentMusic?.Title ?? "");
+        w.SetTitle(title ?? _playback.CurrentMusic?.Title ?? "");
         var idx = _currentLyricIndex >= 0 ? _currentLyricIndex : FindLyricIndex(_playerService?.Position ?? TimeSpan.Zero);
         if (idx >= 0)
             w.ScrollToLine(idx);
@@ -2999,9 +2807,9 @@ public partial class MainWindow : Window
             {
                 // 正在播放/加载的歌曲：显示当前播放真实音质（按 Source+Id 判定为当前播放器歌曲）。
                 // 优先读取播放器流的实际音质（编码格式+平均码率），读取不到时回退到请求音质。
-                bool isCurrent = _playerService?.CurrentMusic != null
-                    && string.Equals(music.Source, _playerService.CurrentMusic.Source, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(music.Id, _playerService.CurrentMusic.Id, StringComparison.OrdinalIgnoreCase);
+                bool isCurrent = _playback.CurrentMusic != null
+                    && string.Equals(music.Source, _playback.CurrentMusic.Source, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(music.Id, _playback.CurrentMusic.Id, StringComparison.OrdinalIgnoreCase);
                 if (isCurrent)
                 {
                     var actual = _playerService?.ActualQuality;
@@ -3049,7 +2857,7 @@ public partial class MainWindow : Window
         if (music == null) return;
         await PlayMusicAsync(music, q, GetContextList(sender));
         _defaultQuality = q;
-        if (_playerService != null) _playerService.DefaultQuality = q;
+        _playback.DefaultQuality = q;
         SelectComboByTag(DefaultQualityCombo, q);
         Announce($"已将默认播放音质设为 {TranslateQuality(q)}");
     }
@@ -3430,8 +3238,6 @@ public partial class MainWindow : Window
     {
         if (list == null) return;
         _externalSongLists.Remove(list);
-        if (ReferenceEquals(_playbackSourceList, list))
-            _playbackSourceList = null;
         list.KeyDown -= ExternalSongList_KeyDown;
         list.PreviewMouseRightButtonDown -= SongList_PreviewMouseRightButtonDown;
         list.ContextMenuOpening -= SongList_ContextMenuOpening;
@@ -3680,25 +3486,24 @@ public partial class MainWindow : Window
 
     private void PlayPauseButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_playerService == null) return;
-        if (_playerService.IsPlaying)
+        if (_playback.IsPlaying)
         {
-            _playerService.Pause();
+            _playback.Pause();
             UpdatePlayPauseMenuHeader("播放");
             Announce("已暂停");
         }
-        else if (_playerService.IsPaused && _playerService.CurrentMusic != null)
+        else if (_playback.IsPaused && _playback.CurrentMusic != null)
         {
             // 恢复播放：不重新加载，直接从暂停位置继续
-            _ = _playerService.ResumeAsync();
+            _ = _playback.ResumeAsync();
             UpdatePlayPauseMenuHeader("暂停");
             Announce("继续播放");
         }
         else
         {
-            if (_playerService.CurrentMusic != null)
+            if (_playback.CurrentMusic != null)
             {
-                _ = _playerService.PlayAsync(_playerService.CurrentMusic.PlayUrl ?? "", _playerService.CurrentMusic);
+                _ = _playback.ReplayAsync();
                 UpdatePlayPauseMenuHeader("暂停");
                 Announce("继续播放");
             }
@@ -3718,44 +3523,63 @@ public partial class MainWindow : Window
 
     private void NextButton_Click(object sender, RoutedEventArgs e)
     {
-        _playerService?.Next();
+        _ = _playback.NextAsync();
         Announce("下一首");
     }
 
     private void PreviousButton_Click(object sender, RoutedEventArgs e)
     {
-        _playerService?.Previous();
+        _ = _playback.PreviousAsync();
         Announce("上一首");
     }
 
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
-        _playerService?.Stop();
+        _playback.Stop();
         UpdatePlayPauseMenuHeader("播放");
         Announce("已停止");
     }
 
     private void PlayModeButton_Click(object sender, RoutedEventArgs e)
     {
-        _currentPlayMode = (PlayMode)(((int)_currentPlayMode + 1) % 3);
-        UpdatePlayModeDisplay();
-        if (_playerService != null)
+        _playback.Mode = _playback.Mode switch
         {
-            _playerService.IsLoopMode = _currentPlayMode == PlayMode.Loop;
-            _playerService.IsShuffleMode = _currentPlayMode == PlayMode.Shuffle;
+            PlayMode.Sequential => PlayMode.Loop,
+            PlayMode.Loop => PlayMode.SingleLoop,
+            PlayMode.SingleLoop => PlayMode.Shuffle,
+            _ => PlayMode.Sequential
+        };
+        _suppressPlaybackSettingChanges = true;
+        try
+        {
+            ShufflePlayCheckBox.IsChecked = _playback.Mode == PlayMode.Shuffle;
+            RepeatPlayCheckBox.IsChecked = _playback.Mode is PlayMode.Loop or PlayMode.SingleLoop;
         }
-        Announce($"播放模式：{_playModeNames[(int)_currentPlayMode]}");
+        finally
+        {
+            _suppressPlaybackSettingChanges = false;
+        }
+        UpdatePlayModeDisplay();
+        Announce($"播放模式：{GetPlayModeName(_playback.Mode)}");
     }
 
     /// <summary>同步“播放控制”菜单与信息面板中的播放模式显示（原右侧按钮已移除）</summary>
     private void UpdatePlayModeDisplay()
     {
-        var name = _playModeNames[(int)_currentPlayMode];
+        var name = GetPlayModeName(_playback.Mode);
         if (MenuPlayModeItem != null)
             MenuPlayModeItem.Header = $"播放模式：{name}（F1）";
         if (CurrentPlayModeText != null)
             CurrentPlayModeText.Text = $"播放模式：{name}";
     }
+
+    private static string GetPlayModeName(PlayMode mode) => mode switch
+    {
+        PlayMode.Loop => "列表循环",
+        PlayMode.SingleLoop => "单曲循环",
+        PlayMode.Shuffle => "随机播放",
+        _ => "顺序播放"
+    };
 
     // ==================== 播放控制菜单处理 ====================
 
@@ -4498,7 +4322,7 @@ public partial class MainWindow : Window
 
     private void SeekBy(double seconds)
     {
-        if (_playerService == null || _playerService.CurrentMusic == null || !_playerService.IsPlaying)
+        if (_playback.CurrentMusic == null || !_playback.IsPlaying)
         {
             Announce("当前没有正在播放的歌曲");
             return;
@@ -4538,7 +4362,7 @@ public partial class MainWindow : Window
 
     private async void DownloadCurrentSong()
     {
-        var music = GetSelectedSongInFocusedList() ?? _playerService?.CurrentMusic;
+        var music = GetSelectedSongInFocusedList() ?? _playback.CurrentMusic;
         if (music == null)
         {
             Announce("没有可下载的歌曲");

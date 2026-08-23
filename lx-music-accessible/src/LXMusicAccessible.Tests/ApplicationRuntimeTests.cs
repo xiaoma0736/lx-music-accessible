@@ -205,7 +205,8 @@ public sealed class ApplicationRuntimeTests
             events.Add("database");
             _ = services.GetRequiredService<IDataService>();
             _ = services.GetRequiredService<IMusicSourceService>();
-            _ = services.GetRequiredService<IMusicPlayerService>();
+            _ = services.GetRequiredService<IPlaybackCoordinator>();
+            _ = services.GetRequiredService<IAudioPlaybackControl>();
             cancellationToken.ThrowIfCancellationRequested();
             events.Add("required-modules");
         }

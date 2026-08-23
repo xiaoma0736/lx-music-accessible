@@ -44,36 +44,68 @@ public readonly record struct AccessibleAnnouncement(
     public static implicit operator AccessibleAnnouncement(string text) => new(text);
 }
 
-/// <summary>
-/// 音乐播放器服务接口
-/// </summary>
-public interface IMusicPlayerService
+public enum PlaybackQueueOrigin
 {
-    /// <summary>
-    /// 播放指定音乐
-    /// </summary>
-    Task PlayAsync(string url, MusicInfo musicInfo);
+    Static,
+    Search,
+    Category,
+    Ranking
+}
 
-    /// <summary>
-    /// 暂停播放
-    /// </summary>
+public enum PlaybackResultStatus
+{
+    Playing,
+    QueueCompleted,
+    Failed,
+    Superseded,
+    NoChange
+}
+
+/// <summary>一个完整的播放意图；模块据此原子替换队列并播放所选歌曲。</summary>
+public sealed record PlaybackRequest(
+    IReadOnlyList<MusicInfo> Queue,
+    MusicInfo Selection,
+    string Quality = "128k",
+    PlaybackQueueOrigin Origin = PlaybackQueueOrigin.Static,
+    bool ForceResolve = false);
+
+/// <summary>播放意图完成后的可观察结果。</summary>
+public sealed record PlaybackResult(
+    PlaybackResultStatus Status,
+    MusicInfo? Music,
+    PlaybackQueueOrigin Origin,
+    string Message);
+
+public sealed class PlaybackQueueCompletedEventArgs(
+    PlaybackQueueOrigin origin) : EventArgs
+{
+    public PlaybackQueueOrigin Origin { get; } = origin;
+}
+
+/// <summary>
+/// 播放协调模块接口。队列、索引、模式、换源重试和预缓存均隐藏在此接口之后。
+/// </summary>
+public interface IPlaybackCoordinator
+{
+    Task<PlaybackResult> PlayAsync(PlaybackRequest request);
+    Task<PlaybackResult> ReplayAsync();
     void Pause();
-
-    /// <summary>
-    /// 停止播放
-    /// </summary>
     void Stop();
+    Task<PlaybackResult> NextAsync();
+    Task<PlaybackResult> PreviousAsync();
+    bool IsPlaying { get; }
+    bool IsPaused { get; }
+    Task ResumeAsync();
+    MusicInfo? CurrentMusic { get; }
+    PlayMode Mode { get; set; }
+    string DefaultQuality { get; set; }
+    event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
+    event EventHandler<PlaybackQueueCompletedEventArgs>? QueueCompleted;
+}
 
-    /// <summary>
-    /// 下一首
-    /// </summary>
-    void Next();
-
-    /// <summary>
-    /// 上一首
-    /// </summary>
-    void Previous();
-
+/// <summary>播放协调模块提供的音量、时间轴与输出设备控制面。</summary>
+public interface IAudioPlaybackControl
+{
     /// <summary>
     /// 设置音量
     /// </summary>
@@ -110,64 +142,10 @@ public interface IMusicPlayerService
     TimeSpan Duration { get; }
 
     /// <summary>
-    /// 是否正在播放
-    /// </summary>
-    bool IsPlaying { get; }
-    /// <summary>
-    /// 是否处于暂停状态
-    /// </summary>
-    bool IsPaused { get; }
-
-    /// <summary>
-    /// 恢复播放，不重新加载，从暂停位置继续
-    /// </summary>
-    Task ResumeAsync();
-
-    /// <summary>
-    /// 从来源列表构建播放队列并定位当前歌曲，使上一首、下一首和自动连播作用于整个列表
-    /// </summary>
-    void SetQueue(List<MusicInfo> queue, MusicInfo currentMusic);
-
-    /// <summary>
-    /// 播放队列条目替换（同曲换源用）：以实际播放的同曲替换原条目，保持上一首/下一首位置正确
-    /// </summary>
-    void ReplaceQueueItem(MusicInfo oldItem, MusicInfo newItem);
-
-    /// <summary>
-    /// 当前播放音乐信息
-    /// </summary>
-    MusicInfo? CurrentMusic { get; }
-
-    /// <summary>
     /// 当前实际播放音质，由播放器流的编码格式和平均码率确定；无法确定时为 null
     /// </summary>
     string? ActualQuality { get; }
     
-    /// <summary>
-    /// 循环播放模式
-    /// </summary>
-    bool IsLoopMode { get; set; }
-    
-    /// <summary>
-    /// 随机播放模式
-    /// </summary>
-    bool IsShuffleMode { get; set; }
-
-    /// <summary>
-    /// 自动连播、上一首和下一首解析播放链接时使用的默认音质
-    /// </summary>
-    string DefaultQuality { get; set; }
-
-    /// <summary>
-    /// 播放器状态变化事件
-    /// </summary>
-    event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
-
-    /// <summary>
-    /// 播放队列已播完事件，在顺序播放到末尾且非循环模式时触发，供自动翻页续播
-    /// </summary>
-    event EventHandler? QueueCompleted;
-
     /// <summary>
     /// 获取所有可用输出设备，首项为“系统默认”
     /// </summary>

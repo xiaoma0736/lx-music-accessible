@@ -74,13 +74,19 @@ public static class ApplicationHost
 
                 services.AddSingleton<IAudioPlayer, AudioPlayer>();
                 services.AddSingleton<BackgroundWorkHost>();
-                services.AddSingleton<IMusicPlayerService>(sp => new MusicPlayerService(
+                services.AddSingleton<IPlaybackSourceAdapter, MusicPlaybackSourceAdapter>();
+                services.AddSingleton(sp => new MusicPlayerService(
                     sp.GetRequiredService<ILogger<MusicPlayerService>>(),
                     sp.GetRequiredService<IAudioPlayer>(),
-                    sp.GetRequiredService<IMusicSourceService>(),
+                    sp.GetRequiredService<IPlaybackSourceAdapter>(),
+                    sp.GetRequiredService<IAccessibleAnnouncer>(),
                     sp.GetRequiredService<BackgroundWorkHost>(),
                     sp.GetRequiredService<HttpClient>(),
                     Path.Combine(dataDir, "cache")));
+                services.AddSingleton<IPlaybackCoordinator>(sp =>
+                    sp.GetRequiredService<MusicPlayerService>());
+                services.AddSingleton<IAudioPlaybackControl>(sp =>
+                    sp.GetRequiredService<MusicPlayerService>());
                 services.AddSingleton<MusicSourceService>();
                 services.AddSingleton<IMusicSourceService>(sp => sp.GetRequiredService<MusicSourceService>());
                 services.AddSingleton<IMusicBrowseSource>(sp => sp.GetRequiredService<MusicSourceService>());

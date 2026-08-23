@@ -1,442 +1,681 @@
-﻿using Microsoft.Extensions.Logging;
-using LXMusicAccessible.Models;
 using LXMusicAccessible.Audio;
+using LXMusicAccessible.Models;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LXMusicAccessible.Services;
 
 /// <summary>
-/// 音乐播放器服务实现
+/// 播放协调深模块：唯一拥有队列、索引、播放模式、来源重试、代际和预缓存。
+/// 调用者只提交播放意图并观察结果或状态事件。
 /// </summary>
-public class MusicPlayerService : IMusicPlayerService, IAsyncDisposable
+public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackControl, IAsyncDisposable
 {
     private const string PlaySlot = "music-player.play";
     private const string PrecacheSlot = "music-player.precache";
+    private const int MaxAlternativeSources = 5;
+    private const int MaxMatchesPerSource = 2;
+
+    private readonly object _gate = new();
     private readonly ILogger<MusicPlayerService> _logger;
     private readonly IAudioPlayer _audioPlayer;
-    private Models.PlayerState _state = Models.PlayerState.Stopped;
-    private MusicInfo? _currentMusic;
-    private List<MusicInfo> _playlist = new();
-    private int _currentIndex = -1;
-    private TimeSpan _resumePosition = TimeSpan.Zero;
-    private double _volume = 0.8;
-    private readonly IMusicSourceService _musicSourceService;
+    private readonly IPlaybackSourceAdapter _sources;
+    private readonly IAccessibleAnnouncer _announcer;
     private readonly BackgroundWorkHost _backgroundWork;
     private readonly HttpClient _httpClient;
+    private readonly Random _random;
     private readonly bool _ownsBackgroundWork;
     private readonly bool _ownsHttpClient;
     private readonly string _precacheDirectory;
+    private readonly Dictionary<string, string> _precachedPaths =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private PlayerState _state = PlayerState.Stopped;
+    private MusicInfo? _currentMusic;
+    private List<MusicInfo> _queue = [];
+    private int _currentIndex = -1;
+    private long _queueRevision;
+    private PlaybackQueueOrigin _queueOrigin;
+    private PlayMode _mode;
+    private TimeSpan _resumePosition;
+    private double _volume = 0.8;
     private string _defaultQuality = "128k";
-    // 预缓存（顺序连播）：(Id|Source) -> 预下载好的下一首临时文件
-    private readonly Dictionary<string, string> _precachedPaths = new(StringComparer.OrdinalIgnoreCase);
-
-    public event EventHandler<Models.PlayerStateChangedEventArgs>? StateChanged;
-    public event EventHandler? QueueCompleted;
-
-    public bool IsPlaying => _state == Models.PlayerState.Playing;
-    public bool IsPaused => _state == Models.PlayerState.Paused;
-    public bool IsLoopMode { get; set; }
-    public bool IsShuffleMode { get; set; }
-    public TimeSpan Position => _audioPlayer.Position;
-    public TimeSpan Duration => _audioPlayer.Duration;
-    public MusicInfo? CurrentMusic => _currentMusic;
-    public double Volume => _volume;
-
-    /// <summary>当前实际播放音质（由播放器流读取：编码格式 + 平均码率），无法确定时为 null</summary>
-    public string? ActualQuality => _audioPlayer.GetActualQuality();
-
-    /// <summary>自动连播/上一首/下一首时解析播放链接使用的默认音质</summary>
-    public string DefaultQuality
-    {
-        get => _defaultQuality;
-        set
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-                _defaultQuality = value;
-        }
-    }
 
     public MusicPlayerService(
         ILogger<MusicPlayerService> logger,
         IAudioPlayer audioPlayer,
-        IMusicSourceService musicSourceService,
+        IPlaybackSourceAdapter sources,
+        IAccessibleAnnouncer announcer,
         BackgroundWorkHost? backgroundWork = null,
         HttpClient? httpClient = null,
-        string? precacheDirectory = null)
+        string? precacheDirectory = null,
+        Random? random = null)
     {
         _logger = logger;
         _audioPlayer = audioPlayer;
-        _musicSourceService = musicSourceService;
+        _sources = sources;
+        _announcer = announcer;
         _backgroundWork = backgroundWork
             ?? new BackgroundWorkHost(NullLogger<BackgroundWorkHost>.Instance);
         _httpClient = httpClient ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         _ownsBackgroundWork = backgroundWork is null;
         _ownsHttpClient = httpClient is null;
         _precacheDirectory = Path.GetFullPath(precacheDirectory ?? Path.GetTempPath());
+        _random = random ?? Random.Shared;
         _audioPlayer.PlaybackCompleted += AudioPlayer_PlaybackCompleted;
     }
 
-    private void AudioPlayer_PlaybackCompleted(object? sender, EventArgs e)
-    {
-        _logger.LogInformation("歌曲播放结束，自动播放下一首");
-        Next();
-    }
+    public event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
+    public event EventHandler<PlaybackQueueCompletedEventArgs>? QueueCompleted;
 
-    /// <summary>歌曲唯一键（Id|Source）</summary>
-    private static string GetMusicKey(MusicInfo m) => $"{m.Source}|{m.Id}";
+    public bool IsPlaying { get { lock (_gate) return _state == PlayerState.Playing; } }
+    public bool IsPaused { get { lock (_gate) return _state == PlayerState.Paused; } }
+    public TimeSpan Position => _audioPlayer.Position;
+    public TimeSpan Duration => _audioPlayer.Duration;
+    public MusicInfo? CurrentMusic { get { lock (_gate) return _currentMusic; } }
+    public double Volume => _volume;
+    public string? ActualQuality => _audioPlayer.GetActualQuality();
 
-    /// <summary>计算下一首索引（顺序/循环/随机）；无下一首返回 -1</summary>
-    private int ComputeNextIndex()
+    public PlayMode Mode
     {
-        if (_playlist.Count == 0) return -1;
-        if (IsShuffleMode) return new Random().Next(_playlist.Count);
-        var idx = _currentIndex + 1;
-        if (idx >= _playlist.Count)
+        get { lock (_gate) return _mode; }
+        set
         {
-            if (IsLoopMode) return 0;
-            return -1;
+            lock (_gate) _mode = value;
+            CancelPrecache();
+            StartPrecacheForCurrent();
         }
-        return idx;
     }
 
-    /// <summary>取消进行中的预缓存并清理已缓存临时文件（队列/列表变更时调用）</summary>
-    private void CancelPrecache()
+    public string DefaultQuality
     {
-        _backgroundWork.Cancel(PrecacheSlot);
-        if (_precachedPaths.Count == 0) return;
-        foreach (var f in _precachedPaths.Values)
-            DeletePrecacheFile(f);
-        _precachedPaths.Clear();
-    }
-
-    public Task PlayAsync(string url, MusicInfo musicInfo) =>
-        _backgroundWork.RunLatestAsync(
-            PlaySlot,
-            context => PlayCoreAsync(url, musicInfo, context));
-
-    private async Task PlayCoreAsync(
-        string url,
-        MusicInfo musicInfo,
-        BackgroundWorkContext context)
-    {
-        var cancellationToken = context.CancellationToken;
-        try
+        get { lock (_gate) return _defaultQuality; }
+        set
         {
-            _logger.LogInformation("播放音乐: {Title} - {Artist}", musicInfo.Title, musicInfo.Artist);
-            
-            // 暂停后恢复播放：仅同一首歌时恢复到暂停位置
-            var resumePosition = _resumePosition;
-            _resumePosition = TimeSpan.Zero;
-            var sameMusic = _currentMusic != null &&
-                string.Equals(_currentMusic.Id, musicInfo.Id, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(_currentMusic.Source, musicInfo.Source, StringComparison.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(value)) return;
+            lock (_gate) _defaultQuality = value;
+        }
+    }
 
-            var oldState = _state;
-            if (!context.TryCommit(() => _state = Models.PlayerState.Loading)) return;
+    public Task<PlaybackResult> PlayAsync(PlaybackRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Selection);
 
-            await _audioPlayer.LoadAsync(url, cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            if (sameMusic && resumePosition > TimeSpan.Zero)
+        var queue = request.Queue?.Where(item => item is not null).ToList() ?? [];
+        var index = FindIndex(queue, request.Selection);
+        if (index < 0)
+        {
+            queue.Add(request.Selection);
+            index = queue.Count - 1;
+        }
+
+        long revision;
+        lock (_gate)
+        {
+            revision = ++_queueRevision;
+            _queue = queue;
+            _currentIndex = index;
+            _queueOrigin = request.Origin;
+            if (!string.IsNullOrWhiteSpace(request.Quality))
+                _defaultQuality = request.Quality;
+        }
+
+        CancelGenerationWork();
+        return RunPlayAsync(
+            revision,
+            index,
+            request.Selection,
+            request.Quality,
+            request.ForceResolve);
+    }
+
+    public Task<PlaybackResult> ReplayAsync()
+    {
+        MusicInfo? music;
+        int index;
+        long revision;
+        string quality;
+        PlaybackQueueOrigin origin;
+        lock (_gate)
+        {
+            music = _currentMusic;
+            index = _currentIndex;
+            origin = _queueOrigin;
+            quality = _defaultQuality;
+            revision = music is null || index < 0 ? _queueRevision : ++_queueRevision;
+        }
+
+        if (music is null || index < 0)
+            return Task.FromResult(NoChange(origin, "当前没有可重播的歌曲"));
+
+        CancelGenerationWork();
+        return RunPlayAsync(revision, index, music, quality, forceResolve: false);
+    }
+
+    public Task<PlaybackResult> NextAsync() => AdvanceAsync(1, naturalEnd: false);
+
+    public Task<PlaybackResult> PreviousAsync() => AdvanceAsync(-1, naturalEnd: false);
+
+    private Task<PlaybackResult> AdvanceAsync(int direction, bool naturalEnd)
+    {
+        MusicInfo? target = null;
+        int targetIndex = -1;
+        long revision;
+        string quality;
+        PlaybackQueueOrigin origin;
+        bool completed = false;
+
+        lock (_gate)
+        {
+            origin = _queueOrigin;
+            quality = _defaultQuality;
+            revision = ++_queueRevision;
+            if (_queue.Count > 0)
             {
-                try
+                targetIndex = ComputeTargetIndex(direction, naturalEnd);
+                if (targetIndex < 0)
                 {
-                    if (resumePosition < _audioPlayer.Duration)
-                        _audioPlayer.Position = resumePosition;
+                    completed = direction > 0;
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "恢复播放位置失败，从头播放");
-                }
-            }
-            await _audioPlayer.PlayAsync();
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var committed = context.TryCommit(() =>
-            {
-                // 将歌曲加入内部播放列表（按 Id+Source 去重），使上一首/下一首可用
-                var existingIndex = _playlist.FindIndex(m =>
-                    m.Id == musicInfo.Id && m.Source == musicInfo.Source);
-                if (existingIndex >= 0)
-                    _currentIndex = existingIndex;
                 else
                 {
-                    _playlist.Add(musicInfo);
-                    _currentIndex = _playlist.Count - 1;
+                    target = _queue[targetIndex];
+                    _currentIndex = targetIndex;
                 }
+            }
+        }
 
-                _currentMusic = musicInfo;
-                _state = Models.PlayerState.Playing;
-                StateChanged?.Invoke(this, new Models.PlayerStateChangedEventArgs
-                {
-                    OldState = oldState,
-                    NewState = _state,
-                    CurrentMusic = musicInfo
-                });
-            });
+        CancelGenerationWork();
+        if (completed)
+        {
+            var result = new PlaybackResult(
+                PlaybackResultStatus.QueueCompleted,
+                CurrentMusic,
+                origin,
+                "当前播放队列已结束");
+            RaiseQueueCompleted(origin);
+            return Task.FromResult(result);
+        }
 
-            if (!committed)
+        if (target is null)
+            return Task.FromResult(NoChange(origin, "播放队列中没有可播放的歌曲"));
+
+        return RunPlayAsync(revision, targetIndex, target, quality, forceResolve: false);
+    }
+
+    private int ComputeTargetIndex(int direction, bool naturalEnd)
+    {
+        if (_queue.Count == 0) return -1;
+        if (naturalEnd && _mode == PlayMode.SingleLoop)
+            return Math.Clamp(_currentIndex, 0, _queue.Count - 1);
+        if (_mode == PlayMode.Shuffle)
+            return _random.Next(_queue.Count);
+
+        var index = Math.Clamp(_currentIndex, 0, _queue.Count - 1) + direction;
+        if (index >= _queue.Count)
+            return _mode == PlayMode.Loop ? 0 : -1;
+        if (index < 0)
+            return _mode == PlayMode.Loop ? _queue.Count - 1 : -1;
+        return index;
+    }
+
+    private async Task<PlaybackResult> RunPlayAsync(
+        long revision,
+        int index,
+        MusicInfo music,
+        string quality,
+        bool forceResolve)
+    {
+        var result = Superseded();
+        await _backgroundWork.RunLatestAsync(PlaySlot, async context =>
+        {
+            result = await PlayGenerationAsync(
+                revision,
+                index,
+                music,
+                string.IsNullOrWhiteSpace(quality) ? DefaultQuality : quality,
+                forceResolve,
+                context);
+        });
+        return result;
+    }
+
+    private async Task<PlaybackResult> PlayGenerationAsync(
+        long revision,
+        int index,
+        MusicInfo requestedMusic,
+        string quality,
+        bool forceResolve,
+        BackgroundWorkContext context)
+    {
+        var token = context.CancellationToken;
+        if (!PublishState(context, revision, PlayerState.Loading, requestedMusic))
+            return Superseded();
+
+        try
+        {
+            var directUrl = forceResolve ? null : GetDirectUrl(requestedMusic);
+            directUrl ??= await TryResolveAsync(requestedMusic, quality, token);
+            if (!string.IsNullOrWhiteSpace(directUrl)
+                && await TryLoadAsync(requestedMusic, directUrl, token))
             {
-                _audioPlayer.Stop();
-                return;
+                return CommitPlaying(context, revision, index, requestedMusic, directUrl);
             }
 
-            // 播放成功后，后台预缓存下一首，顺序连播更顺畅
-            StartPrecache();
+            if (!IsLocal(requestedMusic))
+            {
+                var sourceIds = GetAlternativeSourceIds(requestedMusic);
 
-            _logger.LogInformation("开始播放");
+                foreach (var sourceId in sourceIds)
+                {
+                    token.ThrowIfCancellationRequested();
+                    var alternatives = await TryFindAlternativesAsync(
+                        requestedMusic,
+                        sourceId,
+                        token);
+                    foreach (var candidate in alternatives.Take(MaxMatchesPerSource))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (!MusicSearchMatcher.IsSameSong(candidate, requestedMusic)) continue;
+                        var url = await TryResolveAsync(candidate, quality, token);
+                        if (string.IsNullOrWhiteSpace(url)
+                            || !await TryLoadAsync(candidate, url, token))
+                        {
+                            continue;
+                        }
+
+                        var switched = CommitPlaying(
+                            context,
+                            revision,
+                            index,
+                            candidate,
+                            url);
+                        if (switched.Status == PlaybackResultStatus.Playing)
+                        {
+                            AnnounceIfCurrent(revision, new(
+                                $"已自动切换音源播放：{candidate.Title}",
+                                AnnouncementKind.Success,
+                                ActivityId(revision)));
+                        }
+                        return switched;
+                    }
+                }
+            }
+
+            return CommitFailure(context, revision, requestedMusic);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            _audioPlayer.Stop();
+            return Superseded();
+        }
+    }
+
+    private async Task<string?> TryResolveAsync(
+        MusicInfo music,
+        string quality,
+        CancellationToken cancellationToken)
+    {
+        if (IsLocal(music)) return music.PlayUrl;
+        try
+        {
+            return await _sources.ResolveAsync(music, quality, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            _audioPlayer.Stop();
+            throw;
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            _logger.LogError("播放音乐失败: {ErrorType}", ex.GetType().Name);
-            context.TryCommit(() =>
+            _logger.LogWarning(
+                "Playback URL resolution failed ({SourceId}): {ErrorType}",
+                music.Source,
+                exception.GetType().Name);
+            return null;
+        }
+    }
+
+    private async Task<IReadOnlyList<MusicInfo>> TryFindAlternativesAsync(
+        MusicInfo music,
+        string sourceId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _sources.FindAlternativesAsync(
+                music,
+                sourceId,
+                cancellationToken) ?? [];
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "Playback alternative search failed ({SourceId}): {ErrorType}",
+                sourceId,
+                exception.GetType().Name);
+            return [];
+        }
+    }
+
+    private async Task<bool> TryLoadAsync(
+        MusicInfo music,
+        string url,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _audioPlayer.LoadAsync(url, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            await _audioPlayer.PlayAsync();
+            cancellationToken.ThrowIfCancellationRequested();
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _audioPlayer.Stop();
+            _logger.LogWarning(
+                "Audio playback attempt failed ({SourceId}): {ErrorType}",
+                music.Source,
+                exception.GetType().Name);
+            return false;
+        }
+    }
+
+    private PlaybackResult CommitPlaying(
+        BackgroundWorkContext context,
+        long revision,
+        int index,
+        MusicInfo music,
+        string url)
+    {
+        PlaybackQueueOrigin origin = PlaybackQueueOrigin.Static;
+        var applied = false;
+        context.TryCommit(() =>
+        {
+            lock (_gate)
             {
-                var errorState = _state;
-                _state = Models.PlayerState.Error;
-                StateChanged?.Invoke(this, new Models.PlayerStateChangedEventArgs
+                if (revision != _queueRevision) return;
+                var oldState = _state;
+                music.PlayUrl = url;
+                if (index >= 0 && index < _queue.Count) _queue[index] = music;
+                _currentIndex = index;
+                _currentMusic = music;
+                _state = PlayerState.Playing;
+                _resumePosition = TimeSpan.Zero;
+                origin = _queueOrigin;
+                applied = true;
+                RaiseStateChanged(StateChange(oldState, _state, music));
+            }
+        });
+
+        if (!applied)
+        {
+            _audioPlayer.Stop();
+            return Superseded();
+        }
+
+        ConsumePrecache(music);
+        StartPrecache(revision);
+        return new PlaybackResult(
+            PlaybackResultStatus.Playing,
+            music,
+            origin,
+            $"正在播放：{music.Title}");
+    }
+
+    private PlaybackResult CommitFailure(
+        BackgroundWorkContext context,
+        long revision,
+        MusicInfo music)
+    {
+        PlaybackQueueOrigin origin = PlaybackQueueOrigin.Static;
+        var applied = false;
+        var message = IsLocal(music)
+            ? $"本地歌曲播放失败：{music.Title}"
+            : $"无法播放《{music.Title}》，已尝试所有可用音源";
+        context.TryCommit(() =>
+        {
+            lock (_gate)
+            {
+                if (revision != _queueRevision) return;
+                var oldState = _state;
+                _state = PlayerState.Error;
+                origin = _queueOrigin;
+                applied = true;
+                RaiseStateChanged(new PlayerStateChangedEventArgs
                 {
-                    OldState = errorState,
+                    OldState = oldState,
                     NewState = _state,
-                    CurrentMusic = musicInfo
+                    CurrentMusic = music,
+                    ErrorMessage = message
                 });
-            });
+                SafeAnnounce(new(
+                    message,
+                    AnnouncementKind.Error,
+                    ActivityId(revision)));
+            }
+        });
+
+        return applied
+            ? new PlaybackResult(PlaybackResultStatus.Failed, music, origin, message)
+            : Superseded();
+    }
+
+    private bool PublishState(
+        BackgroundWorkContext context,
+        long revision,
+        PlayerState state,
+        MusicInfo? music)
+    {
+        var applied = false;
+        context.TryCommit(() =>
+        {
+            lock (_gate)
+            {
+                if (revision != _queueRevision) return;
+                var oldState = _state;
+                _state = state;
+                applied = true;
+                RaiseStateChanged(StateChange(oldState, state, music));
+            }
+        });
+        return applied;
+    }
+
+    private string[] GetAlternativeSourceIds(MusicInfo music)
+    {
+        try
+        {
+            return (_sources.GetAlternativeSourceIds(music.Source) ?? [])
+                .Where(source => !string.IsNullOrWhiteSpace(source)
+                    && !string.Equals(
+                        source,
+                        music.Source,
+                        StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(MaxAlternativeSources)
+                .ToArray();
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "Playback source enumeration failed: {ErrorType}",
+                exception.GetType().Name);
+            return [];
+        }
+    }
+
+    private void AnnounceIfCurrent(long revision, AccessibleAnnouncement announcement)
+    {
+        lock (_gate)
+        {
+            if (revision == _queueRevision) SafeAnnounce(announcement);
         }
     }
 
     public void Pause()
     {
-        try
+        lock (_gate)
         {
-            _logger.LogInformation("暂停播放");
-            _resumePosition = _audioPlayer.Position;
-            var oldState = _state;
-            _audioPlayer.Pause();
-            _state = Models.PlayerState.Paused;
-            StateChanged?.Invoke(this, new Models.PlayerStateChangedEventArgs
+            if (_state != PlayerState.Playing) return;
+            try
             {
-                OldState = oldState,
-                NewState = _state,
-                CurrentMusic = _currentMusic
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "暂停播放失败");
+                _resumePosition = _audioPlayer.Position;
+                var oldState = _state;
+                _audioPlayer.Pause();
+                _state = PlayerState.Paused;
+                RaiseStateChanged(StateChange(oldState, _state, _currentMusic));
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    "Audio pause failed: {ErrorType}",
+                    exception.GetType().Name);
+            }
         }
     }
 
-    /// <summary>恢复播放：直接继续（不重新加载，保留暂停位置）</summary>
     public async Task ResumeAsync()
     {
-        if (_state != Models.PlayerState.Paused || _currentMusic == null) return;
-        var oldState = _state;
+        MusicInfo? music;
+        PlayerState oldState;
+        lock (_gate)
+        {
+            if (_state != PlayerState.Paused || _currentMusic is null) return;
+            music = _currentMusic;
+            oldState = _state;
+        }
+
         try
         {
             await _audioPlayer.PlayAsync();
-            _state = Models.PlayerState.Playing;
-            _resumePosition = TimeSpan.Zero;
-            StateChanged?.Invoke(this, new Models.PlayerStateChangedEventArgs
+            lock (_gate)
             {
-                OldState = oldState,
-                NewState = _state,
-                CurrentMusic = _currentMusic
-            });
+                if (_state != PlayerState.Paused) return;
+                _state = PlayerState.Playing;
+                _resumePosition = TimeSpan.Zero;
+                RaiseStateChanged(StateChange(oldState, _state, music));
+            }
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            _logger.LogError(ex, "恢复播放失败");
-            _state = Models.PlayerState.Error;
-            StateChanged?.Invoke(this, new Models.PlayerStateChangedEventArgs
+            _logger.LogWarning("Audio resume failed: {ErrorType}", exception.GetType().Name);
+            lock (_gate)
             {
-                OldState = oldState,
-                NewState = _state,
-                CurrentMusic = _currentMusic
-            });
+                _state = PlayerState.Error;
+                RaiseStateChanged(new PlayerStateChangedEventArgs
+                {
+                    OldState = oldState,
+                    NewState = _state,
+                    CurrentMusic = music,
+                    ErrorMessage = "无法继续播放当前歌曲"
+                });
+            }
+            SafeAnnounce(new("无法继续播放当前歌曲", AnnouncementKind.Error));
         }
     }
 
     public void Stop()
     {
-        try
+        PlayerStateChangedEventArgs change;
+        lock (_gate)
         {
-            _backgroundWork.Cancel(PlaySlot);
-            CancelPrecache();
-            _logger.LogInformation("停止播放");
+            ++_queueRevision;
             var oldState = _state;
-            _audioPlayer.Stop();
-            _state = Models.PlayerState.Stopped;
+            _state = PlayerState.Stopped;
             _resumePosition = TimeSpan.Zero;
-            StateChanged?.Invoke(this, new Models.PlayerStateChangedEventArgs
-            {
-                OldState = oldState,
-                NewState = _state,
-                CurrentMusic = _currentMusic
-            });
+            change = StateChange(oldState, _state, _currentMusic);
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "停止播放失败");
-        }
+        CancelGenerationWork();
+        _audioPlayer.Stop();
+        RaiseStateChanged(change);
     }
 
-    public void Next()
+    private void AudioPlayer_PlaybackCompleted(object? sender, EventArgs e)
     {
-        try
+        try { _ = AdvanceAsync(1, naturalEnd: true); }
+        catch (ObjectDisposedException)
         {
-            _logger.LogInformation("播放下一首");
-
-            var nextIdx = ComputeNextIndex();
-            if (nextIdx < 0)
-            {
-                if (_playlist.Count > 0 && !IsLoopMode && !IsShuffleMode)
-                {
-                    // 顺序播放到末尾：通知上层自动翻页续播（无下一页时由上层决定停止）
-                    _currentIndex = _playlist.Count - 1;
-                    QueueCompleted?.Invoke(this, EventArgs.Empty);
-                }
-                return;
-            }
-            _currentIndex = nextIdx;
-            StartQueueItem(_playlist[_currentIndex]);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "播放下一首失败");
+            _logger.LogDebug("Natural playback completion arrived during shutdown");
         }
     }
 
-    public void Previous()
+    private void CancelGenerationWork()
     {
-        try
-        {
-            _logger.LogInformation("播放上一首");
-            
-            if (_playlist.Count == 0)
-            {
-                _logger.LogWarning("播放列表为空");
-                return;
-            }
-
-            _currentIndex--;
-            if (_currentIndex < 0)
-            {
-                if (IsLoopMode)
-                {
-                    _currentIndex = _playlist.Count - 1;
-                }
-                else
-                {
-                    _currentIndex = 0;
-                    return;
-                }
-            }
-
-            if (_currentIndex >= 0 && _currentIndex < _playlist.Count)
-            {
-                StartQueueItem(_playlist[_currentIndex]);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "播放上一首失败");
-        }
+        _backgroundWork.Cancel(PlaySlot);
+        CancelPrecache();
     }
 
-    /// <summary>
-    /// 播放队列中的指定歌曲：无播放链接时按当前音源与默认音质解析后播放
-    /// （本地歌曲直接使用本地路径），保证“下一首/上一首/自动连播”可作用于整个列表。
-    /// </summary>
-    private void StartQueueItem(MusicInfo music) =>
+    private void CancelPrecache()
+    {
+        _backgroundWork.Cancel(PrecacheSlot);
+        string[] files;
+        lock (_gate)
+        {
+            files = _precachedPaths.Values.ToArray();
+            _precachedPaths.Clear();
+        }
+        foreach (var file in files) DeletePrecacheFile(file);
+    }
+
+    private void StartPrecacheForCurrent()
+    {
+        long revision;
+        lock (_gate)
+        {
+            if (_state != PlayerState.Playing) return;
+            revision = _queueRevision;
+        }
+        StartPrecache(revision);
+    }
+
+    private void StartPrecache(long revision)
+    {
+        PlayMode mode;
+        lock (_gate) mode = _mode;
+        if (mode is PlayMode.Shuffle or PlayMode.SingleLoop) return;
         _backgroundWork.StartLatest(
-            PlaySlot,
-            context => PlayQueueItemAsync(music, context));
+            PrecacheSlot,
+            context => PrecacheNextAsync(revision, context));
+    }
 
-    private async Task PlayQueueItemAsync(
-        MusicInfo music,
+    private async Task PrecacheNextAsync(
+        long revision,
         BackgroundWorkContext context)
     {
-        try
-        {
-            if (music == null) return;
-
-            bool isLocal = string.Equals(music.Source, "Local", StringComparison.OrdinalIgnoreCase);
-
-            // 优先使用预缓存好的下一首临时文件（顺序连播几乎无缝）
-            string? url = null;
-            var key = GetMusicKey(music);
-            if (_precachedPaths.TryGetValue(key, out var pre) && File.Exists(pre))
-            {
-                url = pre;
-            }
-            else
-            {
-                _precachedPaths.Remove(key);
-            }
-
-            if (url == null) url = music.PlayUrl;
-            if (string.IsNullOrEmpty(url) && !isLocal && _musicSourceService != null)
-            {
-                url = await _musicSourceService.GetPlayUrlAsync(
-                    music,
-                    music.Source,
-                    _defaultQuality,
-                    context.CancellationToken) ?? string.Empty;
-                context.TryCommit(() =>
-                    music.PlayUrl = string.IsNullOrEmpty(url) ? null : url);
-            }
-
-            if (string.IsNullOrEmpty(url))
-            {
-                _logger.LogWarning("队列歌曲无播放链接，跳过: {Title} - {Artist}", music.Title, music.Artist);
-                return;
-            }
-
-            await PlayCoreAsync(url, music, context);
-
-            // 已消费的预缓存文件：从字典移除并尽力删除（被 BASS 占用时删除失败，交由“清理缓存”处理）
-            context.TryCommit(() =>
-            {
-                if (_precachedPaths.Remove(key)) DeletePrecacheFile(pre!);
-            });
-        }
-        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested) { }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "播放队列歌曲失败: {Title}", music?.Title);
-        }
-    }
-
-    /// <summary>后台预缓存下一首在线歌曲到临时文件，供顺序连播直接使用。</summary>
-    private void StartPrecache() =>
-        _backgroundWork.StartLatest(PrecacheSlot, PreCacheNextAsync);
-
-    private async Task PreCacheNextAsync(BackgroundWorkContext context)
-    {
         var token = context.CancellationToken;
+        MusicInfo? next;
+        lock (_gate)
+        {
+            if (revision != _queueRevision || _queue.Count == 0)
+                return;
+            var nextIndex = _currentIndex + 1;
+            if (nextIndex >= _queue.Count)
+                nextIndex = _mode == PlayMode.Loop ? 0 : -1;
+            next = nextIndex >= 0 ? _queue[nextIndex] : null;
+        }
+
+        if (next is null || IsLocal(next)) return;
+        var key = MusicKey(next);
+        lock (_gate)
+        {
+            if (_precachedPaths.ContainsKey(key)) return;
+        }
+
         string? temporaryPath = null;
         try
         {
-            var nextIdx = ComputeNextIndex();
-            if (nextIdx < 0 || nextIdx >= _playlist.Count) return;
-            var next = _playlist[nextIdx];
-            if (string.Equals(next.Source, "Local", StringComparison.OrdinalIgnoreCase)) return;
-
-            var key = GetMusicKey(next);
-            if (_precachedPaths.ContainsKey(key)) return;
-
-            var url = next.PlayUrl;
-            if (string.IsNullOrEmpty(url))
-            {
-                url = await _musicSourceService.GetPlayUrlAsync(
-                    next,
-                    next.Source,
-                    _defaultQuality,
-                    token) ?? string.Empty;
-            }
-            if (string.IsNullOrEmpty(url)) return;
+            var url = GetDirectUrl(next) ?? await TryResolveAsync(next, DefaultQuality, token);
+            if (string.IsNullOrWhiteSpace(url)) return;
             token.ThrowIfCancellationRequested();
 
             Directory.CreateDirectory(_precacheDirectory);
@@ -456,25 +695,34 @@ public class MusicPlayerService : IMusicPlayerService, IAsyncDisposable
             }
             token.ThrowIfCancellationRequested();
 
-            var published = context.TryCommit(() =>
+            var published = false;
+            context.TryCommit(() =>
             {
-                next.PlayUrl = url;
-                foreach (var cached in _precachedPaths.ToList())
+                lock (_gate)
                 {
-                    if (string.Equals(cached.Key, key, StringComparison.OrdinalIgnoreCase)) continue;
-                    _precachedPaths.Remove(cached.Key);
-                    DeletePrecacheFile(cached.Value);
+                    if (revision != _queueRevision) return;
+                    foreach (var cached in _precachedPaths.ToArray())
+                    {
+                        if (string.Equals(cached.Key, key, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        _precachedPaths.Remove(cached.Key);
+                        DeletePrecacheFile(cached.Value);
+                    }
+                    _precachedPaths[key] = temporaryPath;
+                    published = true;
                 }
-                _precachedPaths[key] = temporaryPath;
-                _logger.LogInformation("已预缓存下一首: {Title}", next.Title);
             });
             if (published) temporaryPath = null;
         }
-        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception exception)
         {
             _logger.LogWarning(
-                "预缓存下一首失败: {ErrorType}",
+                "Playback precache failed ({SourceId}): {ErrorType}",
+                next.Source,
                 exception.GetType().Name);
         }
         finally
@@ -483,172 +731,90 @@ public class MusicPlayerService : IMusicPlayerService, IAsyncDisposable
         }
     }
 
+    private string? GetDirectUrl(MusicInfo music)
+    {
+        var key = MusicKey(music);
+        lock (_gate)
+        {
+            if (_precachedPaths.TryGetValue(key, out var path) && File.Exists(path))
+                return path;
+            _precachedPaths.Remove(key);
+        }
+        return music.PlayUrl;
+    }
+
+    private void ConsumePrecache(MusicInfo music)
+    {
+        string? path = null;
+        lock (_gate)
+        {
+            if (_precachedPaths.Remove(MusicKey(music), out var cached)) path = cached;
+        }
+        if (path is not null) DeletePrecacheFile(path);
+    }
+
     private void DeletePrecacheFile(string path)
     {
         try { File.Delete(path); }
         catch (Exception exception)
         {
             _logger.LogWarning(
-                "Precache file release failed: {ErrorType}",
+                "Playback precache release failed: {ErrorType}",
                 exception.GetType().Name);
         }
     }
 
     public void SetVolume(double volume)
     {
-        _volume = volume;
-        _audioPlayer.Volume = volume;
-        _logger.LogInformation("音量设置为: {Volume}", volume);
+        _volume = Math.Clamp(volume, 0, 1);
+        _audioPlayer.Volume = _volume;
     }
 
-    /// <summary>音量已完全由软件内（BASS 通道音量）控制，不再与 Windows 音量合成器同步。
-    /// AudioPlayer.Volume 即 _volume，此方法保留为兜底，仅确保两个 _volume 字段一致。</summary>
     public void SyncVolumeFromDevice()
     {
         try
         {
             var effective = _audioPlayer.Volume;
-            if (Math.Abs(effective - _volume) > 0.01)
-            {
-                _volume = Math.Clamp(effective, 0.0, 1.0);
-                _audioPlayer.Volume = _volume;
-                _logger.LogInformation("音量已同步: {Volume}", _volume);
-            }
+            if (Math.Abs(effective - _volume) <= 0.01) return;
+            _volume = Math.Clamp(effective, 0, 1);
+            _audioPlayer.Volume = _volume;
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            _logger.LogWarning(ex, "同步设备音量失败");
+            _logger.LogWarning(
+                "Audio volume sync failed: {ErrorType}",
+                exception.GetType().Name);
         }
     }
 
-    public void SetPosition(TimeSpan position)
-    {
-        _audioPlayer.Position = position;
-        _logger.LogInformation("播放位置设置为: {Position}", position);
-    }
-
-    /// <summary>
-    /// 定位到指定播放位置（清空输出缓冲，确保音频立即跳到新位置；供快进/快退使用，
-    /// 避免快进后歌词先于听到的歌曲提前朗读）
-    /// </summary>
-    public void SeekTo(TimeSpan position)
-    {
-        _audioPlayer.SeekTo(position);
-        _logger.LogInformation("快进/快退定位到: {Position}", position);
-    }
-
-    /// <summary>
-    /// 设置播放列表
-    /// </summary>
-    public void SetPlaylist(List<MusicInfo> playlist)
-    {
-            CancelPrecache(); // 队列变更：取消/清理预缓存
-        _playlist = playlist;
-        _currentIndex = -1;
-        _logger.LogInformation("设置播放列表，共 {Count} 首歌曲", playlist.Count);
-    }
-
-    /// <summary>
-    /// 设置播放队列（整列表顺序播放）：从来源列表构建队列并定位当前歌曲，
-    /// 使上一首/下一首/自动连播作用于整个列表（解决“下一首重复播放当前歌曲”问题）。
-    /// </summary>
-    public void SetQueue(List<MusicInfo> queue, MusicInfo currentMusic)
-    {
-            CancelPrecache(); // 队列变更：取消/清理预缓存
-        if (queue == null || queue.Count == 0)
-        {
-            _logger.LogWarning("设置播放队列失败：列表为空");
-            return;
-        }
-
-
-        _playlist = new List<MusicInfo>(queue);
-        _currentIndex = _playlist.FindIndex(m =>
-            string.Equals(m.Id, currentMusic?.Id, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(m.Source, currentMusic?.Source, StringComparison.OrdinalIgnoreCase));
-        if (_currentIndex < 0)
-            _currentIndex = 0;
-        _logger.LogInformation("设置播放队列，共 {Count} 首歌曲，当前定位第 {Index} 首", _playlist.Count, _currentIndex + 1);
-    }
-    /// <summary>播放队列条目替换（同曲换源用）：以实际播放的同曲替换原条目，保持上一首/下一首位置正确</summary>
-    public void ReplaceQueueItem(MusicInfo oldItem, MusicInfo newItem)
-    {
-        if (oldItem == null || newItem == null || _playlist.Count == 0) return;
-        var idx = _playlist.FindIndex(m =>
-            string.Equals(m.Id, oldItem.Id, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(m.Source, oldItem.Source, StringComparison.OrdinalIgnoreCase));
-        if (idx < 0) return;
-        _playlist[idx] = newItem;
-        if (_currentIndex == idx) _currentMusic = newItem;
-        _logger.LogInformation("播放队列条目已替换（同曲换源）: [{Old}] → [{New}]",
-            $"{oldItem.Source}|{oldItem.Id}", $"{newItem.Source}|{newItem.Id}");
-    }
-
-    /// <summary>
-    /// 添加到播放列表
-    /// </summary>
-    public void AddToPlaylist(MusicInfo music)
-    {
-        _playlist.Add(music);
-        _logger.LogInformation("添加到播放列表: {Title}", music.Title);
-    }
-
-    /// <summary>
-    /// 清空播放列表
-    /// </summary>
-    public void ClearPlaylist()
-    {
-            CancelPrecache(); // 队列变更：取消/清理预缓存
-        _playlist.Clear();
-        _currentIndex = -1;
-        _logger.LogInformation("清空播放列表");
-    }
-    // ============ 输出设备切换 ============
-
-    /// <summary>获取所有可用输出设备（首项为“系统默认”）</summary>
+    public void SetPosition(TimeSpan position) => _audioPlayer.Position = position;
+    public void SeekTo(TimeSpan position) => _audioPlayer.SeekTo(position);
     public IReadOnlyList<OutputDeviceInfo> GetOutputDevices() => _audioPlayer.GetOutputDevices();
-
-    /// <summary>当前输出设备索引（-1 = 系统默认）</summary>
     public int CurrentOutputDeviceIndex => _audioPlayer.CurrentOutputDeviceIndex;
+    public string CurrentOutputDeviceName =>
+        _audioPlayer.GetOutputDevices()
+            .FirstOrDefault(device => device.Index == _audioPlayer.CurrentOutputDeviceIndex)?.Name
+        ?? "系统默认";
+    public string? SwitchToNextOutputDevice() =>
+        SwitchOutputDevice(_audioPlayer.CurrentOutputDeviceIndex + 1);
+    public string? SwitchToPreviousOutputDevice() =>
+        SwitchOutputDevice(_audioPlayer.CurrentOutputDeviceIndex - 1);
 
-    /// <summary>当前输出设备名称（供播报）</summary>
-    public string CurrentOutputDeviceName
-    {
-        get
-        {
-            var idx = _audioPlayer.CurrentOutputDeviceIndex;
-            return _audioPlayer.GetOutputDevices().FirstOrDefault(d => d.Index == idx)?.Name ?? "系统默认";
-        }
-    }
-
-    /// <summary>切换到下一个播放设备，返回新设备名称（失败返回 null）</summary>
-    public string? SwitchToNextOutputDevice() => SwitchOutputDevice(_audioPlayer.CurrentOutputDeviceIndex + 1);
-
-    /// <summary>切换到上一个播放设备，返回新设备名称（失败返回 null）</summary>
-    public string? SwitchToPreviousOutputDevice() => SwitchOutputDevice(_audioPlayer.CurrentOutputDeviceIndex - 1);
-
-    /// <summary>切换到指定输出设备（越界自动回绕），返回新设备名称（失败返回 null）</summary>
     public string? SwitchOutputDevice(int index)
     {
         try
         {
             var devices = _audioPlayer.GetOutputDevices();
-            var maxConcrete = devices.Count - 2; // 去掉首项“系统默认”后的最大具体设备索引
-            // 越界回绕：超过最后一个具体设备 → 系统默认；低于系统默认 → 最后一个具体设备
+            var maxConcrete = devices.Count - 2;
             if (index > maxConcrete) index = -1;
             if (index < -1) index = maxConcrete;
-
-            if (_audioPlayer.SwitchOutputDevice(index))
-            {
-                _logger.LogInformation("切换输出设备成功: {Name} (Index={Index})", CurrentOutputDeviceName, index);
-                return CurrentOutputDeviceName;
-            }
-            _logger.LogWarning("切换输出设备失败: Index={Index}", index);
-            return null;
+            return _audioPlayer.SwitchOutputDevice(index) ? CurrentOutputDeviceName : null;
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            _logger.LogError(ex, "切换输出设备异常");
+            _logger.LogWarning(
+                "Audio output switch failed: {ErrorType}",
+                exception.GetType().Name);
             return null;
         }
     }
@@ -656,12 +822,89 @@ public class MusicPlayerService : IMusicPlayerService, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _audioPlayer.PlaybackCompleted -= AudioPlayer_PlaybackCompleted;
-        _backgroundWork.Cancel(PlaySlot);
-        CancelPrecache();
+        lock (_gate) ++_queueRevision;
+        CancelGenerationWork();
         await _backgroundWork.WaitAsync(PlaySlot);
         await _backgroundWork.WaitAsync(PrecacheSlot);
         if (_ownsBackgroundWork) await _backgroundWork.DisposeAsync();
         if (_ownsHttpClient) _httpClient.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    private static int FindIndex(IReadOnlyList<MusicInfo> queue, MusicInfo selection)
+    {
+        for (var index = 0; index < queue.Count; index++)
+        {
+            if (SameIdentity(queue[index], selection)) return index;
+        }
+        return -1;
+    }
+
+    private static bool SameIdentity(MusicInfo left, MusicInfo right) =>
+        string.Equals(left.Id, right.Id, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(left.Source, right.Source, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsLocal(MusicInfo music) =>
+        string.Equals(music.Source, "Local", StringComparison.OrdinalIgnoreCase);
+
+    private static string MusicKey(MusicInfo music) => $"{music.Source}|{music.Id}";
+    private static string ActivityId(long revision) => $"playback-{revision}";
+    private static PlaybackResult Superseded() => new(
+        PlaybackResultStatus.Superseded,
+        null,
+        PlaybackQueueOrigin.Static,
+        "播放请求已被更新的请求替代");
+    private static PlaybackResult NoChange(PlaybackQueueOrigin origin, string message) =>
+        new(PlaybackResultStatus.NoChange, null, origin, message);
+    private static PlayerStateChangedEventArgs StateChange(
+        PlayerState oldState,
+        PlayerState newState,
+        MusicInfo? music) => new()
+        {
+            OldState = oldState,
+            NewState = newState,
+            CurrentMusic = music
+        };
+
+    private void RaiseStateChanged(PlayerStateChangedEventArgs change)
+    {
+        foreach (EventHandler<PlayerStateChangedEventArgs> handler in
+            StateChanged?.GetInvocationList() ?? [])
+        {
+            try { handler(this, change); }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    "Playback state observer failed: {ErrorType}",
+                    exception.GetType().Name);
+            }
+        }
+    }
+
+    private void SafeAnnounce(AccessibleAnnouncement announcement)
+    {
+        try { _announcer.Announce(announcement); }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "Playback announcement failed: {ErrorType}",
+                exception.GetType().Name);
+        }
+    }
+
+    private void RaiseQueueCompleted(PlaybackQueueOrigin origin)
+    {
+        var args = new PlaybackQueueCompletedEventArgs(origin);
+        foreach (EventHandler<PlaybackQueueCompletedEventArgs> handler in
+            QueueCompleted?.GetInvocationList() ?? [])
+        {
+            try { handler(this, args); }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    "Playback queue observer failed: {ErrorType}",
+                    exception.GetType().Name);
+            }
+        }
     }
 }

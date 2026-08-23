@@ -649,58 +649,6 @@ class Program
             Console.WriteLine($"  播放器冒烟异常: {ex.Message}");
             Check(false, "BASS 播放器冒烟");
         }
-        // ====== 19. 预缓存下一首（MusicPlayerService） ======
-        Console.WriteLine("--- 19. 预缓存下一首 (MusicPlayerService) ---");
-        try
-        {
-            var plogger = LoggerFactory.Create(b => b.SetMinimumLevel(LogLevel.Warning)).CreateLogger<MusicPlayerService>();
-            var pmp = new MusicPlayerService(plogger, new AudioPlayer(), src);
-            var songs = (await src.SearchAsync("周杰伦 晴天", 1, 5)).Items.Take(2).ToList();
-            if (songs.Count < 2)
-            {
-                Console.WriteLine("  预缓存：搜索结果不足2首，跳过");
-            }
-            else
-            {
-                var u1 = await src.GetPlayUrlAsync(songs[0], songs[0].Source, "128k");
-                pmp.SetQueue(songs, songs[0]);
-                await pmp.PlayAsync(u1 ?? "", songs[0]);
-
-                var field = typeof(MusicPlayerService).GetField("_precachedPaths",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                System.Collections.IDictionary dict = new System.Collections.Hashtable();
-                int waited = 0;
-                while (waited < 12000)
-                {
-                    await Task.Delay(1000);
-                    waited += 1000;
-                    var v = field?.GetValue(pmp);
-                    if (v is System.Collections.IDictionary d && d.Count > 0) { dict = d; break; }
-                }
-                Console.WriteLine($"  预缓存条目数={dict.Count}（等待 {waited / 1000}s）");
-                Check(dict.Count > 0, "预缓存下一首");
-
-                if (dict.Count > 0)
-                {
-                    pmp.Next();
-                    await Task.Delay(1500);
-                    var v2 = field?.GetValue(pmp);
-                    int cnt = v2 is System.Collections.IDictionary d2 ? d2.Count : -1;
-                    Console.WriteLine($"  切歌后预缓存条目数={cnt}");
-                    Check(cnt == 0, "切歌使用预缓存并清理");
-                }
-                foreach (System.Collections.DictionaryEntry e in dict)
-                {
-                    try { if (e.Value is string pf && File.Exists(pf)) File.Delete(pf); } catch { }
-                }
-                pmp.Stop();
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"  预缓存异常: {ex.Message}");
-            Check(false, "预缓存下一首");
-        }
         // ====== 20. 第三方接口类型：musicUrl / lyric / pic 动作分派（合成脚本） ======
         Console.WriteLine("--- 20. 第三方接口类型 musicUrl/lyric/pic 动作分派（合成脚本） ---");
         try

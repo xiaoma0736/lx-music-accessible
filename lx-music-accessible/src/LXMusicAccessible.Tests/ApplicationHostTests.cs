@@ -142,9 +142,11 @@ public sealed class ApplicationHostTests
             await audio.PlayAsync();
             Assert.Equal(AudioPlayerState.Playing, audio.State);
 
-            var player = app.Services.GetRequiredService<IMusicPlayerService>();
-            player.Stop();
-            Assert.False(player.IsPlaying);
+            var playback = app.Services.GetRequiredService<IPlaybackCoordinator>();
+            var player = app.Services.GetRequiredService<IAudioPlaybackControl>();
+            Assert.Same(playback, player);
+            playback.Stop();
+            Assert.False(playback.IsPlaying);
         }
 
         Assert.False(Directory.Exists(dataDirectory));
