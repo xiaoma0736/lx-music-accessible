@@ -180,15 +180,31 @@ public sealed class ScriptNetworkClient : IDisposable
             throw new ScriptNetworkException("dns_resolution_failed");
         }
 
-        if (addresses.Length == 0 || addresses.Any(address => !IsPublicAddress(address)))
+        if (addresses.Length == 0
+            || addresses.Any(address => !IsAllowedTargetAddress(host, address)))
             throw new ScriptNetworkException("network_target_blocked");
         return addresses;
+    }
+
+    private static bool IsAllowedTargetAddress(string host, IPAddress address) =>
+        IsPublicAddress(address)
+        || (!IPAddress.TryParse(host, out _) && IsBenchmarkingNetworkAddress(address));
+
+    // Transparent proxy/TUN clients commonly use 198.18.0.0/15 as a fake-IP pool.
+    // Permit that pool only for a hostname; literal reserved-range targets remain blocked.
+    private static bool IsBenchmarkingNetworkAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (address.AddressFamily != AddressFamily.InterNetwork) return false;
+        var bytes = address.GetAddressBytes();
+        return bytes[0] == 198 && bytes[1] is 18 or 19;
     }
 
     private static bool IsPublicAddress(IPAddress address)
     {
         if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
         if (IPAddress.IsLoopback(address)) return false;
+        if (IsBenchmarkingNetworkAddress(address)) return false;
 
         var bytes = address.GetAddressBytes();
         if (address.AddressFamily == AddressFamily.InterNetwork)
@@ -204,7 +220,6 @@ public sealed class ScriptNetworkClient : IDisposable
                 && !(a == 192 && b == 0 && bytes[2] is 0 or 2)
                 && !(a == 192 && b == 88 && bytes[2] == 99)
                 && !(a == 192 && b == 168)
-                && !(a == 198 && b is 18 or 19)
                 && !(a == 198 && b == 51 && bytes[2] == 100)
                 && !(a == 203 && b == 0 && bytes[2] == 113)
                 && a < 224;

@@ -26,6 +26,8 @@ public sealed class ScriptSecurityTests
     [InlineData("http://example.test/", "172.16.0.1")]
     [InlineData("http://example.test/", "192.168.0.1")]
     [InlineData("http://example.test/", "169.254.169.254")]
+    [InlineData("http://198.18.68.192/", "198.18.68.192")]
+    [InlineData("http://[::ffff:198.18.68.192]/", "::ffff:198.18.68.192")]
     [InlineData("http://example.test/", "::1")]
     [InlineData("http://example.test/", "fe80::1")]
     [InlineData("http://example.test/", "fc00::1")]
