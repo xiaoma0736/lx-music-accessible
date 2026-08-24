@@ -1,21 +1,17 @@
-﻿<Window x:Class="LXMusicAccessible.App.TextInputDialog"
+<Window x:Class="LXMusicAccessible.App.TextInputDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="输入" Width="560" Height="280"
-        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
-        AutomationProperties.Name="输入对话框">
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
     <StackPanel Margin="20">
-        <TextBlock x:Name="TitleText" FontSize="16" FontWeight="Bold" Margin="0,0,0,12"
-                   AutomationProperties.Name="对话框标题"/>
-        <Label x:Name="Label1" Content="内容：" Margin="0,0,0,2" AutomationProperties.Name="输入框一标签"/>
-        <TextBox x:Name="InputBox1" Height="30" AutomationProperties.Name="输入框一" IsTabStop="True"/>
-        <Label x:Name="Label2" Content="" Margin="0,10,0,2" Visibility="Collapsed" AutomationProperties.Name="输入框二标签"/>
-        <TextBox x:Name="InputBox2" Height="30" Visibility="Collapsed" AutomationProperties.Name="输入框二" IsTabStop="True"/>
+        <TextBlock x:Name="TitleText" FontSize="16" FontWeight="Bold" Margin="0,0,0,12"/>
+        <Label x:Name="Label1" Content="内容：" Target="{Binding ElementName=InputBox1}" Margin="0,0,0,2"/>
+        <TextBox x:Name="InputBox1" Height="30" IsTabStop="True"/>
+        <Label x:Name="Label2" Content="" Target="{Binding ElementName=InputBox2}" Margin="0,10,0,2" Visibility="Collapsed"/>
+        <TextBox x:Name="InputBox2" Height="30" Visibility="Collapsed" IsTabStop="True"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-            <Button Content="确定" Width="80" Height="30" Click="Ok_Click" IsDefault="True"
-                    AutomationProperties.Name="确定" IsTabStop="True"/>
-            <Button Content="取消" Width="80" Height="30" Margin="10,0,0,0" Click="Cancel_Click" IsCancel="True"
-                    AutomationProperties.Name="取消" IsTabStop="True"/>
+            <Button Content="确定" Width="80" Height="30" Click="Ok_Click" IsDefault="True" IsTabStop="True"/>
+            <Button Content="取消" Width="80" Height="30" Margin="10,0,0,0" Click="Cancel_Click" IsCancel="True" IsTabStop="True"/>
         </StackPanel>
     </StackPanel>
 </Window>

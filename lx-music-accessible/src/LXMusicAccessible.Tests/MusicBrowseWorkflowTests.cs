@@ -178,10 +178,10 @@ public sealed class MusicBrowseWorkflowTests
         var xaml = File.ReadAllText(Path.Combine(root, "src", "LXMusicAccessible.App", "MainWindow.xaml"));
         var window = File.ReadAllText(Path.Combine(root, "src", "LXMusicAccessible.App", "MainWindow.xaml.cs"));
 
-        Assert.Contains("AutomationProperties.HelpText=\"上下方向键选择音源，按 Enter 或刷新按钮加载分类\"", xaml);
+        Assert.Contains("AutomationProperties.HelpText=\"上下方向键选择音源，按 Enter 或刷新加载分类\"", xaml);
         Assert.Contains("KeyDown=\"CategorySourceCombo_KeyDown\"", xaml);
-        Assert.Contains("AutomationProperties.HelpText=\"上下方向键选择分类，按 Enter 加载歌单\"", xaml);
-        Assert.Contains("AutomationProperties.HelpText=\"上下方向键选择排行榜，按 Enter 加载歌曲\"", xaml);
+        Assert.Contains("AutomationProperties.HelpText=\"上下方向键选择，按 Enter 加载歌单\"", xaml);
+        Assert.Contains("AutomationProperties.HelpText=\"上下方向键选择，按 Enter 加载歌曲\"", xaml);
         Assert.Contains("KeyDown=\"RankingSourceCombo_KeyDown\"", xaml);
         Assert.Contains("SelectionChanged=\"OnlinePlaylistList_SelectionChanged\"", xaml);
 

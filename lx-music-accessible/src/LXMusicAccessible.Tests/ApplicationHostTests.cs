@@ -48,12 +48,16 @@ public sealed class ApplicationHostTests
             var lyrics = windows.CreateLyrics(_ => false);
             try
             {
-                Assert.Equal("使用说明窗口", AutomationProperties.GetName(guide));
+                Assert.Empty(AutomationProperties.GetName(guide));
+                Assert.Equal("使用说明", guide.Title);
                 Assert.Equal("使用说明正文", AutomationProperties.GetName(guide.GuideText));
-                Assert.Equal("赞助二维码窗口", AutomationProperties.GetName(sponsor));
-                Assert.Equal("关闭", AutomationProperties.GetName(sponsor.CloseBtn));
-                Assert.Equal("歌词窗口", AutomationProperties.GetName(lyrics));
-                Assert.Equal("歌词文本", AutomationProperties.GetName(lyrics.LyricsList));
+                Assert.Empty(AutomationProperties.GetName(sponsor));
+                Assert.Equal("赞助二维码", sponsor.Title);
+                Assert.Empty(AutomationProperties.GetName(sponsor.CloseBtn));
+                Assert.Equal("关闭", sponsor.CloseBtn.Content);
+                Assert.Empty(AutomationProperties.GetName(lyrics));
+                Assert.Equal("歌词", lyrics.Title);
+                Assert.Equal("歌词", AutomationProperties.GetName(lyrics.LyricsList));
 
                 guide.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent, guide));
                 Assert.False(string.IsNullOrWhiteSpace(guide.GuideText.Text));

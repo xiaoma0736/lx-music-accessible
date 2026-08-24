@@ -217,10 +217,11 @@ public sealed class SettingsWorkflowTests
         Assert.DoesNotContain("UnregisterHotKey", mainCode, StringComparison.Ordinal);
         Assert.Contains("SettingsWorkflow settingsWorkflow", mainCode, StringComparison.Ordinal);
         Assert.Contains("Property=\"AutomationProperties.Name\" Value=\"{Binding AccessibleText}\"", mainXaml);
-        Assert.Contains("Property=\"AutomationProperties.HelpText\" Value=\"{Binding ConflictStatus}\"", mainXaml);
+        Assert.DoesNotContain("Property=\"AutomationProperties.HelpText\"", mainXaml);
         Assert.Contains("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding ConflictStatus}\"", mainXaml);
-        Assert.Contains("AutomationProperties.Name=\"快捷键冲突提示\"", conflictXaml);
-        Assert.Contains("AutomationProperties.HelpText=", conflictXaml);
+        Assert.Contains("Title=\"快捷键冲突提示\"", conflictXaml);
+        Assert.DoesNotContain("AutomationProperties.Name=", conflictXaml);
+        Assert.DoesNotContain("AutomationProperties.HelpText=", conflictXaml);
         Assert.Contains("AutomationProperties.ItemStatus=\"存在全局快捷键注册冲突\"", conflictXaml);
         Assert.DoesNotContain("SendInput", mainCode, StringComparison.Ordinal);
     }

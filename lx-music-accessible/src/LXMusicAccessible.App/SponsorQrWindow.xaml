@@ -1,22 +1,19 @@
-﻿<Window x:Class="LXMusicAccessible.App.SponsorQrWindow"
+<Window x:Class="LXMusicAccessible.App.SponsorQrWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="赞助二维码" Width="580" Height="660"
-        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
-        AutomationProperties.Name="赞助二维码窗口">
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
     <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False" IsTabStop="False">
         <StackPanel Margin="24" HorizontalAlignment="Center">
-            <TextBlock FontSize="18" FontWeight="Bold" Text="赞助二维码" Margin="0,0,0,12" HorizontalAlignment="Center"
-                       AutomationProperties.Name="赞助二维码标题"/>
+            <TextBlock FontSize="18" FontWeight="Bold" Text="赞助二维码" Margin="0,0,0,12" HorizontalAlignment="Center"/>
             <Border BorderBrush="#CCCCCC" BorderThickness="1" Padding="10" HorizontalAlignment="Center">
                 <Image x:Name="QrImage" Source="/resources/sponsor_qr.png" Width="420" Height="420" Stretch="Uniform"
-                       AutomationProperties.Name="赞助二维码大图，请用手机扫描完成赞助"/>
+                       AutomationProperties.Name="赞助二维码"/>
             </Border>
             <TextBlock Text="感谢使用落雪音乐无障碍版。本软件所有功能均免费；如软件对你有帮助，欢迎自愿扫码赞助支持。扫描完成后按 Esc 或“关闭”按钮关闭本窗口。"
-                       TextWrapping="Wrap" Margin="0,14,0,0" AutomationProperties.Name="赞助二维码说明"/>
+                       TextWrapping="Wrap" Margin="0,14,0,0"/>
             <Button x:Name="CloseBtn" Content="关闭" Width="110" Height="32" Margin="0,18,0,0" HorizontalAlignment="Center"
-                    Click="CloseBtn_Click" IsDefault="True" IsCancel="True"
-                    AutomationProperties.Name="关闭" IsTabStop="True"/>
+                    Click="CloseBtn_Click" IsDefault="True" IsCancel="True" IsTabStop="True"/>
         </StackPanel>
     </ScrollViewer>
 </Window>

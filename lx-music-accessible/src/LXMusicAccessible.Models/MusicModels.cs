@@ -231,14 +231,14 @@ public class MusicSource
         ? "已暂存，未信任"
         : IsDefault ? "默认" : (IsEnabled ? "已启用" : "已禁用");
 
-    /// <summary>读屏朗读名称：名称 + 版本 + 接口类型 + 启用/默认状态</summary>
+    /// <summary>读屏名称只包含音源标识；启用/信任状态由 ItemStatus 暴露。</summary>
     public string AccessibleName
     {
         get
         {
             var name = string.IsNullOrEmpty(Name) ? "未命名音源" : Name;
             var ver = string.IsNullOrEmpty(Version) ? "" : $"，版本 {Version}";
-            return $"{name}{ver}，{TypeText}，{StatusText}";
+            return $"{name}{ver}，{TypeText}";
         }
     }
 
@@ -378,14 +378,14 @@ public class DownloadTask : System.ComponentModel.INotifyPropertyChanged
     public DownloadTaskStatus Status
     {
         get => _status;
-        set { if (_status != value) { _status = value; OnPropertyChanged(nameof(Status)); OnPropertyChanged(nameof(StatusText)); } }
+        set { if (_status != value) { _status = value; OnPropertyChanged(nameof(Status)); OnPropertyChanged(nameof(StatusText)); OnPropertyChanged(nameof(AccessibleStatus)); } }
     }
 
     private double _progress;
     public double Progress
     {
         get => _progress;
-        set { if (Math.Abs(_progress - value) > 0.01) { _progress = value; OnPropertyChanged(nameof(Progress)); OnPropertyChanged(nameof(ProgressText)); } }
+        set { if (Math.Abs(_progress - value) > 0.01) { _progress = value; OnPropertyChanged(nameof(Progress)); OnPropertyChanged(nameof(ProgressText)); OnPropertyChanged(nameof(AccessibleStatus)); } }
     }
 
     private long _downloadedBytes;
@@ -425,8 +425,12 @@ public class DownloadTask : System.ComponentModel.INotifyPropertyChanged
         _ => StatusText
     };
 
-    /// <summary>读屏朗读名称：文件名 + 进度 + 状态，避免朗读裸类型名</summary>
-    public string AccessibleName => $"{DisplayName}，{ProgressText}，{StatusText}";
+    /// <summary>读屏名称只包含任务标识；动态进度和状态由 ItemStatus 暴露。</summary>
+    public string AccessibleName => DisplayName;
+
+    public string AccessibleStatus => Status == DownloadTaskStatus.Downloading
+        ? $"{ProgressText}，{StatusText}"
+        : StatusText;
 
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));

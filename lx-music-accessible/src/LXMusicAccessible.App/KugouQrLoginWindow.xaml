@@ -3,22 +3,21 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="酷狗APP扫码登录" Width="520" Height="620"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
-        AutomationProperties.Name="酷狗APP扫码登录窗口"
         PreviewKeyDown="Window_PreviewKeyDown">
     <StackPanel Margin="24">
         <TextBlock x:Name="TitleText" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" TextWrapping="Wrap"
-                   Text="请用手机酷狗APP扫描下方二维码" AutomationProperties.Name="酷狗扫码标题"/>
+                   Text="请用手机酷狗APP扫描下方二维码"/>
         <Border BorderBrush="#CCCCCC" BorderThickness="1" Background="White" Padding="8" Margin="0,0,0,12" HorizontalAlignment="Left">
-            <Image x:Name="QrImage" Width="300" Height="300" Stretch="Uniform" AutomationProperties.Name="登录二维码"/>
+            <Image x:Name="QrImage" Width="300" Height="300" Stretch="Uniform"
+                   AutomationProperties.Name="登录二维码"/>
         </Border>
-        <TextBlock x:Name="StatusText" Text="正在获取二维码..." FontSize="14" Margin="0,0,0,12" TextWrapping="Wrap"
-                   AutomationProperties.Name="扫码状态"/>
+        <TextBlock x:Name="StatusText" Text="正在获取二维码..." FontSize="14" Margin="0,0,0,12" TextWrapping="Wrap"/>
         <StackPanel Orientation="Horizontal">
             <Button x:Name="RefreshQrBtn" Content="刷新二维码" Width="110" Height="30" Margin="0,0,8,0"
-                    KeyboardNavigation.TabIndex="10" AutomationProperties.Name="刷新二维码"
+                    KeyboardNavigation.TabIndex="10"
                     Click="RefreshQrBtn_Click" IsTabStop="True"/>
             <Button x:Name="CancelBtn" Content="取消" Width="80" Height="30" IsCancel="True"
-                    KeyboardNavigation.TabIndex="11" AutomationProperties.Name="取消"
+                    KeyboardNavigation.TabIndex="11"
                     Click="CancelBtn_Click" IsTabStop="True"/>
         </StackPanel>
     </StackPanel>

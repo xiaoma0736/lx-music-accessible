@@ -1,5 +1,4 @@
 ﻿using System.Windows;
-using System.Windows.Automation;
 using System.Windows.Input;
 using LXMusicAccessible.Models;
 
@@ -39,7 +38,6 @@ public partial class HotkeyConflictDialog : Window
             MessageText.Text = $"有 {list.Count} 个全局快捷键被其他程序占用，无法全局注册：";
             DetailText.Text = string.Join("\n", list.Select(h => $"{h.Name}：{Format(h)}"));
         }
-        AutomationProperties.SetName(ReregisterButton, $"{MessageText.Text}，重新设置");
         Loaded += (_, _) => ReregisterButton.Focus();
     }
 

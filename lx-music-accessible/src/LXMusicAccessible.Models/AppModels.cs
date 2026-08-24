@@ -150,7 +150,7 @@ public class HotkeySettingItem : INotifyPropertyChanged
     }
 
     public string ConflictStatus => HasConflict ? "全局注册冲突" : "可用";
-    public string AccessibleText => $"{ActionName}：{ShortcutText}，{ConflictStatus}";
+    public string AccessibleText => $"{ActionName}：{ShortcutText}";
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

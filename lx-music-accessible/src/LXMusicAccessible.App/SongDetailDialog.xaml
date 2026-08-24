@@ -3,19 +3,17 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:LXMusicAccessible.App"
         Title="歌曲详情" Width="640" Height="460"
-        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
-        AutomationProperties.Name="歌曲详情对话框">
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <TextBlock x:Name="TitleText" FontSize="16" FontWeight="Bold" Margin="0,0,0,10" TextWrapping="Wrap"
-                   AutomationProperties.Name="歌曲详情标题"/>
+        <TextBlock x:Name="TitleText" FontSize="16" FontWeight="Bold" Margin="0,0,0,10" TextWrapping="Wrap"/>
         <local:SingleReadListBox x:Name="DetailsList" Grid.Row="1"
-                 AutomationProperties.Name="歌曲详情列表"
-                 AutomationProperties.HelpText="上下方向键逐条浏览详情，回车或Esc关闭"
+                 AutomationProperties.Name="歌曲详情"
+                 AutomationProperties.HelpText="上下方向键逐条浏览，回车或 Esc 关闭"
                  HorizontalContentAlignment="Stretch">
             <ListBox.ItemContainerStyle>
                 <Style TargetType="ListBoxItem">
@@ -25,7 +23,6 @@
             </ListBox.ItemContainerStyle>
         </local:SingleReadListBox>
         <Button Grid.Row="2" Content="关闭" Width="90" Height="30" Margin="0,14,0,0" HorizontalAlignment="Right"
-                IsCancel="True" IsDefault="True" Click="Close_Click"
-                AutomationProperties.Name="关闭" IsTabStop="True"/>
+                IsCancel="True" IsDefault="True" Click="Close_Click" IsTabStop="True"/>
     </Grid>
 </Window>

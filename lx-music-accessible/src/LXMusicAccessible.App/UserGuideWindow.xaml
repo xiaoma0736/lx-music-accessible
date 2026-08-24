@@ -1,9 +1,8 @@
-﻿<Window x:Class="LXMusicAccessible.App.UserGuideWindow"
+<Window x:Class="LXMusicAccessible.App.UserGuideWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="使用说明" Height="640" Width="760"
         WindowStartupLocation="CenterOwner"
-        AutomationProperties.Name="使用说明窗口"
         PreviewKeyDown="Window_PreviewKeyDown"
         Loaded="Window_Loaded"
         FocusManager.FocusedElement="{Binding ElementName=GuideText}">
@@ -15,31 +14,25 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" Margin="0,0,0,10">
-            <TextBlock Text="落雪音乐无障碍版 使用说明" FontSize="20" FontWeight="Bold"
-                       AutomationProperties.Name="使用说明标题"/>
+            <TextBlock Text="落雪音乐无障碍版 使用说明" FontSize="20" FontWeight="Bold"/>
             <TextBlock Text="提示：用上下方向键或 PageUp、PageDown 逐行浏览，Ctrl+Home 跳到开头，Ctrl+End 跳到结尾；按 Tab 到“章节”下拉框，用上下方向键选择章节、回车跳转；Esc 或“关闭”按钮退出。"
-                       TextWrapping="Wrap" Margin="0,6,0,0" AutomationProperties.Name="使用说明操作提示"/>
+                       TextWrapping="Wrap" Margin="0,6,0,0"/>
             <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                <Label Content="章节：" Target="{Binding ElementName=ChapterCombo}" VerticalAlignment="Center"
-                       AutomationProperties.Name="章节标签" IsTabStop="False"/>
+                <Label Content="章节：" Target="{Binding ElementName=ChapterCombo}" VerticalAlignment="Center" IsTabStop="False"/>
                 <ComboBox x:Name="ChapterCombo" Width="300" Height="28" KeyboardNavigation.TabIndex="0"
-                          AutomationProperties.Name="章节选择"
-                          AutomationProperties.HelpText="上下方向键选择章节，回车跳转到对应章节"
                           SelectionChanged="ChapterCombo_SelectionChanged" IsTabStop="True"/>
             </StackPanel>
         </StackPanel>
 
         <TextBox x:Name="GuideText" Grid.Row="1"
+                 AutomationProperties.Name="使用说明正文"
                  IsReadOnly="True" IsReadOnlyCaretVisible="True" AcceptsReturn="True" TextWrapping="Wrap"
                  VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                  FontSize="14" Padding="10"
-                 AutomationProperties.Name="使用说明正文"
-                 AutomationProperties.HelpText="只读文档，可用上下方向键逐行、左右键逐字浏览"
                  IsTabStop="True"/>
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
             <Button x:Name="CloseButton" Content="关闭(_C)" Width="90" Height="30"
-                    AutomationProperties.Name="关闭使用说明"
                     Click="CloseButton_Click" IsTabStop="True"/>
         </StackPanel>
     </Grid>

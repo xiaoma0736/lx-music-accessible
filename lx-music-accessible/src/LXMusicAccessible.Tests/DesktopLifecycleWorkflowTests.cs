@@ -140,8 +140,8 @@ public sealed class DesktopLifecycleWorkflowTests
         Assert.Contains("DesktopCommand.AltF4", mainCode, StringComparison.Ordinal);
         Assert.Contains("DesktopCommand.Exit", mainCode, StringComparison.Ordinal);
         Assert.Contains("DesktopCommand.Restore", appCode, StringComparison.Ordinal);
-        Assert.Contains("AutomationProperties.Name=\"隐藏显示窗口\"", mainXaml, StringComparison.Ordinal);
-        Assert.Contains("AutomationProperties.Name=\"退出\"", mainXaml, StringComparison.Ordinal);
+        Assert.Contains("Header=\"隐藏/显示窗口(_H)\"", mainXaml, StringComparison.Ordinal);
+        Assert.Contains("Header=\"退出(_X)\"", mainXaml, StringComparison.Ordinal);
         Assert.Contains("IDesktopIntegration", lifecycle, StringComparison.Ordinal);
         Assert.Contains("DesktopFocusTarget.PreviousControl", lifecycle, StringComparison.Ordinal);
     }

@@ -1879,43 +1879,35 @@ public partial class MainWindow : Window
 
         // 查看歌曲详情（所有歌曲列表通用）
         var details = new MenuItem { Header = "查看歌曲详情" };
-        System.Windows.Automation.AutomationProperties.SetName(details, "查看歌曲详情");
         details.Click += SongMenu_ViewDetails_Click;
         menu.Items.Add(details);
         var play = new MenuItem { Header = "播放" };
-        System.Windows.Automation.AutomationProperties.SetName(play, "播放");
         play.Click += SongMenu_Play_Click;
         menu.Items.Add(play);
 
         var quality = new MenuItem { Header = "播放音质" };
-        System.Windows.Automation.AutomationProperties.SetName(quality, "播放音质");
         quality.Items.Add(new MenuItem { Header = "128k", Tag = "128k" });
         menu.Items.Add(quality);
 
         var lyrics = new MenuItem { Header = "查看歌词" };
-        System.Windows.Automation.AutomationProperties.SetName(lyrics, "查看歌词");
         lyrics.Click += SongMenu_ViewLyrics_Click;
         menu.Items.Add(lyrics);
 
         var download = new MenuItem { Header = "下载" };
-        System.Windows.Automation.AutomationProperties.SetName(download, "下载");
         download.Items.Add(new MenuItem { Header = "128k", Tag = "128k" });
         menu.Items.Add(download);
 
         // 从当前歌曲开始顺序播放整个列表（搜索/歌单/排行榜/播放列表/收藏均可用）
         var playAll = new MenuItem { Header = "从当前歌曲播放整个列表" };
-        System.Windows.Automation.AutomationProperties.SetName(playAll, "从当前歌曲播放整个列表");
         playAll.Click += SongMenu_PlayAllFromCurrent_Click;
         menu.Items.Add(playAll);
 
         // 批量下载：下载整个列表（全部在线歌曲）；下载整张专辑（专辑详情/专辑搜索结果时显示）
         var downloadAll = new MenuItem { Header = "下载整个列表", Tag = BatchDownloadListTag };
-        System.Windows.Automation.AutomationProperties.SetName(downloadAll, "下载整个列表");
         downloadAll.Click += SongMenu_DownloadList_Click;
         menu.Items.Add(downloadAll);
 
         var downloadAlbum = new MenuItem { Header = "下载整张专辑", Tag = BatchDownloadAlbumTag, Visibility = Visibility.Collapsed };
-        System.Windows.Automation.AutomationProperties.SetName(downloadAlbum, "下载整张专辑");
         downloadAlbum.Click += SongMenu_DownloadAlbum_Click;
         menu.Items.Add(downloadAlbum);
 
@@ -1927,12 +1919,10 @@ public partial class MainWindow : Window
         if (isRemoteList)
         {
             var addFav = new MenuItem { Header = "添加到收藏" };
-            System.Windows.Automation.AutomationProperties.SetName(addFav, "添加到收藏");
             addFav.Click += SongMenu_AddFavorite_Click;
             menu.Items.Add(addFav);
 
             var addList = new MenuItem { Header = "添加整个列表到收藏" };
-            System.Windows.Automation.AutomationProperties.SetName(addList, "添加整个列表到收藏");
             addList.Click += SongMenu_AddListToFavorites_Click;
             menu.Items.Add(addList);
 
@@ -1940,7 +1930,6 @@ public partial class MainWindow : Window
             if (ReferenceEquals(owner, CategorySongsList) || ReferenceEquals(owner, RankingSongsList))
             {
                 var collectList = new MenuItem { Header = "收藏整个歌单到在线收藏" };
-                System.Windows.Automation.AutomationProperties.SetName(collectList, "收藏整个歌单到在线收藏");
                 collectList.Click += SongMenu_CollectRemoteList_Click;
                 menu.Items.Add(collectList);
             }
@@ -1950,14 +1939,12 @@ public partial class MainWindow : Window
         if (ReferenceEquals(owner, FavoriteSongsList))
         {
             var removeFav = new MenuItem { Header = "从收藏移除" };
-            System.Windows.Automation.AutomationProperties.SetName(removeFav, "从收藏移除");
             removeFav.Click += SongMenu_RemoveFavorite_Click;
             menu.Items.Add(removeFav);
         }
 
         // 用第三方播放器播放（所有歌曲列表通用；路径在“设置→第三方播放器”中配置）
         var playExternal = new MenuItem { Header = "用第三方播放器播放" };
-        System.Windows.Automation.AutomationProperties.SetName(playExternal, "用第三方播放器播放");
         playExternal.Click += SongMenu_PlayWithExternal_Click;
         menu.Items.Add(playExternal);
 
@@ -2016,7 +2003,6 @@ public partial class MainWindow : Window
             playQualityItem.Visibility = Visibility.Collapsed;
             downloadItem.Items.Clear();
             var copy = new MenuItem { Header = "复制原文件", Tag = "local" };
-            System.Windows.Automation.AutomationProperties.SetName(copy, "复制原文件");
             copy.Click += SongMenu_Download_Click;
             downloadItem.Items.Add(copy);
             return;
@@ -2049,7 +2035,6 @@ public partial class MainWindow : Window
                 IsCheckable = true,
                 IsChecked = string.Equals(q, currentQuality, StringComparison.OrdinalIgnoreCase)
             };
-            System.Windows.Automation.AutomationProperties.SetName(item, $"音质 {display}");
             item.Click += handler;
             parent.Items.Add(item);
         }

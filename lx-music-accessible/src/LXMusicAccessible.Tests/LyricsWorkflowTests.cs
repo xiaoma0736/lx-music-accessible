@@ -161,9 +161,9 @@ public sealed class LyricsWorkflowTests
             "LXMusicAccessible.App",
             "LyricsWindow.xaml.cs"));
 
-        Assert.Contains("AutomationProperties.Name=\"歌词窗口\"", xaml);
-        Assert.Contains("AutomationProperties.Name=\"歌词文本\"", xaml);
-        Assert.Contains("AutomationProperties.HelpText=\"上下方向键逐句浏览", xaml);
+        Assert.Contains("Title=\"歌词\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"歌词\"", xaml);
+        Assert.DoesNotContain("AutomationProperties.HelpText=", xaml);
         Assert.Contains("AutomationProperties.Name\" Value=\"{Binding AccessibleText}\"", xaml);
         Assert.Contains("Text=\"{Binding DisplayText}\"", xaml);
         Assert.Contains("_workflow.StateChanged += Workflow_StateChanged", code);
