@@ -47,39 +47,46 @@ public sealed class ScriptSourceLifecycleTests
         Assert.True(bundled.IsEnabled);
         Assert.False(string.IsNullOrWhiteSpace(bundled.ContentSha256));
         Assert.NotNull(sources.GetScriptSource().GetScript(bundled.Id));
+        var official = sources.GetEnabledSources().Where(source => source.IsSystemHidden).ToList();
+        Assert.Equal(5, official.Count);
+        Assert.All(official, source =>
+            Assert.Equal(ScriptTrustState.UserApproved, source.TrustState));
     }
 
     [Fact]
-    public async Task Network_import_is_staged_until_the_user_explicitly_enables_it()
+    public async Task Network_import_is_automatically_trusted_enabled_and_persisted()
     {
         await using var app = await TestApplicationHost.StartAsync();
         var sources = app.Services.GetRequiredService<IMusicSourceService>();
         app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(ScriptUrl), ValidScript);
 
-        var staged = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
+        var imported = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
 
-        Assert.False(staged.IsEnabled);
-        Assert.Equal(ScriptTrustState.Untrusted, staged.TrustState);
-        Assert.False(string.IsNullOrWhiteSpace(staged.ContentSha256));
-        Assert.Null(((MusicSourceService)sources).GetScriptSource().GetScript(staged.Id));
+        Assert.True(imported.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, imported.TrustState);
+        Assert.False(string.IsNullOrWhiteSpace(imported.ContentSha256));
+        Assert.NotNull(((MusicSourceService)sources).GetScriptSource().GetScript(imported.Id));
+        var persisted = Assert.Single(
+            await app.Services.GetRequiredService<IDataService>().GetMusicSourcesAsync(),
+            source => source.Id == imported.Id);
+        Assert.True(persisted.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, persisted.TrustState);
 
-        var result = await sources.EnableSourceAsync(staged);
-
-        Assert.True(result.Succeeded);
-        Assert.Equal(ScriptActivationStatus.Activated, result.Status);
-        Assert.True(staged.IsEnabled);
-        Assert.Equal(ScriptTrustState.UserApproved, staged.TrustState);
-        Assert.NotNull(((MusicSourceService)sources).GetScriptSource().GetScript(staged.Id));
+        var reloaded = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+        await reloaded.InitializeScriptSourcesAsync();
+        var restored = Assert.Single(reloaded.GetAllSources(), source => source.Id == imported.Id);
+        Assert.True(restored.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, restored.TrustState);
 
         var sameUrlAgain = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
-        Assert.NotEqual(staged.Id, sameUrlAgain.Id);
-        Assert.False(sameUrlAgain.IsEnabled);
-        Assert.Equal(ScriptTrustState.Untrusted, sameUrlAgain.TrustState);
-        Assert.Null(((MusicSourceService)sources).GetScriptSource().GetScript(sameUrlAgain.Id));
+        Assert.NotEqual(imported.Id, sameUrlAgain.Id);
+        Assert.True(sameUrlAgain.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, sameUrlAgain.TrustState);
+        Assert.NotNull(((MusicSourceService)sources).GetScriptSource().GetScript(sameUrlAgain.Id));
     }
 
     [Fact]
-    public async Task Changed_staged_content_is_rejected_without_disrupting_a_trusted_source()
+    public async Task Changed_imported_content_is_rejected_without_disrupting_the_active_source()
     {
         await using var app = await TestApplicationHost.StartAsync();
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
@@ -87,22 +94,22 @@ public sealed class ScriptSourceLifecycleTests
         await sources.InitializeScriptSourcesAsync();
         var trusted = Assert.Single(sources.GetAllSources(), source =>
             source.TrustState == ScriptTrustState.Bundled);
-        var staged = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
-        staged.ScriptContent += "\n// changed after staging";
+        var imported = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
+        imported.ScriptContent += "\n// changed after import";
 
-        var result = await sources.EnableSourceAsync(staged);
+        var result = await sources.EnableSourceAsync(imported);
 
         Assert.False(result.Succeeded);
         Assert.Equal(ScriptActivationStatus.DigestMismatch, result.Status);
-        Assert.False(staged.IsEnabled);
-        Assert.Equal(ScriptTrustState.Untrusted, staged.TrustState);
-        Assert.Null(sources.GetScriptSource().GetScript(staged.Id));
+        Assert.True(imported.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, imported.TrustState);
+        Assert.Equal(ValidScript, sources.GetScriptSource().GetScript(imported.Id)?.RawScript);
         Assert.True(trusted.IsEnabled);
         Assert.NotNull(sources.GetScriptSource().GetScript(trusted.Id));
     }
 
     [Fact]
-    public async Task Invalid_staged_script_does_not_replace_the_current_trusted_source()
+    public async Task Invalid_import_is_rejected_without_replacing_the_current_trusted_source()
     {
         await using var app = await TestApplicationHost.StartAsync();
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
@@ -110,14 +117,10 @@ public sealed class ScriptSourceLifecycleTests
         await sources.InitializeScriptSourcesAsync();
         var trusted = Assert.Single(sources.GetAllSources(), source =>
             source.TrustState == ScriptTrustState.Bundled);
-        var staged = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
+        var imported = await sources.ImportFromUrlAsync(ScriptUrl);
 
-        var result = await sources.EnableSourceAsync(staged);
-
-        Assert.False(result.Succeeded);
-        Assert.Equal(ScriptActivationStatus.ValidationFailed, result.Status);
-        Assert.False(staged.IsEnabled);
-        Assert.Null(sources.GetScriptSource().GetScript(staged.Id));
+        Assert.Null(imported);
+        Assert.Single(sources.GetAllSources());
         Assert.NotNull(sources.GetScriptSource().GetScript(trusted.Id));
     }
 
@@ -137,7 +140,7 @@ public sealed class ScriptSourceLifecycleTests
     }
 
     [Fact]
-    public async Task Legacy_remote_script_is_preserved_but_disabled_and_never_downloaded()
+    public async Task Legacy_script_without_trust_metadata_is_migrated_enabled_without_network()
     {
         await using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
@@ -149,8 +152,8 @@ public sealed class ScriptSourceLifecycleTests
                 Name = "Legacy remote",
                 ScriptUrl = ScriptUrl,
                 ScriptContent = ValidScript,
-                Type = SourceType.Network,
-                IsEnabled = true,
+                Type = SourceType.BuiltIn,
+                IsEnabled = false,
                 TrustState = ScriptTrustState.Untrusted
             }
         });
@@ -160,9 +163,62 @@ public sealed class ScriptSourceLifecycleTests
 
         Assert.Empty(app.HttpHandler.Requests);
         var legacy = Assert.Single(sources.GetAllSources(), source => source.Id == "legacy-remote");
-        Assert.False(legacy.IsEnabled);
-        Assert.Equal(ScriptTrustState.Untrusted, legacy.TrustState);
-        Assert.Null(sources.GetScriptSource().GetScript(legacy.Id));
+        Assert.True(legacy.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, legacy.TrustState);
+        Assert.Equal("已启用", legacy.StatusText);
+        Assert.Equal(ScriptMusicSource.ComputeSha256(ValidScript), legacy.ContentSha256);
+        Assert.NotNull(sources.GetScriptSource().GetScript(legacy.Id));
+
+        var persisted = Assert.Single(await data.GetMusicSourcesAsync(), source => source.Id == legacy.Id);
+        Assert.True(persisted.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, persisted.TrustState);
+        Assert.Equal(legacy.ContentSha256, persisted.ContentSha256);
+    }
+
+    [Fact]
+    public async Task Explicit_disable_is_preserved_and_enable_command_is_persisted()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
+        app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(ScriptUrl), ValidScript);
+        var imported = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
+        sources.DisableSource(imported);
+        await sources.PersistSourcesAsync();
+
+        var reloaded = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+        await reloaded.InitializeScriptSourcesAsync();
+        var disabled = Assert.Single(reloaded.GetAllSources(), source => source.Id == imported.Id);
+        Assert.False(disabled.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, disabled.TrustState);
+        var changes = 0;
+        reloaded.SourcesChanged += (_, _) => changes++;
+
+        var result = await reloaded.EnableSourceAsync(disabled);
+
+        Assert.True(result.Succeeded);
+        Assert.True(disabled.IsEnabled);
+        Assert.Equal("已启用", disabled.StatusText);
+        Assert.Equal(1, changes);
+        var persisted = Assert.Single(
+            await app.Services.GetRequiredService<IDataService>().GetMusicSourcesAsync(),
+            source => source.Id == imported.Id);
+        Assert.True(persisted.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, persisted.TrustState);
+    }
+
+    [Fact]
+    public async Task Local_import_is_automatically_trusted_and_enabled()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
+        var scriptPath = Path.Combine(app.DataDirectory, "local-source.js");
+        await File.WriteAllTextAsync(scriptPath, ValidScript);
+
+        var imported = Assert.IsType<MusicSource>(await sources.ImportFromFileAsync(scriptPath));
+
+        Assert.True(imported.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, imported.TrustState);
+        Assert.NotNull(sources.GetScriptSource().GetScript(imported.Id));
     }
 
     [Fact]
@@ -174,7 +230,9 @@ public sealed class ScriptSourceLifecycleTests
         await sources.InitializeScriptSourcesAsync();
         var trusted = Assert.Single(sources.GetAllSources(), source =>
             source.TrustState == ScriptTrustState.Bundled);
-        var staged = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
+        var imported = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
+        sources.DisableSource(imported);
+        await sources.PersistSourcesAsync();
         var databasePath = Path.Combine(app.DataDirectory, "lxmusic.db");
         var backupPath = databasePath + ".activation-test-backup";
         SqliteConnection.ClearAllPools();
@@ -184,7 +242,7 @@ public sealed class ScriptSourceLifecycleTests
         ScriptActivationResult result;
         try
         {
-            result = await sources.EnableSourceAsync(staged);
+            result = await sources.EnableSourceAsync(imported);
         }
         finally
         {
@@ -195,9 +253,9 @@ public sealed class ScriptSourceLifecycleTests
 
         Assert.False(result.Succeeded);
         Assert.Equal(ScriptActivationStatus.PersistenceFailed, result.Status);
-        Assert.False(staged.IsEnabled);
-        Assert.Equal(ScriptTrustState.Untrusted, staged.TrustState);
-        Assert.Null(sources.GetScriptSource().GetScript(staged.Id));
+        Assert.False(imported.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, imported.TrustState);
+        Assert.NotNull(sources.GetScriptSource().GetScript(imported.Id));
         Assert.NotNull(sources.GetScriptSource().GetScript(trusted.Id));
     }
 }

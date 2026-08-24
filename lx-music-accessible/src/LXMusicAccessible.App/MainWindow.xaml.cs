@@ -2454,7 +2454,7 @@ public partial class MainWindow : Window
             var src = await _musicSourceService!.ImportFromFileAsync(openFileDialog.FileName);
             if (src == null) { Announce("导入失败：无法读取或解析脚本"); return; }
             RefreshSourceList();
-            await ConfirmAndActivateStagedSourceAsync(src);
+            Announce($"已导入并启用本地音源：{src.Name} v{src.Version}");
         }
         catch (Exception ex) { Announce($"导入失败：{ex.Message}"); }
     }
@@ -2470,32 +2470,15 @@ public partial class MainWindow : Window
             Announce("正在从网络导入音源...");
             var src = await _musicSourceService!.ImportFromUrlAsync(url);
             if (src == null) { Announce("导入失败：无法下载或解析脚本"); return; }
-            if (!string.IsNullOrWhiteSpace(dialog.Value2)) src.Name = dialog.Value2.Trim();
+            if (!string.IsNullOrWhiteSpace(dialog.Value2))
+            {
+                src.Name = dialog.Value2.Trim();
+                await _musicSourceService.UpdateSourceAsync(src);
+            }
             RefreshSourceList();
-            await ConfirmAndActivateStagedSourceAsync(src);
+            Announce($"已导入并启用网络音源：{src.Name} v{src.Version}");
         }
         catch (Exception ex) { Announce($"导入失败：{ex.Message}"); }
-    }
-
-    private async Task ConfirmAndActivateStagedSourceAsync(MusicSource source)
-    {
-        var confirmation = MessageBox.Show(
-            $"音源已暂存，尚未执行。\n\n名称：{source.Name}\n版本：{source.Version}\n来源：{source.ScriptUrl}\nSHA-256：{source.ContentSha256}\n权限：可通过音源运行时访问网络\n变化：新增独立音源，不替换当前可信版本\n\n是否验证并启用此音源？",
-            "启用暂存音源",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning,
-            MessageBoxResult.No);
-        if (confirmation != MessageBoxResult.Yes)
-        {
-            await _musicSourceService!.UpdateSourceAsync(source);
-            Announce($"已暂存但未启用：{source.Name}");
-            return;
-        }
-
-        Announce($"正在验证并启用音源：{source.Name}");
-        var result = await _musicSourceService!.EnableSourceAsync(source);
-        RefreshSourceList();
-        Announce(result.Succeeded ? $"已启用音源：{source.Name}" : result.Message);
     }
 
     private void RefreshSourcesBtn_Click(object sender, RoutedEventArgs e)
@@ -2548,11 +2531,6 @@ public partial class MainWindow : Window
     private async void SourceMenu_Enable_Click(object sender, RoutedEventArgs e)
     {
         if (SourceList.SelectedItem is not MusicSource src) return;
-        if (src.TrustState == ScriptTrustState.Untrusted)
-        {
-            await ConfirmAndActivateStagedSourceAsync(src);
-            return;
-        }
         var result = await _musicSourceService!.EnableSourceAsync(src);
         RefreshSourceList();
         Announce(result.Succeeded ? $"已启用音源：{src.Name}" : result.Message);

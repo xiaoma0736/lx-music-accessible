@@ -110,6 +110,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
             {
                 Id = kvp.Value.SourceId, Name = kvp.Value.SourceName,
                 Version = "2.0.0", Type = SourceType.BuiltIn, IsEnabled = true,
+                TrustState = ScriptTrustState.UserApproved,
                 IsSystemHidden = true,   // 官方API：仅作搜索/歌单/排行/歌词底层，不在音源管理列表展示
                 Priority = kvp.Key switch { "netease" => 1, "qq" => 2, "kg" => 3, "kw" => 4, "migu" => 5, _ => 99 },
                 AddedDate = DateTime.Now, LastUpdateDate = DateTime.Now
@@ -807,21 +808,38 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         MusicSource s,
         CancellationToken cancellationToken = default)
     {
-        if (s.Type == SourceType.BuiltIn)
+        if (IsOfficialBuiltIn(s))
         {
+            var previousEnabled = s.IsEnabled;
+            var previousTrust = s.TrustState;
             s.IsEnabled = true;
-            await _dataService.SaveMusicSourcesAsync(_sources);
+            s.TrustState = ScriptTrustState.UserApproved;
+            try
+            {
+                await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                s.IsEnabled = previousEnabled;
+                s.TrustState = previousTrust;
+                _logger.LogError(ex, "内置音源启用持久化失败，已回滚: {Id}", s.Id);
+                return new(false, ScriptActivationStatus.PersistenceFailed, "保存失败，已恢复原状态");
+            }
             RaiseSourcesChanged();
             return new(true, ScriptActivationStatus.Activated, "内置音源已启用");
         }
 
         if (string.IsNullOrEmpty(s.ScriptContent))
             return new(false, ScriptActivationStatus.ContentMissing, "暂存内容缺失，未启用");
-        if (string.IsNullOrWhiteSpace(s.ContentSha256)
-            || !string.Equals(
-                ScriptMusicSource.ComputeSha256(s.ScriptContent),
-                s.ContentSha256,
-                StringComparison.OrdinalIgnoreCase))
+        var actualDigest = ScriptMusicSource.ComputeSha256(s.ScriptContent);
+        var expectedDigest = s.ContentSha256;
+        if (string.IsNullOrWhiteSpace(expectedDigest))
+        {
+            if (s.TrustState != ScriptTrustState.Untrusted)
+                return new(false, ScriptActivationStatus.DigestMismatch, "脚本摘要缺失，未启用");
+            expectedDigest = actualDigest;
+        }
+        else if (!string.Equals(actualDigest, expectedDigest, StringComparison.OrdinalIgnoreCase))
             return new(false, ScriptActivationStatus.DigestMismatch, "脚本内容已变化或摘要不匹配，未启用");
 
         try
@@ -838,13 +856,15 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
             var previous = _scriptSource.GetScript(s.Id);
             var previousEnabled = s.IsEnabled;
             var previousTrust = s.TrustState;
-            if (!_scriptSource.RegisterVerified(candidate, s.ContentSha256))
+            var previousDigest = s.ContentSha256;
+            if (!_scriptSource.RegisterVerified(candidate, expectedDigest))
                 return new(false, ScriptActivationStatus.DigestMismatch, "脚本摘要不匹配，未启用");
 
             s.IsEnabled = true;
             s.TrustState = s.Type == SourceType.Bundled
                 ? ScriptTrustState.Bundled
                 : ScriptTrustState.UserApproved;
+            s.ContentSha256 = expectedDigest;
             try
             {
                 await _dataService.SaveMusicSourcesAsync(_sources);
@@ -853,6 +873,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
             {
                 s.IsEnabled = previousEnabled;
                 s.TrustState = previousTrust;
+                s.ContentSha256 = previousDigest;
                 if (previous?.RawScript is not null)
                     _scriptSource.RegisterVerified(previous, ScriptMusicSource.ComputeSha256(previous.RawScript));
                 else
@@ -889,7 +910,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
     {
         var scriptId = $"script_{Guid.NewGuid():N}"[..16];
         var info = await _scriptSource.StageFromUrlAsync(url, scriptId, cancellationToken);
-        return await PersistStagedSourceAsync(info, url, SourceType.Network, cancellationToken);
+        return await ImportValidatedSourceAsync(info, url, SourceType.Network, cancellationToken);
     }
 
     public async Task<MusicSource?> ImportFromFileAsync(
@@ -899,10 +920,10 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         if (!File.Exists(filePath)) return null;
         var scriptId = $"script_{Guid.NewGuid():N}"[..16];
         var info = await _scriptSource.StageFromFileAsync(filePath, scriptId, cancellationToken);
-        return await PersistStagedSourceAsync(info, filePath, SourceType.Custom, cancellationToken);
+        return await ImportValidatedSourceAsync(info, filePath, SourceType.Custom, cancellationToken);
     }
 
-    private async Task<MusicSource?> PersistStagedSourceAsync(
+    private async Task<MusicSource?> ImportValidatedSourceAsync(
         LxScriptInfo? info,
         string location,
         SourceType type,
@@ -926,17 +947,17 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
             LastUpdateDate = DateTime.Now
         };
         _sources.Add(source);
-        try
-        {
-            await _dataService.SaveMusicSourcesAsync(_sources);
-        }
-        catch
+        var activation = await EnableSourceAsync(source, cancellationToken);
+        if (!activation.Succeeded)
         {
             _sources.Remove(source);
-            throw;
+            _scriptSource.Remove(source.Id);
+            _logger.LogWarning(
+                "音源导入验证失败: SourceId={SourceId}, Status={Status}",
+                source.Id,
+                activation.Status);
+            return null;
         }
-        ClearCache();
-        RaiseSourcesChanged();
         return source;
     }
 
@@ -944,7 +965,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
     {
         try
         {
-            if (s.Type == SourceType.BuiltIn)
+            if (IsOfficialBuiltIn(s))
             {
                 if (!_apiMap.TryGetValue(s.Id, out var api)) return false;
                 var r = await api.SearchAsync("测试", 1, 1);
@@ -971,7 +992,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
     {
         try
         {
-            if (s.Type == SourceType.BuiltIn) return true;
+            if (IsOfficialBuiltIn(s)) return true;
             return await TryLoadTrustedScriptAsync(s, CancellationToken.None);
         }
         catch (Exception ex) { _logger.LogError(ex, "音源脚本重载失败: {Id}", s.Id); return false; }
@@ -995,7 +1016,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
             "script-source.persist",
             context => PersistSourcesAsync(context.CancellationToken));
 
-    /// <summary>恢复持久化状态；未信任或摘要失败的脚本只展示为禁用，不进入执行器。</summary>
+    /// <summary>恢复持久化状态；旧版有效脚本自动建立摘要并启用，摘要失败的脚本不进入执行器。</summary>
     private async Task LoadPersistedSourcesAsync(CancellationToken cancellationToken)
     {
         try
@@ -1015,16 +1036,28 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
                     continue;
                 }
 
-                if (src.TrustState == ScriptTrustState.Untrusted)
+                var establishTrustFromStoredContent = src.TrustState == ScriptTrustState.Untrusted
+                    && !string.IsNullOrEmpty(src.ScriptContent);
+                if (establishTrustFromStoredContent)
                 {
-                    src.IsEnabled = false;
-                    src.IsDefault = false;
+                    var actualDigest = ScriptMusicSource.ComputeSha256(src.ScriptContent!);
+                    if (string.IsNullOrWhiteSpace(src.ContentSha256))
+                        src.ContentSha256 = actualDigest;
+                    if (string.Equals(src.ContentSha256, actualDigest, StringComparison.OrdinalIgnoreCase))
+                    {
+                        src.TrustState = ScriptTrustState.UserApproved;
+                        src.IsEnabled = true;
+                    }
                 }
                 _sources.Add(src);
-                if (src.IsEnabled && !await TryLoadTrustedScriptAsync(src, cancellationToken))
+                if (src.IsEnabled
+                    && !IsOfficialBuiltIn(src)
+                    && !await TryLoadTrustedScriptAsync(src, cancellationToken))
                 {
                     src.IsEnabled = false;
                     src.IsDefault = false;
+                    if (establishTrustFromStoredContent)
+                        src.TrustState = ScriptTrustState.Untrusted;
                     _logger.LogWarning("持久化脚本未通过摘要或执行校验，已禁用: {Id}", src.Id);
                 }
             }
@@ -1071,4 +1104,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
 
     public IMusicApi? GetApi(string id) => _apiMap.TryGetValue(id, out var a) ? a : null;
     public ScriptMusicSource GetScriptSource() => _scriptSource;
+
+    private bool IsOfficialBuiltIn(MusicSource source) =>
+        source.Type == SourceType.BuiltIn && _apiMap.ContainsKey(source.Id);
 }
