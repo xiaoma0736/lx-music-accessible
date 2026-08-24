@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Net;
 using System.IO;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Data;
@@ -14,6 +15,8 @@ namespace LXMusicAccessible.Tests;
 public sealed class ScriptSourceLifecycleTests
 {
     private const string ScriptUrl = "https://fixture.invalid/source.js";
+    private const string SubscriptionUrl = "https://raw.githubusercontent.com/Macrohard0001/lx-ikun-music-sources/main/V260817/%E6%8E%A8%E8%8D%90/HYWmusic_beta_%E5%85%AC%E7%9B%8A%E6%B5%8B%E8%AF%95.js";
+    private const string SecondSubscriptionUrl = "https://api.music.lerd.dpdns.org/script.js";
     private const string ValidScript = """
         /**
          * @name Test source
@@ -22,6 +25,16 @@ public sealed class ScriptSourceLifecycleTests
          */
         lx.on(lx.EVENT_NAMES.request, function () {
           return Promise.resolve('https://fixture.invalid/audio.mp3');
+        });
+        """;
+
+    private const string UpdatedScript = """
+        /**
+         * @name Updated test source
+         * @version 2.0.0
+         */
+        lx.on(lx.EVENT_NAMES.request, function () {
+          return Promise.resolve('https://fixture.invalid/updated.mp3');
         });
         """;
 
@@ -53,14 +66,16 @@ public sealed class ScriptSourceLifecycleTests
     }
 
     [Fact]
-    public async Task Cold_start_loads_verified_bundled_source_without_network()
+    public async Task Cold_start_keeps_verified_bundled_source_when_subscriptions_are_unavailable()
     {
         await using var app = await TestApplicationHost.StartAsync();
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
 
         await sources.InitializeScriptSourcesAsync();
 
-        Assert.Empty(app.HttpHandler.Requests);
+        Assert.Equal(4, app.HttpHandler.Requests.Count);
+        Assert.All(app.HttpHandler.Requests, request =>
+            Assert.Equal(HttpMethod.Get.Method, request.Method));
         var bundled = Assert.Single(sources.GetAllSources(), source =>
             source.TrustState == ScriptTrustState.Bundled);
         Assert.True(bundled.IsEnabled);
@@ -70,6 +85,181 @@ public sealed class ScriptSourceLifecycleTests
         Assert.Equal(5, official.Count);
         Assert.All(official, source =>
             Assert.Equal(ScriptTrustState.UserApproved, source.TrustState));
+    }
+
+    [Fact]
+    public async Task Cold_start_imports_a_valid_repository_subscription()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
+        app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(SubscriptionUrl), ValidScript);
+
+        await sources.InitializeScriptSourcesAsync();
+
+        var subscribed = Assert.Single(sources.GetAllSources(), source => source.Id == "hyw");
+        Assert.True(subscribed.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, subscribed.TrustState);
+        Assert.Equal(SubscriptionUrl, subscribed.ScriptUrl);
+        Assert.NotNull(sources.GetScriptSource().GetScript(subscribed.Id));
+    }
+
+    [Fact]
+    public async Task Subscription_update_preserves_an_explicitly_disabled_source()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var data = app.Services.GetRequiredService<IDataService>();
+        await data.SaveMusicSourcesAsync([
+            new MusicSource
+            {
+                Id = "hyw",
+                Name = "Old test source",
+                Version = "1.0.0",
+                ScriptUrl = SubscriptionUrl,
+                ScriptContent = ValidScript,
+                ContentSha256 = ScriptMusicSource.ComputeSha256(ValidScript),
+                TrustState = ScriptTrustState.UserApproved,
+                Type = SourceType.Network,
+                IsEnabled = false,
+                Priority = 10
+            }
+        ]);
+        app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(SubscriptionUrl), UpdatedScript);
+        var sources = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+
+        await sources.InitializeScriptSourcesAsync();
+
+        var updated = Assert.Single(sources.GetAllSources(), source => source.Id == "hyw");
+        Assert.Equal("2.0.0", updated.Version);
+        Assert.Equal(UpdatedScript, updated.ScriptContent);
+        Assert.Equal(ScriptMusicSource.ComputeSha256(UpdatedScript), updated.ContentSha256);
+        Assert.Equal(ScriptTrustState.UserApproved, updated.TrustState);
+        Assert.False(updated.IsEnabled);
+        var persisted = Assert.Single(await data.GetMusicSourcesAsync(), source => source.Id == "hyw");
+        Assert.False(persisted.IsEnabled);
+        Assert.Equal(UpdatedScript, persisted.ScriptContent);
+    }
+
+    [Fact]
+    public async Task Invalid_subscription_update_keeps_the_active_version()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var data = app.Services.GetRequiredService<IDataService>();
+        await data.SaveMusicSourcesAsync([
+            new MusicSource
+            {
+                Id = "hyw",
+                Name = "Existing source",
+                Version = "1.0.0",
+                ScriptUrl = SubscriptionUrl,
+                ScriptContent = ValidScript,
+                ContentSha256 = ScriptMusicSource.ComputeSha256(ValidScript),
+                TrustState = ScriptTrustState.UserApproved,
+                Type = SourceType.Network,
+                IsEnabled = true,
+                Priority = 10
+            }
+        ]);
+        app.HttpHandler.RegisterText(
+            HttpMethod.Get,
+            new Uri(SubscriptionUrl),
+            "/* no request handler */");
+        var sources = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+
+        await sources.InitializeScriptSourcesAsync();
+
+        var retained = Assert.Single(sources.GetAllSources(), source => source.Id == "hyw");
+        Assert.True(retained.IsEnabled);
+        Assert.Equal(ValidScript, retained.ScriptContent);
+        Assert.Equal(ValidScript, sources.GetScriptSource().GetScript("hyw")?.RawScript);
+        var persisted = Assert.Single(await data.GetMusicSourcesAsync(), source => source.Id == "hyw");
+        Assert.Equal(ValidScript, persisted.ScriptContent);
+    }
+
+    [Fact]
+    public async Task Oversized_subscription_update_keeps_the_active_version()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var data = app.Services.GetRequiredService<IDataService>();
+        await data.SaveMusicSourcesAsync([
+            new MusicSource
+            {
+                Id = "hyw",
+                Name = "Existing source",
+                Version = "1.0.0",
+                ScriptUrl = SubscriptionUrl,
+                ScriptContent = ValidScript,
+                ContentSha256 = ScriptMusicSource.ComputeSha256(ValidScript),
+                TrustState = ScriptTrustState.UserApproved,
+                Type = SourceType.Network,
+                IsEnabled = true,
+                Priority = 10
+            }
+        ]);
+        app.HttpHandler.Register(HttpMethod.Get, new Uri(SubscriptionUrl), () =>
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(new byte[ScriptNetworkClient.MaxScriptBytes + 1])
+            });
+        var sources = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+
+        await sources.InitializeScriptSourcesAsync();
+
+        var retained = Assert.Single(sources.GetAllSources(), source => source.Id == "hyw");
+        Assert.True(retained.IsEnabled);
+        Assert.Equal(ValidScript, retained.ScriptContent);
+        Assert.Equal(ValidScript, sources.GetScriptSource().GetScript("hyw")?.RawScript);
+    }
+
+    [Fact]
+    public async Task A_broken_subscription_does_not_block_later_valid_sources()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
+        app.HttpHandler.RegisterText(
+            HttpMethod.Get,
+            new Uri(SubscriptionUrl),
+            "/* no request handler */");
+        app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(SecondSubscriptionUrl), ValidScript);
+
+        await sources.InitializeScriptSourcesAsync();
+
+        Assert.DoesNotContain(sources.GetAllSources(), source => source.Id == "hyw");
+        var imported = Assert.Single(sources.GetAllSources(), source => source.Id == "jheapi");
+        Assert.True(imported.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, imported.TrustState);
+    }
+
+    [Fact]
+    public async Task Existing_subscription_url_is_updated_without_a_duplicate()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var data = app.Services.GetRequiredService<IDataService>();
+        await data.SaveMusicSourcesAsync([
+            new MusicSource
+            {
+                Id = "script_existing",
+                Name = "Manually imported subscription",
+                Version = "1.0.0",
+                ScriptUrl = SubscriptionUrl,
+                ScriptContent = ValidScript,
+                ContentSha256 = ScriptMusicSource.ComputeSha256(ValidScript),
+                TrustState = ScriptTrustState.UserApproved,
+                Type = SourceType.Network,
+                IsEnabled = true,
+                Priority = 10
+            }
+        ]);
+        app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(SubscriptionUrl), UpdatedScript);
+        var sources = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+
+        await sources.InitializeScriptSourcesAsync();
+
+        var matching = sources.GetAllSources()
+            .Where(source => source.ScriptUrl == SubscriptionUrl)
+            .ToList();
+        var updated = Assert.Single(matching);
+        Assert.Equal("script_existing", updated.Id);
+        Assert.Equal(UpdatedScript, updated.ScriptContent);
     }
 
     [Fact]
@@ -180,7 +370,8 @@ public sealed class ScriptSourceLifecycleTests
 
         await sources.InitializeScriptSourcesAsync();
 
-        Assert.Empty(app.HttpHandler.Requests);
+        Assert.DoesNotContain(app.HttpHandler.Requests, request =>
+            request.Uri == ScriptUrl);
         var legacy = Assert.Single(sources.GetAllSources(), source => source.Id == "legacy-remote");
         Assert.True(legacy.IsEnabled);
         Assert.Equal(ScriptTrustState.UserApproved, legacy.TrustState);

@@ -29,6 +29,21 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
     private const string BundledScriptId = "bundled_verified_fallback";
     private const string BundledScriptResource = "LXMusicAccessible.Core.MusicApi.Scripts.verified-fallback.js";
     private const string BundledScriptSha256 = "9d4aa71b7814860242f2cdfc3370da9cd6d415e290757c9cf122e74069641d50";
+    private static readonly SubscriptionSource[] SubscriptionSources =
+    [
+        new(
+            "hyw",
+            "https://raw.githubusercontent.com/Macrohard0001/lx-ikun-music-sources/main/V260817/%E6%8E%A8%E8%8D%90/HYWmusic_beta_%E5%85%AC%E7%9B%8A%E6%B5%8B%E8%AF%95.js"),
+        new(
+            "jheapi",
+            "https://api.music.lerd.dpdns.org/script.js"),
+        new(
+            "quandouyao",
+            "https://raw.githubusercontent.com/Macrohard0001/lx-ikun-music-sources/main/V260817/%E5%85%B6%E4%BB%96/%E5%85%A8%E8%B1%86%E8%A6%81-%E8%81%9A%E5%90%88%E9%9F%B3%E6%BA%90-V4.1%EF%BC%88%E9%85%B7%E7%8B%97%E6%8C%82%E4%BA%86%EF%BC%89.js"),
+        new(
+            "nianxin",
+            "https://raw.githubusercontent.com/Macrohard0001/lx-ikun-music-sources/main/V260817/%E5%85%B6%E4%BB%96/%E5%BF%B5%E5%BF%83%E9%9F%B3%E6%BA%90%20v1.0.2.js")
+    ];
 
     /// <summary>音源列表变化事件（默认/启用/禁用/增删等），供界面刷新音源列表</summary>
     public event EventHandler? SourcesChanged;
@@ -119,7 +134,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         _logger.LogInformation("初始化 {Count} 个内置官方API完成（系统隐藏，仅作底层数据源）", _sources.Count);
     }
 
-    /// <summary>只从随版本资源和已验证持久化内容初始化；冷启动绝不下载脚本。</summary>
+    /// <summary>恢复本地可信内容，再后台刷新固定的免费音源订阅。</summary>
     public async Task InitializeScriptSourcesAsync(CancellationToken cancellationToken = default)
     {
         if (_scriptsInitialized) return;
@@ -129,6 +144,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         await LoadPersistedSourcesAsync(cancellationToken);
 
         await LoadBundledSourceAsync(cancellationToken);
+
+        await RefreshSubscriptionsAsync(cancellationToken);
 
         await PersistSourcesAsync(cancellationToken);
         RaiseSourcesChanged();
@@ -179,6 +196,112 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         existing.ContentSha256 = BundledScriptSha256;
         existing.IsEnabled = enabled;
         existing.LastUpdateDate = DateTime.Now;
+    }
+
+    private async Task RefreshSubscriptionsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var subscription in SubscriptionSources)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await RefreshSubscriptionAsync(subscription, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    "订阅音源刷新失败，保留现有版本: SourceId={SourceId}, ErrorType={ErrorType}",
+                    subscription.Id,
+                    exception.GetType().Name);
+            }
+        }
+    }
+
+    private async Task RefreshSubscriptionAsync(
+        SubscriptionSource subscription,
+        CancellationToken cancellationToken)
+    {
+        var existing = _sources.FirstOrDefault(source =>
+                string.Equals(source.Id, subscription.Id, StringComparison.OrdinalIgnoreCase))
+            ?? _sources.FirstOrDefault(source =>
+                string.Equals(source.ScriptUrl, subscription.Url, StringComparison.OrdinalIgnoreCase));
+        var sourceId = existing?.Id ?? subscription.Id;
+        var candidate = await _scriptSource.StageFromUrlAsync(
+            subscription.Url,
+            sourceId,
+            cancellationToken);
+        if (candidate?.RawScript is null
+            || !await _scriptEngine.TestLoadAsync(candidate, cancellationToken))
+        {
+            _logger.LogWarning(
+                "订阅音源无有效更新，保留现有版本: SourceId={SourceId}",
+                subscription.Id);
+            return;
+        }
+
+        var digest = ScriptMusicSource.ComputeSha256(candidate.RawScript);
+        var previousScript = existing is null ? null : _scriptSource.GetScript(existing.Id);
+        var previous = existing is null ? null : SourceSnapshot.Capture(existing);
+        var source = existing ?? new MusicSource
+        {
+            Id = sourceId,
+            Priority = 10 + _sources.Count,
+            AddedDate = DateTime.Now
+        };
+        var preserveDisabled = existing is not null
+            && existing.TrustState != ScriptTrustState.Untrusted
+            && !existing.IsEnabled;
+
+        source.Name = candidate.Name;
+        source.Version = candidate.Version
+            ?? (string.IsNullOrEmpty(source.Version) ? "1.0" : source.Version);
+        source.ScriptUrl = subscription.Url;
+        source.ScriptContent = candidate.RawScript;
+        source.ContentSha256 = digest;
+        source.Type = SourceType.Network;
+        source.TrustState = ScriptTrustState.UserApproved;
+        source.IsEnabled = !preserveDisabled;
+        source.LastUpdateDate = DateTime.Now;
+        if (existing is null) _sources.Add(source);
+
+        if (!_scriptSource.RegisterVerified(candidate, digest))
+        {
+            if (existing is null) _sources.Remove(source);
+            else previous!.Restore(existing);
+            return;
+        }
+
+        try
+        {
+            await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
+        }
+        catch
+        {
+            if (existing is null) _sources.Remove(source);
+            else previous!.Restore(existing);
+            if (previousScript?.RawScript is not null)
+            {
+                _scriptSource.RegisterVerified(
+                    previousScript,
+                    ScriptMusicSource.ComputeSha256(previousScript.RawScript));
+            }
+            else
+            {
+                _scriptSource.Remove(sourceId);
+            }
+            throw;
+        }
+
+        ClearCache();
+        _logger.LogInformation(
+            "订阅音源已更新: SourceId={SourceId}, Name={Name}, Version={Version}",
+            subscription.Id,
+            candidate.Name,
+            candidate.Version);
     }
 
     // ================================================================
@@ -1107,4 +1230,42 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
 
     private bool IsOfficialBuiltIn(MusicSource source) =>
         source.Type == SourceType.BuiltIn && _apiMap.ContainsKey(source.Id);
+
+    private sealed record SubscriptionSource(string Id, string Url);
+
+    private sealed record SourceSnapshot(
+        string Name,
+        string Version,
+        string ScriptUrl,
+        string? ScriptContent,
+        bool IsEnabled,
+        SourceType Type,
+        ScriptTrustState TrustState,
+        string? ContentSha256,
+        DateTime LastUpdateDate)
+    {
+        internal static SourceSnapshot Capture(MusicSource source) => new(
+            source.Name,
+            source.Version,
+            source.ScriptUrl,
+            source.ScriptContent,
+            source.IsEnabled,
+            source.Type,
+            source.TrustState,
+            source.ContentSha256,
+            source.LastUpdateDate);
+
+        internal void Restore(MusicSource source)
+        {
+            source.Name = Name;
+            source.Version = Version;
+            source.ScriptUrl = ScriptUrl;
+            source.ScriptContent = ScriptContent;
+            source.IsEnabled = IsEnabled;
+            source.Type = Type;
+            source.TrustState = TrustState;
+            source.ContentSha256 = ContentSha256;
+            source.LastUpdateDate = LastUpdateDate;
+        }
+    }
 }
