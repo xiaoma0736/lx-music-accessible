@@ -1,14 +1,40 @@
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
+using System.Windows.Controls;
 using System.Xml.Linq;
+using LXMusicAccessible.App;
 using LXMusicAccessible.Models;
 using Xunit;
 
 namespace LXMusicAccessible.Tests;
 
+[Collection("WPF accessibility semantics")]
 public sealed partial class AccessibilitySemanticsTests
 {
     private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
+
+    private static readonly IReadOnlyDictionary<string, string> StaticLabeledInputNames =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["SearchSourceCombo"] = "搜索音源",
+            ["SearchTypeComboBox"] = "搜索类型",
+            ["CategorySourceCombo"] = "分类歌单音源",
+            ["RankingSourceCombo"] = "排行榜音源",
+            ["DefaultQualityCombo"] = "默认播放音质",
+            ["CloseBehaviorCombo"] = "按 Alt+F4 时",
+            ["ThirdPartyPlayerPathBox"] = "第三方播放器路径",
+            ["DownloadPathBox"] = "下载目录",
+            ["DownloadQualityCombo"] = "默认下载音质",
+            ["DownloadNameOrderCombo"] = "歌曲命名顺序",
+            ["DataDirBox"] = "数据目录",
+            ["VoiceCombo"] = "朗读语音",
+            ["SpeechRateCombo"] = "朗读语速",
+            ["ChapterCombo"] = "章节"
+        };
 
     private static readonly IReadOnlyDictionary<string, string[]> RoleTerms =
         new Dictionary<string, string[]>(StringComparer.Ordinal)
@@ -31,6 +57,166 @@ public sealed partial class AccessibilitySemanticsTests
             ["TextBox"] = ["输入框", "文本框", "编辑框"],
             ["Window"] = ["窗口", "对话框"]
         };
+
+    [Fact]
+    public async Task Close_behavior_combo_exposes_task_name_separately_from_selection()
+    {
+        var mainWindow = LoadXamlDocuments()
+            .Single(item => item.File.Name == "MainWindow.xaml")
+            .Root;
+        var comboMetadata = mainWindow.Descendants()
+            .Single(element => ElementId(element) == "CloseBehaviorCombo");
+        var labelMetadata = mainWindow.Descendants()
+            .Single(element => Attribute(element, "Target")
+                .Contains("ElementName=CloseBehaviorCombo", StringComparison.Ordinal));
+
+        await RunOnStaThreadAsync(() =>
+        {
+            var selectedItem = new ComboBoxItem { Content = "关闭应用" };
+            var combo = new ComboBox { Items = { selectedItem } };
+            combo.SelectedIndex = 0;
+            var label = new Label
+            {
+                Content = Attribute(labelMetadata, "Content"),
+                Target = combo
+            };
+            var window = new System.Windows.Window
+            {
+                Content = new StackPanel { Children = { label, combo } },
+                ShowInTaskbar = false
+            };
+            var explicitName = Attribute(comboMetadata, "AutomationProperties.Name");
+            if (!string.IsNullOrWhiteSpace(explicitName))
+                AutomationProperties.SetName(combo, explicitName);
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                var peer = new ComboBoxAutomationPeer(combo);
+                var selection = Assert.IsAssignableFrom<ISelectionProvider>(
+                    peer.GetPattern(PatternInterface.Selection));
+                Assert.Single(selection.GetSelection());
+
+                Assert.Equal("按 Alt+F4 时", peer.GetName());
+                Assert.Equal("关闭应用", selectedItem.Content);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Label_target_alone_does_not_supply_a_combo_peer_name()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var combo = new ComboBox();
+            var label = new Label { Content = "按 Alt+F4 时", Target = combo };
+            var panel = new StackPanel { Children = { label, combo } };
+            var window = new System.Windows.Window
+            {
+                Content = panel,
+                ShowInTaskbar = false
+            };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                Assert.Empty(new ComboBoxAutomationPeer(combo).GetName());
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task All_static_label_target_inputs_expose_task_name_through_real_wpf_peers()
+    {
+        var inputs = LoadXamlDocuments()
+            .Where(item => item.File.Name != "TextInputDialog.xaml")
+            .SelectMany(item => item.Root.Descendants()
+                .Where(element => element.Name.LocalName == "Label")
+                .Select(label => Regex.Match(Attribute(label, "Target"), @"ElementName=([^}\s]+)"))
+                .Where(match => match.Success)
+                .Select(match => item.Root.Descendants()
+                    .Single(element => ElementId(element) == match.Groups[1].Value)))
+            .ToArray();
+
+        Assert.Equal(
+            StaticLabeledInputNames.Keys.Order(StringComparer.Ordinal),
+            inputs.Select(ElementId).Order(StringComparer.Ordinal));
+
+        await RunOnStaThreadAsync(() =>
+        {
+            foreach (var input in inputs)
+            {
+                var id = ElementId(input);
+                var expectedName = StaticLabeledInputNames[id];
+                var declaredName = Attribute(input, "AutomationProperties.Name");
+                Assert.Equal(expectedName, declaredName);
+
+                FrameworkElement control;
+                AutomationPeer peer;
+                if (input.Name.LocalName == "ComboBox")
+                {
+                    var selectedItem = new ComboBoxItem { Content = "当前选项" };
+                    var combo = new ComboBox { Items = { selectedItem }, SelectedIndex = 0 };
+                    control = combo;
+                    AutomationProperties.SetName(combo, declaredName);
+                    peer = new ComboBoxAutomationPeer(combo);
+                    Assert.IsAssignableFrom<ISelectionProvider>(
+                        peer.GetPattern(PatternInterface.Selection));
+                    Assert.Equal("当前选项", selectedItem.Content);
+                }
+                else
+                {
+                    var textBox = new TextBox { Text = "当前值" };
+                    control = textBox;
+                    AutomationProperties.SetName(textBox, declaredName);
+                    peer = new TextBoxAutomationPeer(textBox);
+                    var value = Assert.IsAssignableFrom<IValueProvider>(
+                        peer.GetPattern(PatternInterface.Value));
+                    Assert.Equal("当前值", value.Value);
+                }
+
+                Assert.Equal(expectedName, peer.GetName());
+                Assert.Empty(AutomationProperties.GetHelpText(control));
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Dynamic_text_input_dialog_exposes_runtime_task_names_separately_from_values()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var dialog = new TextInputDialog(
+                "从网络导入音源",
+                "音源URL：",
+                "https://example.invalid/source.js",
+                "音源名称（可留空）：",
+                "示例音源");
+            try
+            {
+                AssertTextInputSemantics(
+                    dialog.InputBox1,
+                    "音源URL",
+                    "https://example.invalid/source.js");
+                AssertTextInputSemantics(
+                    dialog.InputBox2,
+                    "音源名称（可留空）",
+                    "示例音源");
+            }
+            finally
+            {
+                dialog.Close();
+            }
+        });
+    }
 
     [Fact]
     public void Role_word_diagnostic_distinguishes_control_types_from_business_terms()
@@ -96,7 +282,7 @@ public sealed partial class AccessibilitySemanticsTests
         {
             foreach (var element in root.DescendantsAndSelf().Where(IsInteractive))
             {
-                if (HasNameSource(root, element)) continue;
+                if (HasNameSource(file, element)) continue;
                 issues.Add($"{file.Name}|{ElementRole(element)}|{ElementId(element)}");
             }
         }
@@ -111,7 +297,7 @@ public sealed partial class AccessibilitySemanticsTests
         var files = new[] { "LXMusicAccessible.App", "LXMusicAccessible.Setup" }
             .SelectMany(project => Directory.EnumerateFiles(
                 Path.Combine(root, "src", project), "*.cs", SearchOption.AllDirectories));
-        var occurrences = files
+        var sourceLines = files
             .SelectMany(file => File.ReadLines(file)
                 .Select((line, index) => (File: Path.GetFileName(file), Line: index + 1, Text: line))
                 .Where(item => item.Text.Contains("AutomationProperties.SetName(", StringComparison.Ordinal)
@@ -120,10 +306,20 @@ public sealed partial class AccessibilitySemanticsTests
                     || item.Text.Contains("GetHelpTextCore(", StringComparison.Ordinal)
                     || Regex.IsMatch(item.Text, @"\bToolTip\s*=")
                     || Regex.IsMatch(item.Text, @"\.SetToolTip\s*\(")))
+            .ToArray();
+        var descriptions = sourceLines
+            .Where(item => !item.Text.Contains("AutomationProperties.SetName(", StringComparison.Ordinal))
             .Select(item => $"{item.File}:{item.Line}")
             .ToArray();
+        var runtimeNames = sourceLines
+            .Where(item => item.Text.Contains("AutomationProperties.SetName(", StringComparison.Ordinal))
+            .ToArray();
 
-        Assert.Empty(occurrences);
+        Assert.Empty(descriptions);
+        Assert.Equal(2, runtimeNames.Length);
+        Assert.All(runtimeNames, item => Assert.Equal("TextInputDialog.xaml.cs", item.File));
+        Assert.Contains(runtimeNames, item => item.Text.Contains("InputBox1", StringComparison.Ordinal));
+        Assert.Contains(runtimeNames, item => item.Text.Contains("InputBox2", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -182,15 +378,13 @@ public sealed partial class AccessibilitySemanticsTests
             && Attribute(element, "Property") is
                 "AutomationProperties.HelpText" or "ToolTip" or "ToolTipService.ToolTip");
 
-    private static bool HasNameSource(XElement root, XElement element)
+    private static bool HasNameSource(FileInfo file, XElement element)
     {
         if (!string.IsNullOrWhiteSpace(Attribute(element, "AutomationProperties.Name"))) return true;
         if (!string.IsNullOrWhiteSpace(VisibleText(element))) return true;
 
         var id = ElementId(element);
-        return id.Length > 0 && root.Descendants().Any(label =>
-            label.Name.LocalName == "Label"
-            && Attribute(label, "Target").Contains($"ElementName={id}", StringComparison.Ordinal));
+        return file.Name == "TextInputDialog.xaml" && id is "InputBox1" or "InputBox2";
     }
 
     private static bool IsInteractive(XElement element)
@@ -248,4 +442,41 @@ public sealed partial class AccessibilitySemanticsTests
         }
         throw new DirectoryNotFoundException("Repository root was not found.");
     }
+
+    private static Task RunOnStaThreadAsync(Action action)
+    {
+        var completion = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                action();
+                completion.SetResult();
+            }
+            catch (Exception exception)
+            {
+                completion.SetException(exception);
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return completion.Task;
+    }
+
+    private static void AssertTextInputSemantics(
+        TextBox textBox,
+        string expectedName,
+        string expectedValue)
+    {
+        var peer = new TextBoxAutomationPeer(textBox);
+        var value = Assert.IsAssignableFrom<IValueProvider>(
+            peer.GetPattern(PatternInterface.Value));
+        Assert.Equal(expectedName, peer.GetName());
+        Assert.Equal(expectedValue, value.Value);
+        Assert.Empty(AutomationProperties.GetHelpText(textBox));
+    }
 }
+
+[CollectionDefinition("WPF accessibility semantics", DisableParallelization = true)]
+public sealed class WpfAccessibilitySemanticsCollection;
