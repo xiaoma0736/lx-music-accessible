@@ -395,12 +395,6 @@ public sealed class LyricsWorkflow : IDisposable
     private void Playback_StateChanged(object? sender, PlayerStateChangedEventArgs e)
     {
         if (_disposed) return;
-        if (e.NewState == PlayerState.Loading && e.CurrentMusic is not null)
-        {
-            _ = LoadAsync(e.CurrentMusic);
-            return;
-        }
-
         if (e.NewState == PlayerState.Playing && e.CurrentMusic is not null)
         {
             bool needsLoad;

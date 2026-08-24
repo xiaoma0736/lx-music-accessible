@@ -89,6 +89,9 @@ public sealed class LyricsWorkflowTests
         var song = Song("playing");
 
         harness.Playback.Raise(PlayerState.Loading, song);
+        Assert.Equal(LyricsLoadStatus.Empty, harness.Workflow.Current.Status);
+        Assert.False(source.WasRequested("playing"));
+        harness.Playback.Raise(PlayerState.Playing, song);
         await source.WaitUntilRequestedAsync("playing");
         source.Complete("playing", Result(Line(1, "一"), Line(2, "二")));
         await WaitUntilAsync(() => harness.Workflow.Current.Status == LyricsLoadStatus.Ready);
@@ -107,7 +110,7 @@ public sealed class LyricsWorkflowTests
         Assert.Equal(1, harness.Workflow.Current.CurrentIndex);
 
         var cancelled = Song("cancelled");
-        harness.Playback.Raise(PlayerState.Loading, cancelled);
+        harness.Playback.Raise(PlayerState.Playing, cancelled);
         await source.WaitUntilRequestedAsync("cancelled");
         harness.Playback.Raise(PlayerState.Stopped, cancelled);
         await WaitUntilAsync(() => source.WasCancelled("cancelled"));
@@ -272,6 +275,11 @@ public sealed class LyricsWorkflowTests
         public bool WasCancelled(string id)
         {
             lock (_gate) return _requests.TryGetValue(id, out var request) && request.Cancelled;
+        }
+
+        public bool WasRequested(string id)
+        {
+            lock (_gate) return _requests.ContainsKey(id);
         }
 
         public async Task WaitUntilRequestedAsync(string id) =>

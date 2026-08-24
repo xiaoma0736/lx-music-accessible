@@ -21,6 +21,8 @@ public interface IPlaybackSourceAdapter
 public sealed class MusicPlaybackSourceAdapter(
     IMusicSourceService sources) : IPlaybackSourceAdapter
 {
+    private static readonly TimeSpan ResolutionBudget = TimeSpan.FromSeconds(10);
+
     public IReadOnlyList<string> GetAlternativeSourceIds(string currentSource) =>
         sources.GetEnabledSources()
             .Where(source => source.IsEnabled
@@ -30,27 +32,39 @@ public sealed class MusicPlaybackSourceAdapter(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-    public Task<string?> ResolveAsync(
+    public async Task<string?> ResolveAsync(
         MusicInfo music,
         string quality,
-        CancellationToken cancellationToken) =>
-        sources.GetPlayUrlAsync(
-            music,
-            music.Source,
-            quality,
-            cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        attempt.CancelAfter(ResolutionBudget);
+        try
+        {
+            return await sources.GetPlayUrlAsync(
+                music,
+                music.Source,
+                quality,
+                attempt.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
 
     public async Task<IReadOnlyList<MusicInfo>> FindAlternativesAsync(
         MusicInfo music,
         string sourceId,
         CancellationToken cancellationToken)
     {
-        var result = await sources.SearchAsync(
+        var api = sources.GetApi(sourceId);
+        if (api is null) return [];
+        var result = await api.SearchAsync(
             MusicSearchMatcher.BuildSearchKeyword(music),
             1,
             20,
             "song",
-            sourceId,
             cancellationToken);
         return MusicSearchMatcher.FindBestMatches(result.Items, music);
     }

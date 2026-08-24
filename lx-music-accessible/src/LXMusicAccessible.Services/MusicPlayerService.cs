@@ -15,6 +15,8 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
     private const string PrecacheSlot = "music-player.precache";
     private const int MaxAlternativeSources = 5;
     private const int MaxMatchesPerSource = 2;
+    private static readonly TimeSpan PlaybackAttemptBudget = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan AlternativeResolutionBudget = TimeSpan.FromSeconds(10);
 
     private readonly object _gate = new();
     private readonly ILogger<MusicPlayerService> _logger;
@@ -249,7 +251,10 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         bool forceResolve,
         BackgroundWorkContext context)
     {
-        var token = context.CancellationToken;
+        var generationToken = context.CancellationToken;
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(generationToken);
+        attempt.CancelAfter(PlaybackAttemptBudget);
+        var token = attempt.Token;
         if (!PublishState(context, revision, PlayerState.Loading, requestedMusic))
             return Superseded();
 
@@ -267,23 +272,35 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
             {
                 var sourceIds = GetAlternativeSourceIds(requestedMusic);
 
-                foreach (var sourceId in sourceIds)
-                {
-                    token.ThrowIfCancellationRequested();
-                    var alternatives = await TryFindAlternativesAsync(
+                using var fallback = CancellationTokenSource.CreateLinkedTokenSource(token);
+                fallback.CancelAfter(AlternativeResolutionBudget);
+                var pending = sourceIds
+                    .Select(sourceId => TryResolveAlternativeAsync(
                         requestedMusic,
                         sourceId,
-                        token);
-                    foreach (var candidate in alternatives.Take(MaxMatchesPerSource))
+                        quality,
+                        fallback.Token))
+                    .ToList();
+                var allAttempts = pending.ToArray();
+                try
+                {
+                    while (pending.Count > 0)
                     {
                         token.ThrowIfCancellationRequested();
-                        if (!MusicSearchMatcher.IsSameSong(candidate, requestedMusic)) continue;
-                        var url = await TryResolveAsync(candidate, quality, token);
-                        if (string.IsNullOrWhiteSpace(url)
-                            || !await TryLoadAsync(candidate, url, token))
+                        var completed = await Task.WhenAny(pending);
+                        pending.Remove(completed);
+                        AlternativeResolution? alternative;
+                        try { alternative = await completed; }
+                        catch (OperationCanceledException) when (
+                            fallback.IsCancellationRequested && !token.IsCancellationRequested)
                         {
-                            continue;
+                            _logger.LogDebug("Playback alternative resolution reached its fixed budget");
+                            break;
                         }
+                        if (alternative is null) continue;
+                        var candidate = alternative.Music;
+                        var url = alternative.Url;
+                        if (!await TryLoadAsync(candidate, url, token)) continue;
 
                         var switched = CommitPlaying(
                             context,
@@ -301,14 +318,29 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
                         return switched;
                     }
                 }
+                finally
+                {
+                    fallback.Cancel();
+                    try { await Task.WhenAll(allAttempts); }
+                    catch (OperationCanceledException) when (fallback.IsCancellationRequested)
+                    {
+                        _logger.LogDebug("Playback alternative resolution was cancelled");
+                    }
+                }
             }
 
             return CommitFailure(context, revision, requestedMusic);
         }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        catch (OperationCanceledException) when (generationToken.IsCancellationRequested)
         {
             _audioPlayer.Stop();
             return Superseded();
+        }
+        catch (OperationCanceledException) when (attempt.IsCancellationRequested)
+        {
+            _audioPlayer.Stop();
+            _logger.LogDebug("Playback generation reached its fixed budget");
+            return CommitFailure(context, revision, requestedMusic);
         }
     }
 
@@ -360,6 +392,26 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
                 exception.GetType().Name);
             return [];
         }
+    }
+
+    private async Task<AlternativeResolution?> TryResolveAlternativeAsync(
+        MusicInfo requestedMusic,
+        string sourceId,
+        string quality,
+        CancellationToken cancellationToken)
+    {
+        var alternatives = await TryFindAlternativesAsync(
+            requestedMusic,
+            sourceId,
+            cancellationToken);
+        foreach (var candidate in alternatives.Take(MaxMatchesPerSource))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!MusicSearchMatcher.IsSameSong(candidate, requestedMusic)) continue;
+            var url = await TryResolveAsync(candidate, quality, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(url)) return new(candidate, url);
+        }
+        return null;
     }
 
     private async Task<bool> TryLoadAsync(
@@ -848,6 +900,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         string.Equals(music.Source, "Local", StringComparison.OrdinalIgnoreCase);
 
     private static string MusicKey(MusicInfo music) => $"{music.Source}|{music.Id}";
+    private sealed record AlternativeResolution(MusicInfo Music, string Url);
     private static string ActivityId(long revision) => $"playback-{revision}";
     private static PlaybackResult Superseded() => new(
         PlaybackResultStatus.Superseded,

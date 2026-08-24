@@ -26,6 +26,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
     private bool _defaultTouchedByUser = false;
     private readonly HttpClient _playUrlProbeClient;
     private readonly Dictionary<string, ScriptHealth> _scriptHealth = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _scriptHealthGate = new();
     private const string BundledScriptId = "bundled_verified_fallback";
     private const string BundledScriptResource = "LXMusicAccessible.Core.MusicApi.Scripts.verified-fallback.js";
     private const string BundledScriptSha256 = "9d4aa71b7814860242f2cdfc3370da9cd6d415e290757c9cf122e74069641d50";
@@ -753,25 +754,38 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
     /// <summary>脚本源连续失败 ≥2 次 → 本会话降级（快速跳过）一段时间，成功即复位</summary>
     private bool IsScriptDegraded(string id)
     {
-        if (!_scriptHealth.TryGetValue(id, out var h)) return false;
-        return h.DegradedUntilTick > 0 && Environment.TickCount64 < h.DegradedUntilTick;
+        lock (_scriptHealthGate)
+        {
+            if (!_scriptHealth.TryGetValue(id, out var h)) return false;
+            return h.DegradedUntilTick > 0 && Environment.TickCount64 < h.DegradedUntilTick;
+        }
     }
 
     private void MarkScriptFailure(string id)
     {
-        if (!_scriptHealth.TryGetValue(id, out var h)) { h = new ScriptHealth(); _scriptHealth[id] = h; }
-        h.ConsecutiveFailures++;
-        h.DegradedUntilTick = h.ConsecutiveFailures >= 2
-            ? (long)(Environment.TickCount64 + TimeSpan.FromMinutes(5).TotalMilliseconds)
-            : 0;
+        lock (_scriptHealthGate)
+        {
+            if (!_scriptHealth.TryGetValue(id, out var h))
+            {
+                h = new ScriptHealth();
+                _scriptHealth[id] = h;
+            }
+            h.ConsecutiveFailures++;
+            h.DegradedUntilTick = h.ConsecutiveFailures >= 2
+                ? (long)(Environment.TickCount64 + TimeSpan.FromMinutes(5).TotalMilliseconds)
+                : 0;
+        }
     }
 
     private void MarkScriptSuccess(string id)
     {
-        if (_scriptHealth.TryGetValue(id, out var h))
+        lock (_scriptHealthGate)
         {
-            h.ConsecutiveFailures = 0;
-            h.DegradedUntilTick = 0;
+            if (_scriptHealth.TryGetValue(id, out var h))
+            {
+                h.ConsecutiveFailures = 0;
+                h.DegradedUntilTick = 0;
+            }
         }
     }
 
