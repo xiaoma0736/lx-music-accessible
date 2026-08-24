@@ -231,14 +231,14 @@ public class MusicSource
         ? "已暂存，未信任"
         : IsDefault ? "默认" : (IsEnabled ? "已启用" : "已禁用");
 
-    /// <summary>读屏名称只包含音源标识；启用/信任状态由 ItemStatus 暴露。</summary>
+    /// <summary>读屏聚焦名称包含音源标识和必要的启用/信任状态。</summary>
     public string AccessibleName
     {
         get
         {
             var name = string.IsNullOrEmpty(Name) ? "未命名音源" : Name;
             var ver = string.IsNullOrEmpty(Version) ? "" : $"，版本 {Version}";
-            return $"{name}{ver}，{TypeText}";
+            return $"{name}{ver}，{TypeText}，{StatusText}";
         }
     }
 
@@ -378,14 +378,14 @@ public class DownloadTask : System.ComponentModel.INotifyPropertyChanged
     public DownloadTaskStatus Status
     {
         get => _status;
-        set { if (_status != value) { _status = value; OnPropertyChanged(nameof(Status)); OnPropertyChanged(nameof(StatusText)); OnPropertyChanged(nameof(AccessibleStatus)); } }
+        set { if (_status != value) { _status = value; OnPropertyChanged(nameof(Status)); OnPropertyChanged(nameof(StatusText)); OnPropertyChanged(nameof(AccessibleStatus)); OnPropertyChanged(nameof(AccessibleName)); } }
     }
 
     private double _progress;
     public double Progress
     {
         get => _progress;
-        set { if (Math.Abs(_progress - value) > 0.01) { _progress = value; OnPropertyChanged(nameof(Progress)); OnPropertyChanged(nameof(ProgressText)); OnPropertyChanged(nameof(AccessibleStatus)); } }
+        set { if (Math.Abs(_progress - value) > 0.01) { _progress = value; OnPropertyChanged(nameof(Progress)); OnPropertyChanged(nameof(ProgressText)); OnPropertyChanged(nameof(AccessibleStatus)); OnPropertyChanged(nameof(AccessibleName)); } }
     }
 
     private long _downloadedBytes;
@@ -425,8 +425,8 @@ public class DownloadTask : System.ComponentModel.INotifyPropertyChanged
         _ => StatusText
     };
 
-    /// <summary>读屏名称只包含任务标识；动态进度和状态由 ItemStatus 暴露。</summary>
-    public string AccessibleName => DisplayName;
+    /// <summary>读屏聚焦名称包含任务标识和精简后的进度/状态。</summary>
+    public string AccessibleName => $"{DisplayName}，{AccessibleStatus}";
 
     public string AccessibleStatus => Status == DownloadTaskStatus.Downloading
         ? $"{ProgressText}，{StatusText}"

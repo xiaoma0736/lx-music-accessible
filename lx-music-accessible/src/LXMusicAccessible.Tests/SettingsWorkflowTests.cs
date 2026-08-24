@@ -201,7 +201,7 @@ public sealed class SettingsWorkflowTests
     }
 
     [Fact]
-    public void Main_window_is_only_a_settings_adapter_and_conflict_state_has_uia_metadata()
+    public void Main_window_is_only_a_settings_adapter_and_conflict_state_has_one_focused_name_channel()
     {
         var root = FindRepositoryRoot();
         var mainCode = File.ReadAllText(Path.Combine(
@@ -218,7 +218,7 @@ public sealed class SettingsWorkflowTests
         Assert.Contains("SettingsWorkflow settingsWorkflow", mainCode, StringComparison.Ordinal);
         Assert.Contains("Property=\"AutomationProperties.Name\" Value=\"{Binding AccessibleText}\"", mainXaml);
         Assert.DoesNotContain("Property=\"AutomationProperties.HelpText\"", mainXaml);
-        Assert.Contains("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding ConflictStatus}\"", mainXaml);
+        Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding ConflictStatus}\"", mainXaml);
         Assert.Contains("Title=\"快捷键冲突提示\"", conflictXaml);
         Assert.DoesNotContain("AutomationProperties.Name=", conflictXaml);
         Assert.DoesNotContain("AutomationProperties.HelpText=", conflictXaml);

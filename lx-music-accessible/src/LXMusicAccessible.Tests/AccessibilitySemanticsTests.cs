@@ -1,10 +1,12 @@
 using System.IO;
+using System.ComponentModel;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Xml.Linq;
 using LXMusicAccessible.App;
 using LXMusicAccessible.Models;
@@ -219,6 +221,118 @@ public sealed partial class AccessibilitySemanticsTests
     }
 
     [Fact]
+    public async Task Focused_source_item_name_includes_required_state_on_the_real_list_peer_path()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var sources = new[]
+            {
+                new MusicSource
+                {
+                    Name = "启用音源", Version = "1.0", Type = SourceType.Custom,
+                    IsEnabled = true, TrustState = ScriptTrustState.UserApproved
+                },
+                new MusicSource
+                {
+                    Name = "禁用音源", Version = "1.0", Type = SourceType.Custom,
+                    IsEnabled = false, TrustState = ScriptTrustState.UserApproved
+                },
+                new MusicSource
+                {
+                    Name = "默认音源", Version = "1.0", Type = SourceType.Custom,
+                    IsEnabled = true, IsDefault = true,
+                    TrustState = ScriptTrustState.UserApproved
+                },
+                new MusicSource
+                {
+                    Name = "待信任音源", Version = "1.0", Type = SourceType.Custom,
+                    IsEnabled = false, TrustState = ScriptTrustState.Untrusted
+                }
+            };
+            var expectedNames = new[]
+            {
+                "启用音源，版本 1.0，自定义，已启用",
+                "禁用音源，版本 1.0，自定义，已禁用",
+                "默认音源，版本 1.0，自定义，默认",
+                "待信任音源，版本 1.0，自定义，已暂存，未信任"
+            };
+            var list = new SingleReadListBox
+            {
+                ItemContainerStyle = LoadListItemAutomationStyle("SourceList")
+            };
+            foreach (var source in sources) list.Items.Add(source);
+            list.SelectedIndex = 0;
+            var window = new System.Windows.Window
+            {
+                Content = list,
+                ShowInTaskbar = false
+            };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                var listPeer = FrameworkElementAutomationPeer.CreatePeerForElement(list);
+                var itemPeers = listPeer.GetChildren()!;
+                Assert.Equal(expectedNames.Length, itemPeers.Count);
+                for (var index = 0; index < expectedNames.Length; index++)
+                {
+                    var container = Assert.IsType<ListBoxItem>(
+                        list.ItemContainerGenerator.ContainerFromIndex(index));
+                    Assert.True(container.Focus());
+                    Assert.Empty(itemPeers[index].GetChildren() ?? []);
+                    Assert.Empty(itemPeers[index].GetItemStatus());
+                    Assert.Equal(expectedNames[index], itemPeers[index].GetName());
+                }
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Hotkey_and_download_state_update_the_real_focused_item_name_channel()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var hotkey = new HotkeySettingItem
+            {
+                ActionName = "播放",
+                ShortcutText = "F5",
+                HasConflict = false
+            };
+            AssertFocusedItemNameUpdates(
+                "HotkeyListBox",
+                hotkey,
+                "播放：F5，可用",
+                () => hotkey.HasConflict = true,
+                "播放：F5，全局注册冲突");
+
+            var download = new DownloadTask
+            {
+                Music = new MusicInfo
+                {
+                    Artist = "歌手",
+                    Title = "歌曲",
+                    Source = "netease"
+                },
+                ActualQuality = "mp3"
+            };
+            AssertFocusedItemNameUpdates(
+                "DownloadTaskList",
+                download,
+                "歌手 - 歌曲 [mp3]，等待中",
+                () =>
+                {
+                    download.Status = DownloadTaskStatus.Downloading;
+                    download.Progress = 25;
+                },
+                "歌手 - 歌曲 [mp3]，25%，下载中");
+        });
+    }
+
+    [Fact]
     public void Role_word_diagnostic_distinguishes_control_types_from_business_terms()
     {
         Assert.True(ContainsRedundantRole("Button", "搜索按钮"));
@@ -323,7 +437,7 @@ public sealed partial class AccessibilitySemanticsTests
     }
 
     [Fact]
-    public void Composite_list_items_separate_names_from_dynamic_state()
+    public void Composite_list_items_keep_required_state_in_the_single_focus_name_channel()
     {
         var hotkey = new HotkeySettingItem
         {
@@ -331,7 +445,7 @@ public sealed partial class AccessibilitySemanticsTests
             ShortcutText = "F5",
             HasConflict = true
         };
-        Assert.Equal("播放：F5", hotkey.AccessibleText);
+        Assert.Equal("播放：F5，全局注册冲突", hotkey.AccessibleText);
         Assert.Equal("全局注册冲突", hotkey.ConflictStatus);
 
         var source = new MusicSource
@@ -342,7 +456,7 @@ public sealed partial class AccessibilitySemanticsTests
             IsEnabled = true,
             TrustState = ScriptTrustState.UserApproved
         };
-        Assert.Equal("示例音源，版本 1.0，自定义", source.AccessibleName);
+        Assert.Equal("示例音源，版本 1.0，自定义，已启用", source.AccessibleName);
         Assert.Equal("已启用", source.StatusText);
 
         var download = new DownloadTask
@@ -352,14 +466,14 @@ public sealed partial class AccessibilitySemanticsTests
             Status = DownloadTaskStatus.Downloading,
             Progress = 25
         };
-        Assert.Equal("歌手 - 歌曲 [mp3]", download.AccessibleName);
+        Assert.Equal("歌手 - 歌曲 [mp3]，25%，下载中", download.AccessibleName);
         Assert.Equal("25%，下载中", download.AccessibleStatus);
 
         var mainXaml = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "LXMusicAccessible.App", "MainWindow.xaml"));
-        Assert.Contains("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding ConflictStatus}\"", mainXaml);
-        Assert.Contains("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding AccessibleStatus}\"", mainXaml);
-        Assert.Contains("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding StatusText}\"", mainXaml);
+        Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding ConflictStatus}\"", mainXaml);
+        Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding AccessibleStatus}\"", mainXaml);
+        Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding StatusText}\"", mainXaml);
     }
 
     private static bool ContainsRedundantRole(string role, string name)
@@ -475,6 +589,92 @@ public sealed partial class AccessibilitySemanticsTests
         Assert.Equal(expectedName, peer.GetName());
         Assert.Equal(expectedValue, value.Value);
         Assert.Empty(AutomationProperties.GetHelpText(textBox));
+    }
+
+    private static Style LoadListItemAutomationStyle(string listId)
+    {
+        var mainWindow = LoadXamlDocuments()
+            .Single(item => item.File.Name == "MainWindow.xaml")
+            .Root;
+        var list = mainWindow.Descendants()
+            .Single(element => ElementId(element) == listId);
+        var style = new Style(typeof(ListBoxItem));
+        foreach (var setter in list.Descendants()
+                     .Where(element => element.Name.LocalName == "Setter"))
+        {
+            var property = Attribute(setter, "Property");
+            if (property is not ("AutomationProperties.Name" or "AutomationProperties.ItemStatus"))
+                continue;
+
+            var binding = Regex.Match(Attribute(setter, "Value"), @"^\{Binding ([^,}]+)");
+            Assert.True(binding.Success, $"{listId} {property} must use a direct binding.");
+            var dependencyProperty = property == "AutomationProperties.Name"
+                ? AutomationProperties.NameProperty
+                : AutomationProperties.ItemStatusProperty;
+            style.Setters.Add(new Setter(
+                dependencyProperty,
+                new Binding(binding.Groups[1].Value)));
+        }
+        return style;
+    }
+
+    private static void AssertFocusedItemNameUpdates(
+        string listId,
+        object item,
+        string initialName,
+        Action update,
+        string updatedName)
+    {
+        var list = new SingleReadListBox
+        {
+            ItemContainerStyle = LoadListItemAutomationStyle(listId)
+        };
+        list.Items.Add(item);
+        list.SelectedIndex = 0;
+        var window = new System.Windows.Window
+        {
+            Content = list,
+            ShowInTaskbar = false
+        };
+        try
+        {
+            window.Show();
+            window.UpdateLayout();
+            var container = Assert.IsType<ListBoxItem>(
+                list.ItemContainerGenerator.ContainerFromIndex(0));
+            Assert.True(container.Focus());
+            var listPeer = FrameworkElementAutomationPeer.CreatePeerForElement(list);
+            var itemPeer = Assert.Single(listPeer.GetChildren()!);
+            var nameChanges = 0;
+            var descriptor = DependencyPropertyDescriptor.FromProperty(
+                AutomationProperties.NameProperty,
+                typeof(ListBoxItem));
+            EventHandler changed = (_, _) => nameChanges++;
+            descriptor!.AddValueChanged(container, changed);
+            try
+            {
+                Assert.Empty(itemPeer.GetChildren() ?? []);
+                Assert.Empty(itemPeer.GetItemStatus());
+                Assert.Equal(initialName, itemPeer.GetName());
+
+                update();
+                window.Dispatcher.Invoke(
+                    () => { },
+                    System.Windows.Threading.DispatcherPriority.DataBind);
+
+                Assert.True(nameChanges > 0, $"{listId} did not notify its accessible Name change.");
+                Assert.Equal(updatedName, AutomationProperties.GetName(container));
+                Assert.Equal(updatedName, itemPeer.GetName());
+            }
+            finally
+            {
+                descriptor.RemoveValueChanged(container, changed);
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 }
 

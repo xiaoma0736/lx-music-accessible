@@ -201,7 +201,10 @@ public sealed class ScriptSourceLifecycleTests
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
         app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(ScriptUrl), ValidScript);
         var imported = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
+        var disableChanges = 0;
+        sources.SourcesChanged += (_, _) => disableChanges++;
         sources.DisableSource(imported);
+        Assert.Equal(1, disableChanges);
         await sources.PersistSourcesAsync();
 
         var reloaded = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);

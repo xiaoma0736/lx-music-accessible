@@ -8,7 +8,9 @@ The scan covered all 12 application XAML files (1,154 lines), their code-behind,
 
 The deterministic baseline classified 178 direct names as overriding an existing native `Content`, `Header`, `Text`, or `Title`; 25 more names without static visible text contained a platform role; 20 HelpText values were redundant; and all 17 code-created names duplicated `Header`/`Content` or mixed a result message into an action name. Some entries overlap because a visible-name override can also contain a role.
 
-A follow-up manual reader check found that the initial assumption about `Label.Target` was wrong: it associates focus but did not give the “按 Alt+F4 时” ComboBox an effective UIA Name. The corrected current scan has 34 direct XAML Name attributes, 16 Label.Target relationships, two runtime SetName calls (only the two dynamic TextInputDialog fields), zero LabeledBy paths, and zero HelpText/Description/ToolTip sources. Four ItemStatus paths and two LiveSetting paths remain intact as state channels.
+A follow-up manual reader check found that the initial assumption about `Label.Target` was wrong: it associates focus but did not give the “按 Alt+F4 时” ComboBox an effective UIA Name. The corrected scan has 34 direct XAML Name attributes, 16 Label.Target relationships, two runtime SetName calls (only the two dynamic TextInputDialog fields), zero LabeledBy paths, and zero HelpText/Description/ToolTip sources.
+
+A second manual reader check found the same class of false confidence in focused list state: the real source item peer returned `ItemStatus="已禁用"`, but its effective focused Name omitted that state and common screen readers did not announce ItemStatus. The three leaf-list ItemStatus bindings (source, hotkey, download) were therefore removed. Required compact state now occurs once in the item Name, while dynamic hotkey/download changes notify that Name. The current scan retains one dialog-level ItemStatus and two LiveSetting paths; neither is relied on as a focused leaf item's only state channel.
 
 ## Name findings
 
@@ -36,9 +38,9 @@ A follow-up manual reader check found that the initial assumption about `Label.T
 | `WebLoginWindow.xaml`: Window, platform/status text, three buttons | Title/Text/Content repeated | window/text/button | Remove. Dynamic status remains native text and is also announced through the live announcer workflow. |
 | `HotkeyConfirmDialog.xaml.cs`, `HotkeyConflictDialog.xaml.cs` | result message concatenated into the focused button name | button | Delete SetName. The result stays in dialog text; action name stays “确定” or “重新设置”. |
 | `MainWindow.xaml.cs`: 15 code-created song-menu items | SetName duplicates each MenuItem Header, including quality items | menu item | Delete SetName. Header remains the single native name source. |
-| `HotkeySettingItem.AccessibleText` | action, shortcut, and ConflictStatus while the same state is also ItemStatus | list item | Keep action and shortcut in Name; expose conflict only through ItemStatus. |
-| `MusicSource.AccessibleName` | source identity plus enabled/default/trust state | list item | Keep identity/version/type in Name; bind StatusText to ItemStatus. |
-| `DownloadTask.AccessibleName` | task identity plus progress and status, duplicating non-downloading status twice | list item | Keep task identity in Name; bind compact progress/status to ItemStatus. |
+| `HotkeySettingItem.AccessibleText` | action, shortcut, and ConflictStatus while the same state was also ItemStatus | list item | Keep action, shortcut, and compact availability/conflict state once in Name; remove the ItemStatus duplicate because it is not reliable on focus. |
+| `MusicSource.AccessibleName` | source identity plus enabled/default/trust state | list item | Keep identity/version/type and required enabled/default/trust state once in Name; remove the ItemStatus duplicate. |
+| `DownloadTask.AccessibleName` | task identity plus progress and status, duplicating non-downloading status twice | list item | Keep task identity plus the de-duplicated AccessibleStatus once in Name; notify Name on progress/status changes and remove the ItemStatus duplicate. |
 
 ## HelpText findings and zero-description policy
 
@@ -50,17 +52,17 @@ A follow-up manual reader check found that the initial assumption about `Label.T
 | `MainWindow.xaml`: DownloadTaskList | browsing instruction plus where downloads are initiated | Remove; it does not change how the list itself is operated. |
 | `PlaylistImportView.xaml`: both lists | instructions duplicate immediately adjacent visible text | Remove both. |
 | `UserGuideWindow.xaml`: ChapterCombo and GuideText | ordinary arrow-key/read-only editing behavior already in visible instructions | Remove both. |
-| `MainWindow.xaml`: Hotkey item HelpText binding | ConflictStatus duplicated as HelpText and ItemStatus | Remove HelpText binding; retain ItemStatus as the actual state channel. |
+| `MainWindow.xaml`: Hotkey item HelpText binding | ConflictStatus duplicated as HelpText and ItemStatus | Remove HelpText. Later reader verification also removed the ItemStatus duplicate and restored compact conflict state to the single focused Name. |
 | `MainWindow.xaml`: SearchBox and the seven song/playlist/category/ranking lists | Enter/Space/Delete operation teaching | Remove. Human screen-reader review confirmed these are basic platform/application operations and the extra description is noise. |
 | `MainWindow.xaml`: CategorySourceCombo and RankingSourceCombo | Enter/Refresh operation teaching | Remove. The explicit network-action boundary remains in event behavior and visible workflow guidance, not HelpText. |
 | `MainWindow.xaml`: HotkeyListBox | Enter/Delete/Esc operation teaching | Remove; visible instructions remain immediately above the list. |
 | `MainWindow.xaml`: SourceList | application key, Enter, and Delete operation teaching | Remove; commands remain available through native menu/action behavior. |
 | `SongDetailDialog.xaml`: DetailsList | Enter/Esc operation teaching | Remove; dialog controls and platform behavior remain named. |
 
-Human review rejected the provisional 14-control exception set. The final allowlist is empty: application controls expose zero HelpText, AccessibleDescription, AutomationPeer help override, or ToolTip-derived UIA description. ItemStatus and LiveSetting remain valid state/event channels and are explicitly protected by negative diagnostic probes.
+Human review rejected the provisional 14-control exception set. The final allowlist is empty: application controls expose zero HelpText, AccessibleDescription, AutomationPeer help override, or ToolTip-derived UIA description. ItemStatus and LiveSetting remain valid state/event properties and are explicitly protected by negative diagnostic probes, but ItemStatus is not accepted as the only channel for task-required state on a focused leaf item.
 
 ## Regression boundary
 
 The scan found 16 inputs that depended only on Label.Target: 13 in MainWindow, one in UserGuideWindow, and two dynamic fields in TextInputDialog. Fourteen static inputs now carry exact short task names; the two dynamic fields are the only allowed code-created SetName paths and are named from their runtime labels. STA regression tests use real ComboBox/TextBox AutomationPeers for all 16 inputs and verify that Name is non-empty and separate from Selection/Value. A dedicated negative probe locks in that Label.Target alone does not supply a ComboBox peer Name.
 
-The remaining static tests reject visible-name overrides, role words for the corresponding control type, every HelpText/description/ToolTip source, all code-created SetName paths except the two dynamic dialog fields, and unnamed interactive controls. Positive name probes cover “搜索按钮”, “搜索标签页”, and “搜索输入框”; the name negative probe covers the real business term “播放列表”. HelpText and ToolTip positive probes are kept separate from ItemStatus and LiveSetting negative probes. Composite item state and the live-region event path remain covered. Real keyboard and Narrator/NVDA/JAWS behavior remains the manual pre-release checklist.
+The remaining static tests reject visible-name overrides, role words for the corresponding control type, every HelpText/description/ToolTip source, all code-created SetName paths except the two dynamic dialog fields, and unnamed interactive controls. Positive name probes cover “搜索按钮”, “搜索标签页”, and “搜索输入框”; the name negative probe covers the real business term “播放列表”. HelpText and ToolTip positive probes are kept separate from ItemStatus and LiveSetting negative probes. Real STA peer tests cover the focused source states (enabled, disabled, default, and staged/untrusted), hotkey availability/conflict, download progress/status, leaf-child suppression, the absence of duplicate focused ItemStatus, and dynamic Name notifications. The live-region event path remains covered. Real keyboard and Narrator/NVDA/JAWS behavior remains the manual pre-release checklist.
