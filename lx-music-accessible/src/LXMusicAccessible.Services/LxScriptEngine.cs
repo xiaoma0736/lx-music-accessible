@@ -17,8 +17,9 @@ namespace LXMusicAccessible.Services;
 public class LxScriptEngine
 {
     private static readonly TimeSpan ExecutionTimeout = TimeSpan.FromSeconds(10);
-    private const int MaxStatements = 500_000;
-    private const long MaxHeapBytes = 32L * 1024 * 1024;
+    // Supported obfuscated sources expand lookup tables during initialization; keep this bounded compatibility budget.
+    private const int MaxStatements = 1_000_000;
+    private const long MaxHeapBytes = 96L * 1024 * 1024;
     private const int MaxNativeBufferBytes = ScriptNetworkClient.MaxResponseBytes;
     private const int MaxRandomBytes = 64 * 1024;
     private const int MaxUrlCharacters = 8 * 1024;

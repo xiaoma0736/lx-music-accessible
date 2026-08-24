@@ -25,6 +25,25 @@ public sealed class ScriptSourceLifecycleTests
         });
         """;
 
+    private const string ObfuscatedCompatibilityScript = """
+        /**
+         * @name Resource-heavy compatibility fixture
+         * @version 1.0.0
+         */
+        // Models the string-table expansion and decoder loop used by supported obfuscated sources.
+        var lookup = [];
+        for (var i = 0; i < 35000; i++) {
+          lookup.push('compatibility-entry-' + i + '-xxxxxxxxxxxxxxxx');
+        }
+        var checksum = 0;
+        for (var j = 0; j < 400000; j++) {
+          checksum ^= j;
+        }
+        lx.on(lx.EVENT_NAMES.request, function () {
+          return Promise.resolve('https://fixture.invalid/' + checksum + '.mp3');
+        });
+        """;
+
     [Fact]
     public void Script_digest_is_stable_across_windows_and_unix_checkouts()
     {
@@ -219,6 +238,53 @@ public sealed class ScriptSourceLifecycleTests
         Assert.True(imported.IsEnabled);
         Assert.Equal(ScriptTrustState.UserApproved, imported.TrustState);
         Assert.NotNull(sources.GetScriptSource().GetScript(imported.Id));
+    }
+
+    [Fact]
+    public async Task Resource_heavy_obfuscated_source_registers_activates_and_reloads()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var scriptSource = app.Services.GetRequiredService<ScriptMusicSource>();
+        var scriptEngine = app.Services.GetRequiredService<LxScriptEngine>();
+        var staged = Assert.IsType<LxScriptInfo>(scriptSource.StageFromContent(
+            ObfuscatedCompatibilityScript,
+            "obfuscated-compatibility",
+            "https://fixture.invalid/obfuscated.js",
+            false));
+        Assert.True(await scriptEngine.TestLoadAsync(staged), scriptEngine.LastError);
+        var data = app.Services.GetRequiredService<IDataService>();
+        await data.SaveMusicSourcesAsync(new List<MusicSource>
+        {
+            new()
+            {
+                Id = "obfuscated-compatibility",
+                Name = "Resource-heavy compatibility fixture",
+                Version = "1.0.0",
+                ScriptUrl = "https://fixture.invalid/obfuscated.js",
+                ScriptContent = ObfuscatedCompatibilityScript,
+                ContentSha256 = ScriptMusicSource.ComputeSha256(ObfuscatedCompatibilityScript),
+                Type = SourceType.Network,
+                IsEnabled = false,
+                TrustState = ScriptTrustState.Untrusted
+            }
+        });
+        var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
+
+        await sources.InitializeScriptSourcesAsync();
+
+        var restored = Assert.Single(sources.GetAllSources(), source => source.Id == "obfuscated-compatibility");
+        Assert.True(restored.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, restored.TrustState);
+        Assert.NotNull(sources.GetScriptSource().GetScript(restored.Id));
+
+        var reloaded = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+        await reloaded.InitializeScriptSourcesAsync();
+        var persisted = Assert.Single(
+            reloaded.GetAllSources(),
+            source => source.Id == "obfuscated-compatibility");
+        Assert.True(persisted.IsEnabled);
+        Assert.Equal(ScriptTrustState.UserApproved, persisted.TrustState);
+        Assert.NotNull(reloaded.GetScriptSource().GetScript(persisted.Id));
     }
 
     [Fact]
