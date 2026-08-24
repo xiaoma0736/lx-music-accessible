@@ -13,7 +13,6 @@
         <TextBlock x:Name="TitleText" FontSize="16" FontWeight="Bold" Margin="0,0,0,10" TextWrapping="Wrap"/>
         <local:SingleReadListBox x:Name="DetailsList" Grid.Row="1"
                  AutomationProperties.Name="歌曲详情"
-                 AutomationProperties.HelpText="上下方向键逐条浏览，回车或 Esc 关闭"
                  HorizontalContentAlignment="Stretch">
             <ListBox.ItemContainerStyle>
                 <Style TargetType="ListBoxItem">

@@ -128,7 +128,6 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBox x:Name="SearchBox" Grid.Column="0" Height="30" Margin="0,0,10,0" KeyboardNavigation.TabIndex="12"
                                          AutomationProperties.Name="搜索关键词"
-                                         AutomationProperties.HelpText="输入关键词后按回车搜索；上下方向键浏览搜索历史"
                                          KeyDown="SearchBox_KeyDown" IsTabStop="True"/>
                                 <Button x:Name="SearchButton" Grid.Column="1" Content="搜索" Width="80" Height="30" KeyboardNavigation.TabIndex="13" Click="SearchButton_Click" IsTabStop="True"/>
                                 <Button x:Name="SearchClearButton" Grid.Column="2" Content="清空" Width="80" Height="30" KeyboardNavigation.TabIndex="14" Click="SearchClearButton_Click" IsTabStop="True"/>
@@ -139,7 +138,6 @@
                                     <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                                     <local:SingleReadListBox x:Name="SearchResultsList" Grid.Row="0" MinHeight="350" KeyboardNavigation.TabIndex="15"
                                              AutomationProperties.Name="搜索结果"
-                                             AutomationProperties.HelpText="上下方向键浏览，回车或空格播放"
                                              ContextMenuOpening="SongList_ContextMenuOpening"
                                              PreviewMouseRightButtonDown="SongList_PreviewMouseRightButtonDown"
                                              MouseDoubleClick="SearchResultsList_MouseDoubleClick"
@@ -198,7 +196,6 @@
                                     <GroupBox Grid.Column="0" Header="在线歌单" Margin="0,0,8,0">
                                         <ListBox x:Name="OnlinePlaylistList" MinHeight="300" DisplayMemberPath="Name" KeyboardNavigation.TabIndex="35"
                                                  AutomationProperties.Name="在线歌单"
-                                                 AutomationProperties.HelpText="上下方向键选择，回车查看歌曲，Delete 删除"
                                                  SelectionChanged="OnlinePlaylistList_SelectionChanged"
                                                  KeyDown="OnlinePlaylistList_KeyDown" IsTabStop="False">
                                             <ListBox.ItemContainerStyle>
@@ -211,7 +208,6 @@
                                     <GroupBox Grid.Column="1" Header="在线歌曲">
                                         <local:SingleReadListBox x:Name="FavoriteSongsList" MinHeight="300" KeyboardNavigation.TabIndex="36"
                                             AutomationProperties.Name="在线歌曲"
-                                            AutomationProperties.HelpText="上下方向键浏览，回车或空格播放，Delete 移除"
                                             ContextMenuOpening="SongList_ContextMenuOpening"
                                             PreviewMouseRightButtonDown="SongList_PreviewMouseRightButtonDown"
                                             MouseDoubleClick="FavoriteSongsList_MouseDoubleClick"
@@ -258,7 +254,6 @@
                                 <Label Content="音源：" Target="{Binding ElementName=CategorySourceCombo}"
                                        VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
                                 <ComboBox x:Name="CategorySourceCombo" Width="140" Height="28" Margin="0,0,10,0" KeyboardNavigation.TabIndex="31"
-                                          AutomationProperties.HelpText="上下方向键选择音源，按 Enter 或刷新加载分类"
                                           SelectionChanged="CategorySourceCombo_SelectionChanged" KeyDown="CategorySourceCombo_KeyDown" IsTabStop="True">
                                     <ComboBoxItem Content="网易云音乐" Tag="netease" IsSelected="True"/>
                                     <ComboBoxItem Content="QQ音乐" Tag="qq"/>
@@ -278,7 +273,6 @@
                                 <GroupBox Grid.Column="0" Header="分类">
                                     <ListBox x:Name="CategoryList" KeyboardNavigation.TabIndex="33"
                                              AutomationProperties.Name="分类"
-                                             AutomationProperties.HelpText="上下方向键选择，按 Enter 加载歌单"
                                              DisplayMemberPath="Name"
                                              SelectionChanged="CategoryList_SelectionChanged"
                                              KeyDown="CategoryList_KeyDown" IsTabStop="False">
@@ -292,7 +286,6 @@
                                 <GroupBox Grid.Column="1" Header="歌单" Margin="10,0,0,0">
                                     <ListBox x:Name="CategoryPlaylistsListBox" KeyboardNavigation.TabIndex="34"
                                              AutomationProperties.Name="歌单"
-                                             AutomationProperties.HelpText="上下方向键选择，按 Enter 查看歌曲"
                                              DisplayMemberPath="Name"
                                              SelectionChanged="CategoryPlaylistsListBox_SelectionChanged"
                                              KeyDown="CategoryPlaylistsListBox_KeyDown"
@@ -314,7 +307,6 @@
                                         <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                                         <local:SingleReadListBox x:Name="CategorySongsList" Grid.Row="0" KeyboardNavigation.TabIndex="35"
                                                  AutomationProperties.Name="歌单歌曲"
-                                                 AutomationProperties.HelpText="上下方向键浏览，回车或空格播放"
                                                  ContextMenuOpening="SongList_ContextMenuOpening"
                                                  PreviewMouseRightButtonDown="SongList_PreviewMouseRightButtonDown"
                                              MouseDoubleClick="CategorySongsList_MouseDoubleClick"
@@ -358,7 +350,6 @@
                                 <Label Content="音源：" Target="{Binding ElementName=RankingSourceCombo}"
                                        VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
                                 <ComboBox x:Name="RankingSourceCombo" Width="140" Height="28" Margin="0,0,10,0" KeyboardNavigation.TabIndex="40"
-                                          AutomationProperties.HelpText="上下方向键选择音源，按 Enter 或刷新加载排行榜"
                                           SelectionChanged="RankingSourceCombo_SelectionChanged" KeyDown="RankingSourceCombo_KeyDown" IsTabStop="True">
                                     <ComboBoxItem Content="网易云音乐" Tag="netease" IsSelected="True"/>
                                     <ComboBoxItem Content="QQ音乐" Tag="qq"/>
@@ -377,7 +368,6 @@
                                 <GroupBox Grid.Column="0" Header="排行榜列表">
                                     <ListBox x:Name="RankingList" KeyboardNavigation.TabIndex="42"
                                              AutomationProperties.Name="排行榜"
-                                             AutomationProperties.HelpText="上下方向键选择，按 Enter 加载歌曲"
                                              DisplayMemberPath="Name"
                                              SelectionChanged="RankingList_SelectionChanged"
                                              KeyDown="RankingList_KeyDown"
@@ -394,7 +384,6 @@
                                         <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                                         <local:SingleReadListBox x:Name="RankingSongsList" Grid.Row="0" KeyboardNavigation.TabIndex="43"
                                                  AutomationProperties.Name="榜单歌曲"
-                                                 AutomationProperties.HelpText="上下方向键浏览，回车或空格播放"
                                                  ContextMenuOpening="SongList_ContextMenuOpening"
                                                  PreviewMouseRightButtonDown="SongList_PreviewMouseRightButtonDown"
                                              MouseDoubleClick="RankingSongsList_MouseDoubleClick"
@@ -583,7 +572,6 @@
                                                TextWrapping="Wrap" Margin="0,0,0,10"/>
                                     <local:SingleReadListBox x:Name="HotkeyListBox" Height="260" KeyboardNavigation.TabIndex="82"
                                              AutomationProperties.Name="快捷键"
-                                             AutomationProperties.HelpText="上下方向键选择，回车修改，Delete 清除，Esc 取消"
                                              KeyDown="HotkeyListBox_KeyDown" IsTabStop="False" HorizontalContentAlignment="Stretch">
                                         <ListBox.ItemContainerStyle>
                                             <Style TargetType="ListBoxItem">
@@ -666,7 +654,6 @@
                             <GroupBox Header="音源接口列表">
                                 <local:SingleReadListBox x:Name="SourceList" MinHeight="420" KeyboardNavigation.TabIndex="79"
                                          AutomationProperties.Name="音源接口"
-                                         AutomationProperties.HelpText="上下方向键浏览，应用键打开菜单，回车查看详情，Delete 删除"
                                          ContextMenu="{StaticResource SourceContextMenu}"
                                          KeyDown="SourceList_KeyDown"
                                          IsTabStop="False">

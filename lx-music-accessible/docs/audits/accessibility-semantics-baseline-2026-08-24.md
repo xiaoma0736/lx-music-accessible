@@ -38,7 +38,7 @@ The deterministic baseline classified 178 direct names as overriding an existing
 | `MusicSource.AccessibleName` | source identity plus enabled/default/trust state | list item | Keep identity/version/type in Name; bind StatusText to ItemStatus. |
 | `DownloadTask.AccessibleName` | task identity plus progress and status, duplicating non-downloading status twice | list item | Keep task identity in Name; bind compact progress/status to ItemStatus. |
 
-## HelpText findings and exceptions
+## HelpText findings and zero-description policy
 
 | Location | Baseline HelpText | Decision |
 | --- | --- | --- |
@@ -49,14 +49,14 @@ The deterministic baseline classified 178 direct names as overriding an existing
 | `PlaylistImportView.xaml`: both lists | instructions duplicate immediately adjacent visible text | Remove both. |
 | `UserGuideWindow.xaml`: ChapterCombo and GuideText | ordinary arrow-key/read-only editing behavior already in visible instructions | Remove both. |
 | `MainWindow.xaml`: Hotkey item HelpText binding | ConflictStatus duplicated as HelpText and ItemStatus | Remove HelpText binding; retain ItemStatus as the actual state channel. |
-| `MainWindow.xaml`: SearchBox and the seven song/playlist/category/ranking lists | Enter/Space/Delete changes task state and is not conveyed by the native role | Retain, shortened to the exact explicit actions. |
-| `MainWindow.xaml`: CategorySourceCombo and RankingSourceCombo | selection alone intentionally does not fetch; Enter/Refresh is required | Retain to preserve the explicit network-action boundary. |
-| `MainWindow.xaml`: HotkeyListBox | Enter/Delete/Esc are application-specific editing commands | Retain. |
-| `MainWindow.xaml`: SourceList | application key, Enter, and Delete expose nonstandard source operations | Retain. |
-| `SongDetailDialog.xaml`: DetailsList | Enter/Esc closes this nonstandard browse dialog | Retain. |
+| `MainWindow.xaml`: SearchBox and the seven song/playlist/category/ranking lists | Enter/Space/Delete operation teaching | Remove. Human screen-reader review confirmed these are basic platform/application operations and the extra description is noise. |
+| `MainWindow.xaml`: CategorySourceCombo and RankingSourceCombo | Enter/Refresh operation teaching | Remove. The explicit network-action boundary remains in event behavior and visible workflow guidance, not HelpText. |
+| `MainWindow.xaml`: HotkeyListBox | Enter/Delete/Esc operation teaching | Remove; visible instructions remain immediately above the list. |
+| `MainWindow.xaml`: SourceList | application key, Enter, and Delete operation teaching | Remove; commands remain available through native menu/action behavior. |
+| `SongDetailDialog.xaml`: DetailsList | Enter/Esc operation teaching | Remove; dialog controls and platform behavior remain named. |
 
-The retained HelpText set is fixed at 14 controls and enforced by `AccessibilitySemanticsTests`; adding another entry requires a task-specific reason in this document and the test allowlist.
+Human review rejected the provisional 14-control exception set. The final allowlist is empty: application controls expose zero HelpText, AccessibleDescription, AutomationPeer help override, or ToolTip-derived UIA description. ItemStatus and LiveSetting remain valid state/event channels and are explicitly protected by negative diagnostic probes.
 
 ## Regression boundary
 
-The static tests reject visible-name overrides, role words for the corresponding control type, undocumented HelpText, code-created SetName calls, and unnamed interactive controls. Positive probes cover “搜索按钮”, “搜索标签页”, and “搜索输入框”; negative probes cover the real business term “播放列表”. Composite item names are tested separately from ItemStatus, and the live-region event path remains covered. Real keyboard and Narrator/NVDA/JAWS behavior remains the manual pre-release checklist.
+The static tests reject visible-name overrides, role words for the corresponding control type, every HelpText/description/ToolTip source, code-created SetName calls, and unnamed interactive controls. Positive name probes cover “搜索按钮”, “搜索标签页”, and “搜索输入框”; the name negative probe covers the real business term “播放列表”. HelpText and ToolTip positive probes are kept separate from ItemStatus and LiveSetting negative probes. Composite item state and the live-region event path remain covered. Real keyboard and Narrator/NVDA/JAWS behavior remains the manual pre-release checklist.

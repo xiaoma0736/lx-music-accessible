@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using LXMusicAccessible.Models;
 using Xunit;
@@ -31,24 +32,6 @@ public sealed partial class AccessibilitySemanticsTests
             ["Window"] = ["窗口", "对话框"]
         };
 
-    private static readonly IReadOnlySet<string> NecessaryHelpText = new HashSet<string>(StringComparer.Ordinal)
-    {
-        "MainWindow.xaml|SearchBox",
-        "MainWindow.xaml|SearchResultsList",
-        "MainWindow.xaml|OnlinePlaylistList",
-        "MainWindow.xaml|FavoriteSongsList",
-        "MainWindow.xaml|CategorySourceCombo",
-        "MainWindow.xaml|CategoryList",
-        "MainWindow.xaml|CategoryPlaylistsListBox",
-        "MainWindow.xaml|CategorySongsList",
-        "MainWindow.xaml|RankingSourceCombo",
-        "MainWindow.xaml|RankingList",
-        "MainWindow.xaml|RankingSongsList",
-        "MainWindow.xaml|HotkeyListBox",
-        "MainWindow.xaml|SourceList",
-        "SongDetailDialog.xaml|DetailsList"
-    };
-
     [Fact]
     public void Role_word_diagnostic_distinguishes_control_types_from_business_terms()
     {
@@ -80,18 +63,29 @@ public sealed partial class AccessibilitySemanticsTests
     }
 
     [Fact]
-    public void Help_text_is_limited_to_documented_task_instructions()
+    public void Ordinary_controls_expose_no_help_text_or_tooltip_descriptions()
     {
         var actual = LoadXamlElements()
-            .Where(item => !string.IsNullOrWhiteSpace(Attribute(item.Element, "AutomationProperties.HelpText")))
-            .Select(item => $"{item.File.Name}|{ElementId(item.Element)}")
-            .ToHashSet(StringComparer.Ordinal);
+            .Where(item => IsHelpTextSource(item.Element))
+            .Select(item => $"{item.File.Name}|{ElementRole(item.Element)}|{ElementId(item.Element)}")
+            .ToArray();
 
-        Assert.Empty(actual.Except(NecessaryHelpText));
-        Assert.Empty(NecessaryHelpText.Except(actual));
-        Assert.DoesNotContain(LoadXamlElements(), item =>
-            item.Element.Name.LocalName == "Setter"
-            && Attribute(item.Element, "Property") == "AutomationProperties.HelpText");
+        Assert.Empty(actual);
+    }
+
+    [Fact]
+    public void Help_text_diagnostic_does_not_reject_state_or_live_region_channels()
+    {
+        Assert.True(IsHelpTextSource(XElement.Parse(
+            "<Button AutomationProperties.HelpText=\"按回车执行\" />")));
+        Assert.True(IsHelpTextSource(XElement.Parse(
+            "<ToolTip>操作说明</ToolTip>")));
+        Assert.True(IsHelpTextSource(XElement.Parse(
+            "<Setter Property=\"ToolTip\" Value=\"操作说明\" />")));
+        Assert.False(IsHelpTextSource(XElement.Parse(
+            "<Setter Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding Status}\" />")));
+        Assert.False(IsHelpTextSource(XElement.Parse(
+            "<TextBlock AutomationProperties.LiveSetting=\"Polite\" />")));
     }
 
     [Fact]
@@ -121,8 +115,11 @@ public sealed partial class AccessibilitySemanticsTests
             .SelectMany(file => File.ReadLines(file)
                 .Select((line, index) => (File: Path.GetFileName(file), Line: index + 1, Text: line))
                 .Where(item => item.Text.Contains("AutomationProperties.SetName(", StringComparison.Ordinal)
-                    || item.Text.Contains("AutomationProperties.SetHelpText(", StringComparison.Ordinal)
-                    || item.Text.Contains("AccessibleDescription", StringComparison.Ordinal)))
+                    || item.Text.Contains("AutomationProperties.HelpText", StringComparison.Ordinal)
+                    || item.Text.Contains("AccessibleDescription", StringComparison.Ordinal)
+                    || item.Text.Contains("GetHelpTextCore(", StringComparison.Ordinal)
+                    || Regex.IsMatch(item.Text, @"\bToolTip\s*=")
+                    || Regex.IsMatch(item.Text, @"\.SetToolTip\s*\(")))
             .Select(item => $"{item.File}:{item.Line}")
             .ToArray();
 
@@ -175,6 +172,15 @@ public sealed partial class AccessibilitySemanticsTests
         if (name == "播放列表") return false;
         return terms.Any(term => name.Contains(term, StringComparison.Ordinal));
     }
+
+    private static bool IsHelpTextSource(XElement element) =>
+        !string.IsNullOrWhiteSpace(Attribute(element, "AutomationProperties.HelpText"))
+        || element.Name.LocalName == "ToolTip"
+        || element.Attributes().Any(attribute =>
+            attribute.Name.LocalName is "ToolTip" or "ToolTipService.ToolTip")
+        || (element.Name.LocalName == "Setter"
+            && Attribute(element, "Property") is
+                "AutomationProperties.HelpText" or "ToolTip" or "ToolTipService.ToolTip");
 
     private static bool HasNameSource(XElement root, XElement element)
     {
