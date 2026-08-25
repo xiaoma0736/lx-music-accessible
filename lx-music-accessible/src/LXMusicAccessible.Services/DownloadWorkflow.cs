@@ -204,7 +204,10 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         lock (_gate)
         {
             preferences = _preferences;
-            _plans[task.Id] = new DownloadPlan(request.TargetDirectory, preferences);
+            _plans[task.Id] = new DownloadPlan(
+                request.TargetDirectory,
+                preferences,
+                task.Quality);
         }
         _tasks.Add(task);
         await ExecuteManagedAsync(task, request.TargetDirectory, preferences, announce: true, cancellationToken);
@@ -280,7 +283,10 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                     Quality = string.IsNullOrWhiteSpace(request.Quality) ? "128k" : request.Quality,
                     IsBatch = true
                 };
-                lock (_gate) _plans[task.Id] = new DownloadPlan(targetDirectory, preferences);
+                lock (_gate) _plans[task.Id] = new DownloadPlan(
+                    targetDirectory,
+                    preferences,
+                    task.Quality);
                 _tasks.Add(task);
                 tasks.Add(task);
                 await ExecuteManagedAsync(
@@ -339,15 +345,17 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             _plans[task.Id] = plan;
         }
 
-        task.Status = DownloadTaskStatus.Pending;
+        task.Quality = plan.RequestedQuality;
+        task.ActualQuality = null;
+        task.QualityFallback = null;
         task.Progress = 0;
         task.DownloadedBytes = 0;
         task.TotalBytes = 0;
         task.SavePath = null;
         task.LyricPath = null;
         task.ErrorMessage = null;
-        task.ActualQuality = null;
         task.IsBatch = false;
+        task.Status = DownloadTaskStatus.Pending;
         await ExecuteManagedAsync(task, plan.TargetDirectory, plan.Preferences, announce: true, cancellationToken);
         return true;
     }
@@ -447,6 +455,9 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                         progress: null);
                     temporary = download.Path;
                     var actual = ResolveActualFormat(download.Path, download.Extension);
+                    if (!MusicQuality.AcceptsDownload(quality, actual.QualityToken))
+                        throw new MediaQualityMismatchException(
+                            $"实际媒体音质 {actual.Label} 低于请求的 {quality}");
                     var final = Path.Combine(directory, $"lxmusic_ext_{Guid.NewGuid():N}{actual.Extension}");
                     EnsureContained(directory, final);
                     File.Move(download.Path, final, overwrite: false);
@@ -462,6 +473,12 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (MediaQualityMismatchException exception)
+            {
+                _logger.LogWarning(
+                    "External playback rejected a lower-quality payload: {ErrorType}",
+                    exception.GetType().Name);
             }
             catch (Exception exception)
             {
@@ -591,6 +608,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             }
             else
             {
+                var requestedQuality = task.Quality;
                 var download = await DownloadRemoteAsync(
                     task,
                     directory,
@@ -607,10 +625,15 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                     } : null,
                     cancellationToken);
                 audioTemporary = download.Path;
-                var actual = ResolveActualFormat(audioTemporary, download.Extension);
-                extension = actual.Extension;
-                task.ActualQuality = actual.Label;
+                extension = download.Actual.Extension;
+                task.ActualQuality = download.Actual.Label;
                 task.Quality = download.Quality;
+                task.QualityFallback = string.Equals(
+                    requestedQuality,
+                    download.Quality,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : $"请求 {requestedQuality}，已回退到 {download.Quality}";
             }
 
             var name = BuildNamePart(task.Music.Artist, task.Music.Title, preferences.NameOrder);
@@ -672,6 +695,11 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             task.Status = DownloadTaskStatus.Failed;
             task.ErrorMessage = exception.Message;
         }
+        catch (QualityUnavailableException exception)
+        {
+            task.Status = DownloadTaskStatus.Failed;
+            task.ErrorMessage = exception.Message;
+        }
         catch (Exception exception)
         {
             task.Status = DownloadTaskStatus.Failed;
@@ -716,7 +744,14 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                         task.Progress = Math.Min(99, read * 100d / total);
                         progress?.Invoke((int)task.Progress);
                     });
-                return new(download.Path, download.Extension, quality);
+                var actual = ResolveActualFormat(download.Path, download.Extension);
+                if (!MusicQuality.AcceptsDownload(quality, actual.QualityToken))
+                {
+                    DeleteTemporaryFile(download.Path, task.Id);
+                    throw new MediaQualityMismatchException(
+                        $"实际媒体音质 {actual.Label} 低于请求的 {quality}");
+                }
+                return new(download.Path, quality, actual);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception exception)
@@ -728,7 +763,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                     exception.GetType().Name);
             }
         }
-        throw new HttpRequestException("No download quality succeeded.");
+        throw new QualityUnavailableException("所选音质及可用回退音质均无法取得有效媒体");
     }
 
     private async Task<HttpDownload> DownloadHttpToTemporaryFileAsync(
@@ -971,41 +1006,76 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     {
         var result = new List<string>();
         if (!string.IsNullOrWhiteSpace(requested)) result.Add(requested);
-        foreach (var quality in available.OrderByDescending(QualityRank))
+        foreach (var quality in available.OrderByDescending(MusicQuality.Rank))
         {
             if (!result.Contains(quality, StringComparer.OrdinalIgnoreCase)) result.Add(quality);
         }
         return result;
     }
 
-    private static int QualityRank(string quality) =>
-        quality.ToLowerInvariant().Replace(" ", string.Empty) switch
-        {
-            "flac24bit" => 6,
-            "flac" or "无损" => 5,
-            "320k" => 4,
-            "192k" => 3,
-            "128k" => 2,
-            _ => 1
-        };
-
-    private static (string Label, string Extension) ResolveActualFormat(
+    private static AudioFileInfo ResolveActualFormat(
         string filePath,
         string fallbackExtension)
     {
         var format = SniffAudioFormat(filePath);
         return format switch
         {
-            "flac" => ("flac", ".flac"),
-            "mp3" => ("mp3", ".mp3"),
-            "m4a" => ("m4a", ".m4a"),
-            "aac" => ("aac", ".aac"),
-            "ogg" => ("ogg", ".ogg"),
-            "wav" => ("wav", ".wav"),
-            "ape" => ("ape", ".ape"),
-            "wma" => ("wma", ".wma"),
-            _ => (fallbackExtension.TrimStart('.'), fallbackExtension)
+            "flac" => InspectFlac(filePath),
+            "mp3" => InspectMp3(filePath),
+            "m4a" => new("m4a", ".m4a", "m4a"),
+            "aac" => new("aac", ".aac", "aac"),
+            "ogg" => new("ogg", ".ogg", "ogg"),
+            "wav" => new("wav", ".wav", "wav"),
+            "ape" => new("ape", ".ape", "ape"),
+            "wma" => new("wma", ".wma", "wma"),
+            _ => new(fallbackExtension.TrimStart('.'), fallbackExtension, null)
         };
+    }
+
+    private static AudioFileInfo InspectFlac(string filePath)
+    {
+        Span<byte> header = stackalloc byte[26];
+        using var stream = File.OpenRead(filePath);
+        if (stream.Read(header) < header.Length || !header[..4].SequenceEqual("fLaC"u8))
+            return new("flac", ".flac", "flac");
+        var blockType = header[4] & 0x7F;
+        var blockLength = (header[5] << 16) | (header[6] << 8) | header[7];
+        if (blockType != 0 || blockLength < 18) return new("flac", ".flac", "flac");
+        ulong packed = 0;
+        for (var index = 18; index < 26; index++) packed = (packed << 8) | header[index];
+        var sampleRate = (int)((packed >> 44) & 0xFFFFF);
+        var bitsPerSample = (int)((packed >> 36) & 0x1F) + 1;
+        var quality = bitsPerSample >= 24 && sampleRate > 48_000
+            ? "hires"
+            : bitsPerSample >= 24 ? "flac24bit" : "flac";
+        return new(quality, ".flac", quality);
+    }
+
+    private static AudioFileInfo InspectMp3(string filePath)
+    {
+        const int probeLength = 1024 * 1024;
+        using var stream = File.OpenRead(filePath);
+        var bytes = new byte[Math.Min(probeLength, checked((int)Math.Min(stream.Length, probeLength)))];
+        var read = stream.Read(bytes);
+        var start = read >= 10 && bytes.AsSpan(0, 3).SequenceEqual("ID3"u8)
+            ? Math.Min(read, 10 + ((bytes[6] & 0x7F) << 21) + ((bytes[7] & 0x7F) << 14)
+                + ((bytes[8] & 0x7F) << 7) + (bytes[9] & 0x7F))
+            : 0;
+        for (var index = start; index + 3 < read; index++)
+        {
+            if (bytes[index] != 0xFF || (bytes[index + 1] & 0xE0) != 0xE0) continue;
+            var version = (bytes[index + 1] >> 3) & 0x03;
+            var layer = (bytes[index + 1] >> 1) & 0x03;
+            var bitrateIndex = (bytes[index + 2] >> 4) & 0x0F;
+            if (layer != 1 || bitrateIndex is 0 or 15) continue;
+            var table = version == 3
+                ? new[] { 0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320 }
+                : new[] { 0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160 };
+            var bitrate = table[bitrateIndex];
+            var quality = bitrate <= 160 ? "128k" : bitrate <= 256 ? "192k" : "320k";
+            return new(quality, ".mp3", quality);
+        }
+        return new("mp3", ".mp3", "128k");
     }
 
     private static string? SniffAudioFormat(string filePath)
@@ -1075,9 +1145,9 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         var announcement = task.Status switch
         {
             DownloadTaskStatus.Completed => new AccessibleAnnouncement(
-                string.IsNullOrEmpty(task.LyricPath)
-                    ? $"下载完成：{task.DisplayName}"
-                    : $"下载完成：{task.DisplayName}，已同步下载歌词",
+                $"下载完成：{task.DisplayName}"
+                + (string.IsNullOrEmpty(task.QualityFallback) ? "" : $"，{task.QualityFallback}")
+                + (string.IsNullOrEmpty(task.LyricPath) ? "" : "，已同步下载歌词"),
                 AnnouncementKind.Success,
                 activityId),
             DownloadTaskStatus.Cancelled => new(
@@ -1133,12 +1203,16 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
 
     private sealed record DownloadPlan(
         string? TargetDirectory,
-        DownloadPreferences Preferences);
+        DownloadPreferences Preferences,
+        string RequestedQuality);
 
     private sealed record HttpDownload(string Path, string Extension);
-    private sealed record RemoteDownload(string Path, string Extension, string Quality);
+    private sealed record RemoteDownload(string Path, string Quality, AudioFileInfo Actual);
+    private sealed record AudioFileInfo(string Label, string Extension, string? QualityToken);
 
     private sealed class DownloadSafetyException(string message) : IOException(message);
+    private sealed class MediaQualityMismatchException(string message) : IOException(message);
+    private sealed class QualityUnavailableException(string message) : IOException(message);
 
     private void DeleteExternalTemporaryFile(string path)
     {

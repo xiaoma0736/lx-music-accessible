@@ -141,12 +141,12 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         if (_scriptsInitialized) return;
         _scriptsInitialized = true;
 
-        // 先恢复持久化配置，再用随版本资源校正固定源。
+        // 用户订阅保持正式版的优先顺序；随版本源只作最后的离线备用。
         await LoadPersistedSourcesAsync(cancellationToken);
 
-        await LoadBundledSourceAsync(cancellationToken);
-
         await RefreshSubscriptionsAsync(cancellationToken);
+
+        await LoadBundledSourceAsync(cancellationToken);
 
         await PersistSourcesAsync(cancellationToken);
         RaiseSourcesChanged();
@@ -196,6 +196,11 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         existing.TrustState = ScriptTrustState.Bundled;
         existing.ContentSha256 = BundledScriptSha256;
         existing.IsEnabled = enabled;
+        existing.Priority = _sources
+            .Where(source => !ReferenceEquals(source, existing) && !source.IsSystemHidden)
+            .Select(source => source.Priority)
+            .DefaultIfEmpty(9)
+            .Max() + 1;
         existing.LastUpdateDate = DateTime.Now;
     }
 
@@ -542,7 +547,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         if (!string.IsNullOrEmpty(defaultSourceId))
         {
             var defaultScript = scripts.FirstOrDefault(s => string.Equals(s.Id, defaultSourceId, StringComparison.OrdinalIgnoreCase));
-            if (defaultScript != null)
+            if (defaultScript != null && SupportsQuality(defaultScript, source, quality))
             {
                 try
                 {
@@ -588,6 +593,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
             if (script.SupportedSources.Count > 0 &&
                 !script.SupportedSources.Contains(source, StringComparer.OrdinalIgnoreCase))
                 continue;
+            if (!SupportsQuality(script, source, quality)) continue;
             try
             {
                 using var attempt = CancellationTokenSource.CreateLinkedTokenSource(
@@ -617,7 +623,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         }
 
         // 第3级: 官方API —— 当前音源内置（用该平台正确歌曲 ID，不会串歌）
-        if (_apiMap.TryGetValue(source, out var api))
+        if (_apiMap.TryGetValue(source, out var api)
+            && api.GetSupportedQualities().Contains(quality, StringComparer.OrdinalIgnoreCase))
         {
             try
             {
@@ -638,6 +645,11 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         // 用网易的 ID 去查 QQ/酷我等必然返回另一首歌（导致“切换接口后播放另外歌曲”）。
         return null;
     }
+
+    private static bool SupportsQuality(LxScriptInfo script, string source, string quality) =>
+        !script.QualityMap.TryGetValue(source, out var declared)
+        || declared.Count == 0
+        || declared.Contains(quality, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>解析单个脚本源的播放 URL：正则快路径优先，Jint 执行脚本兜底；过滤占位链接并做可播性校验</summary>
     private async Task<string?> TryResolveScriptUrlAsync(

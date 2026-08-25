@@ -261,11 +261,18 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         try
         {
             var directUrl = forceResolve ? null : GetDirectUrl(requestedMusic);
-            directUrl ??= await TryResolveAsync(requestedMusic, quality, token);
             if (!string.IsNullOrWhiteSpace(directUrl)
-                && await TryLoadAsync(requestedMusic, directUrl, token))
+                && await TryLoadAsync(requestedMusic, directUrl, quality, token))
             {
                 return CommitPlaying(context, revision, index, requestedMusic, directUrl);
+            }
+
+            var resolvedUrl = await TryResolveAsync(requestedMusic, quality, token);
+            if (!string.IsNullOrWhiteSpace(resolvedUrl)
+                && !string.Equals(resolvedUrl, directUrl, StringComparison.Ordinal)
+                && await TryLoadAsync(requestedMusic, resolvedUrl, quality, token))
+            {
+                return CommitPlaying(context, revision, index, requestedMusic, resolvedUrl);
             }
 
             if (!IsLocal(requestedMusic))
@@ -300,7 +307,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
                         if (alternative is null) continue;
                         var candidate = alternative.Music;
                         var url = alternative.Url;
-                        if (!await TryLoadAsync(candidate, url, token)) continue;
+                        if (!await TryLoadAsync(candidate, url, quality, token)) continue;
 
                         var switched = CommitPlaying(
                             context,
@@ -417,12 +424,24 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
     private async Task<bool> TryLoadAsync(
         MusicInfo music,
         string url,
+        string quality,
         CancellationToken cancellationToken)
     {
         try
         {
             await _audioPlayer.LoadAsync(url, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            var actual = _audioPlayer.GetActualQuality();
+            if (!IsLocal(music) && !MusicQuality.AcceptsPlayback(quality, actual))
+            {
+                _audioPlayer.Stop();
+                _logger.LogWarning(
+                    "Playback media quality was lower than requested ({SourceId}, Requested={Requested}, Actual={Actual})",
+                    music.Source,
+                    quality,
+                    actual);
+                return false;
+            }
             await _audioPlayer.PlayAsync();
             cancellationToken.ThrowIfCancellationRequested();
             return true;

@@ -469,6 +469,14 @@ public sealed partial class AccessibilitySemanticsTests
         Assert.Equal("歌手 - 歌曲 [mp3]，25%，下载中", download.AccessibleName);
         Assert.Equal("25%，下载中", download.AccessibleStatus);
 
+        download.ActualQuality = "128k";
+        download.QualityFallback = "请求 flac，已回退到 128k";
+        download.Status = DownloadTaskStatus.Completed;
+        Assert.Equal(
+            "歌手 - 歌曲 [128k]，已完成，请求 flac，已回退到 128k",
+            download.AccessibleName);
+        Assert.Equal("已完成，请求 flac，已回退到 128k", download.AccessibleStatus);
+
         var mainXaml = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "LXMusicAccessible.App", "MainWindow.xaml"));
         Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding ConflictStatus}\"", mainXaml);

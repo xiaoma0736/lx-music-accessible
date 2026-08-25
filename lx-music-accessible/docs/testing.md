@@ -10,6 +10,8 @@ The script restores packages, rejects High/Critical dependency advisories, build
 
 `LXMusicAccessible.Tests` starts the same `ApplicationHost` registrations as the desktop app. Its fixture uses a unique temporary data directory and real file-backed SQLite, then removes that directory when the fixture is disposed. HTTP requests must be registered with the rejecting handler; unknown requests fail immediately. Browser/process launches, announcements, speech, and native audio are replaced by recording adapters.
 
+The media-quality regression suite drives every production token (`128k`, `192k`, `320k`, `flac`, `flac24bit`, `hires`, `atmos`, `atmos_plus`, `master`, `jyeffect`, `sky`, `dolby`, and `jymaster`) through both download and playback. Resolver URLs, content types, file extensions, distinguishable fixture bytes, MP3 frame bitrate, FLAC STREAMINFO, saved files, fallback status, and the audio-player seam are asserted independently so an extension-only success cannot hide a lowest-quality payload.
+
 Automated tests must not depend on public network access, the real user profile, an installed browser, speech software, or an audio device. This repository intentionally has no remote CI/CD workflow. Every ticket owner runs `verify.ps1` locally, records the exact stage and test results on its GitHub issue, and does not wait for a remote check.
 
 `LXMusicAccessible.TestConsole` remains a manual diagnostic program. It accesses real services and native libraries, so it is not part of the automated quality gate.

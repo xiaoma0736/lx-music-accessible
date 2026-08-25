@@ -497,6 +497,7 @@
                                             <ComboBoxItem Content="192k" Tag="192k"/>
                                             <ComboBoxItem Content="320k 高品质" Tag="320k"/>
                                             <ComboBoxItem Content="FLAC 无损" Tag="flac"/>
+                                            <ComboBoxItem Content="FLAC 24bit 高解析" Tag="flac24bit"/>
                                             <ComboBoxItem Content="Hi-Res 高解析" Tag="hires"/>
                                             <ComboBoxItem Content="杜比全景声" Tag="atmos"/>
                                             <ComboBoxItem Content="杜比全景声增强" Tag="atmos_plus"/>

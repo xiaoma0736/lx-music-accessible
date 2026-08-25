@@ -74,22 +74,78 @@ public sealed class DownloadWorkflowTests
     public async Task Network_failure_removes_temporary_files_and_can_be_retried()
     {
         await using var harness = new DownloadHarness();
-        var url = harness.Source.Register("retry");
+        harness.Source.SetQualities("128k", "320k");
+        var url = harness.Source.Register("retry", "320k");
         harness.Http.Register(HttpMethod.Get, url, () =>
             new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
 
         var task = await harness.Workflow.DownloadAsync(new(
             Song("retry"),
+            "320k",
             TargetDirectory: harness.Target));
 
         Assert.Equal(DownloadTaskStatus.Failed, task.Status);
         Assert.Empty(EnumerateFiles(harness.Target));
 
-        harness.Http.Register(HttpMethod.Get, url, () => AudioResponse(32));
+        harness.Http.Register(HttpMethod.Get, url, () => Mp3Response(320, 32));
         Assert.True(await harness.Workflow.RetryAsync(task));
         Assert.Equal(DownloadTaskStatus.Completed, task.Status);
+        Assert.Equal("320k", task.Quality);
+        Assert.Equal("320k", task.ActualQuality);
+        Assert.Null(task.QualityFallback);
         Assert.Single(EnumerateFiles(harness.Target));
         Assert.DoesNotContain(EnumerateFiles(harness.Target), IsTemporary);
+    }
+
+    [Fact]
+    public async Task Requested_lossless_quality_does_not_accept_a_lowest_quality_mp3_payload()
+    {
+        await using var harness = new DownloadHarness();
+        harness.Source.SetQualities("128k", "320k", "flac");
+        var url = harness.Source.Register("quality-mismatch", "flac");
+        harness.Http.Register(HttpMethod.Get, url, () => AudioResponse(64));
+
+        var task = await harness.Workflow.DownloadAsync(new(
+            Song("quality-mismatch"),
+            "flac",
+            harness.Target));
+
+        Assert.Equal(DownloadTaskStatus.Failed, task.Status);
+        Assert.Contains("音质", task.ErrorMessage, StringComparison.Ordinal);
+        Assert.Empty(EnumerateFiles(harness.Target));
+    }
+
+    [Fact]
+    public async Task Unsupported_requested_quality_uses_an_explicit_verified_fallback()
+    {
+        await using var harness = new DownloadHarness();
+        harness.Source.SetQualities("128k", "flac");
+        var selected = harness.Source.Register("quality-fallback", "flac");
+        var fallback = harness.Source.Register("quality-fallback", "128k");
+        harness.Http.Register(HttpMethod.Get, selected, () => Mp3Response(128, 64));
+        harness.Http.Register(HttpMethod.Get, fallback, () => Mp3Response(128, 64));
+
+        var task = await harness.Workflow.DownloadAsync(new(
+            Song("quality-fallback"),
+            "flac",
+            harness.Target));
+
+        Assert.Equal(DownloadTaskStatus.Completed, task.Status);
+        Assert.Equal("128k", task.Quality);
+        Assert.Equal("128k", task.ActualQuality);
+        Assert.Equal("请求 flac，已回退到 128k", task.QualityFallback);
+        Assert.Contains("回退", task.AccessibleStatus, StringComparison.Ordinal);
+        Assert.Contains(
+            harness.Announcer.Announcements,
+            item => item.Kind == AnnouncementKind.Success
+                && item.Text.Contains("回退", StringComparison.Ordinal));
+        Assert.Equal(2, harness.Http.Requests.Count);
+
+        Assert.True(await harness.Workflow.RetryAsync(task));
+        Assert.Equal(DownloadTaskStatus.Completed, task.Status);
+        Assert.Equal("128k", task.Quality);
+        Assert.Equal("请求 flac，已回退到 128k", task.QualityFallback);
+        Assert.Equal(4, harness.Http.Requests.Count);
     }
 
     [Fact]
@@ -257,6 +313,26 @@ public sealed class DownloadWorkflowTests
     }
 
     [Fact]
+    public async Task External_playback_does_not_pass_a_detected_lower_quality_url_to_the_player()
+    {
+        await using var harness = new DownloadHarness();
+        harness.Source.SetQualities("128k", "flac");
+        var url = harness.Source.Register("external-low", "flac");
+        harness.Http.Register(HttpMethod.Get, url, () => Mp3Response(128, 64));
+
+        var target = await harness.Workflow.PrepareExternalPlaybackAsync(
+            Song("external-low"),
+            "flac");
+
+        Assert.Null(target);
+        Assert.Empty(EnumerateFiles(harness.Target));
+        Assert.Contains(
+            harness.Announcer.Announcements,
+            item => item.Kind == AnnouncementKind.Error
+                && item.ActivityId?.StartsWith("download-external:", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
     public async Task External_player_launch_is_owned_by_the_download_workflow()
     {
         await using var harness = new DownloadHarness();
@@ -280,6 +356,24 @@ public sealed class DownloadWorkflowTests
     {
         var bytes = new byte[Math.Max(size, 4)];
         "ID3"u8.CopyTo(bytes);
+        var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new MediaTypeHeaderValue("audio/mpeg");
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+    }
+
+    private static HttpResponseMessage Mp3Response(int bitrate, int size)
+    {
+        var bytes = new byte[Math.Max(size, 4)];
+        bytes[0] = 0xFF;
+        bytes[1] = 0xFB;
+        bytes[2] = bitrate switch
+        {
+            128 => 0x90,
+            192 => 0xB0,
+            320 => 0xE0,
+            _ => throw new ArgumentOutOfRangeException(nameof(bitrate))
+        };
+        bytes[3] = 0x64;
         var content = new ByteArrayContent(bytes);
         content.Headers.ContentType = new MediaTypeHeaderValue("audio/mpeg");
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
@@ -376,7 +470,9 @@ public sealed class DownloadWorkflowTests
     private sealed class ControlledDownloadSource : IDownloadSource
     {
         private readonly Dictionary<string, Uri> _urls = new(StringComparer.Ordinal);
+        private readonly Dictionary<(string Id, string Quality), Uri> _qualityUrls = new();
         private readonly HashSet<string> _lyrics = new(StringComparer.Ordinal);
+        private IReadOnlyList<string> _qualities = ["128k"];
 
         public Uri Register(string id)
         {
@@ -385,6 +481,15 @@ public sealed class DownloadWorkflowTests
             return uri;
         }
 
+        public Uri Register(string id, string quality)
+        {
+            var uri = new Uri($"https://downloads.invalid/{id}-{quality}.mp3");
+            _qualityUrls[(id, quality)] = uri;
+            return uri;
+        }
+
+        public void SetQualities(params string[] qualities) => _qualities = qualities;
+
         public void RegisterLyric(string id) => _lyrics.Add(id);
 
         public Task<IReadOnlyList<string>> GetQualitiesAsync(
@@ -392,7 +497,7 @@ public sealed class DownloadWorkflowTests
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult<IReadOnlyList<string>>(["128k"]);
+            return Task.FromResult(_qualities);
         }
 
         public Task<string?> GetUrlAsync(
@@ -401,9 +506,12 @@ public sealed class DownloadWorkflowTests
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(_urls.TryGetValue(music.Id, out var uri)
-                ? uri.AbsoluteUri
-                : null);
+            return Task.FromResult(
+                _qualityUrls.TryGetValue((music.Id, quality), out var qualityUri)
+                    ? qualityUri.AbsoluteUri
+                    : _urls.TryGetValue(music.Id, out var uri)
+                        ? uri.AbsoluteUri
+                        : null);
         }
 
         public Task<LyricResult?> GetLyricAsync(

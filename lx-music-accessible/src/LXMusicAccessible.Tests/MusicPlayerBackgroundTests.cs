@@ -113,13 +113,18 @@ public sealed class MusicPlayerBackgroundTests
         await using var fixture = new PlayerFixture(sources: sources);
         fixture.Audio.FailingUrls.UnionWith(["bad-a", "bad-b"]);
 
-        var result = await fixture.Player.PlayAsync(new([requested], requested));
+        var result = await fixture.Player.PlayAsync(new(
+            [requested],
+            requested,
+            "320k"));
 
         Assert.Equal(PlaybackResultStatus.Playing, result.Status);
         Assert.Equal("c", result.Music?.Source);
         Assert.Equal("bad-a", fixture.Audio.LoadedUrls[0]);
         Assert.Equal("good-c", fixture.Audio.LoadedUrls[^1]);
         Assert.Equal(new[] { "b", "c" }, sources.SearchedSources.Order());
+        Assert.NotEmpty(sources.ResolvedQualities);
+        Assert.All(sources.ResolvedQualities, quality => Assert.Equal("320k", quality));
         Assert.Single(fixture.Announcer.Announcements, item =>
             item.Kind == AnnouncementKind.Success);
     }
@@ -360,6 +365,7 @@ public sealed class MusicPlayerBackgroundTests
             new(StringComparer.OrdinalIgnoreCase);
 
         public ConcurrentQueue<string> SearchedSources { get; } = [];
+        public ConcurrentQueue<string> ResolvedQualities { get; } = [];
 
         public void AddAlternative(string sourceId, MusicInfo music, string? url) =>
             _alternatives[sourceId] = (music, url);
@@ -372,6 +378,7 @@ public sealed class MusicPlayerBackgroundTests
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            ResolvedQualities.Enqueue(quality);
             var match = _alternatives.Values.FirstOrDefault(entry =>
                 ReferenceEquals(entry.Music, music));
             return Task.FromResult(match.Music is null ? music.PlayUrl : match.Url);

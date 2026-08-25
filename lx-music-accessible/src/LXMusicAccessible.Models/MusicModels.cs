@@ -367,6 +367,8 @@ public class DownloadTask : System.ComponentModel.INotifyPropertyChanged
     public string Quality { get; set; } = "128k";
     /// <summary>Actual audio format of the finished download (sniffed), e.g. "mp3" / "flac".</summary>
     public string? ActualQuality { get; set; }
+    /// <summary>Non-null when the requested quality was unavailable and the documented fallback was used.</summary>
+    public string? QualityFallback { get; set; }
     public string? SavePath { get; set; }
     /// <summary>同步下载的歌词文件路径（.lrc），未下载为 null</summary>
     public string? LyricPath { get; set; }
@@ -430,7 +432,9 @@ public class DownloadTask : System.ComponentModel.INotifyPropertyChanged
 
     public string AccessibleStatus => Status == DownloadTaskStatus.Downloading
         ? $"{ProgressText}，{StatusText}"
-        : StatusText;
+        : Status == DownloadTaskStatus.Completed && !string.IsNullOrEmpty(QualityFallback)
+            ? $"{StatusText}，{QualityFallback}"
+            : StatusText;
 
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
