@@ -3,6 +3,8 @@ using System.IO;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
+using System.Text;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
@@ -48,6 +50,69 @@ public sealed class ScriptSecurityTests
 
         Assert.Equal("network_target_blocked", exception.Code);
         Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("93.184.216.34")]
+    [InlineData("2606:4700:4700::1111")]
+    public async Task Public_IPv4_and_IPv6_dns_results_remain_usable(string resolvedAddress)
+    {
+        var uri = new Uri("https://public-address.test/value");
+        var handler = new RejectingHttpMessageHandler();
+        handler.RegisterText(HttpMethod.Get, uri, "ok");
+        using var client = new ScriptNetworkClient(
+            handler,
+            (_, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(new[] { IPAddress.Parse(resolvedAddress) });
+            });
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal("ok", Encoding.UTF8.GetString(response.Body));
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Direct_DNS_failure_is_reported_before_http()
+    {
+        var handler = new RejectingHttpMessageHandler();
+        using var client = new ScriptNetworkClient(
+            handler,
+            (_, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw new SocketException((int)SocketError.HostNotFound);
+            });
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://missing.test/value");
+
+        var exception = await Assert.ThrowsAsync<ScriptNetworkException>(() =>
+            client.SendAsync(request));
+
+        Assert.Equal("dns_resolution_failed", exception.Code);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Redirect_between_public_CDN_hosts_remains_usable()
+    {
+        var start = new Uri("https://origin.test/start");
+        var cdn = new Uri("https://cdn.test/audio");
+        var handler = new RejectingHttpMessageHandler();
+        handler.Register(HttpMethod.Get, start, () => new HttpResponseMessage(HttpStatusCode.Redirect)
+        {
+            Headers = { Location = cdn }
+        });
+        handler.RegisterText(HttpMethod.Get, cdn, "audio");
+        using var client = CreatePublicClient(handler);
+        using var request = new HttpRequestMessage(HttpMethod.Get, start);
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal("audio", Encoding.UTF8.GetString(response.Body));
+        Assert.Equal(2, handler.Requests.Count);
     }
 
     [Fact]
@@ -97,8 +162,10 @@ public sealed class ScriptSecurityTests
     public async Task Dns_rebinding_between_preflight_and_connection_is_blocked()
     {
         var resolutions = 0;
-        using var client = new ScriptNetworkClient((_, _) => Task.FromResult(
-            new[] { ++resolutions == 1 ? PublicAddress : IPAddress.Loopback }));
+        using var client = new ScriptNetworkClient(
+            (_, _) => Task.FromResult(
+                new[] { ++resolutions == 1 ? PublicAddress : IPAddress.Loopback }),
+            proxy: null);
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://rebind.test/value");
 
         var exception = await Assert.ThrowsAsync<ScriptNetworkException>(() =>

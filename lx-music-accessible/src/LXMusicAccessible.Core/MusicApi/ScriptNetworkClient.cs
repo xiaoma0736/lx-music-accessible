@@ -16,7 +16,9 @@ public sealed class ScriptNetworkClient : IDisposable
     private static readonly HashSet<int> AllowedPorts = [80, 443];
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
-    private readonly HttpClient _client;
+    private readonly HttpClient _directClient;
+    private readonly HttpClient? _proxyClient;
+    private readonly IWebProxy? _proxy;
     private readonly Func<string, CancellationToken, Task<IPAddress[]>> _resolver;
 
     public ScriptNetworkClient()
@@ -25,13 +27,27 @@ public sealed class ScriptNetworkClient : IDisposable
     }
 
     public ScriptNetworkClient(Func<string, CancellationToken, Task<IPAddress[]>> resolver)
+        : this(resolver, HttpClient.DefaultProxy)
+    {
+    }
+
+    public ScriptNetworkClient(
+        Func<string, CancellationToken, Task<IPAddress[]>> resolver,
+        IWebProxy? proxy)
     {
         ArgumentNullException.ThrowIfNull(resolver);
         _resolver = resolver;
-        _client = new HttpClient(CreateProductionHandler(_resolver), disposeHandler: true)
+        _proxy = proxy;
+        _directClient = new HttpClient(CreateDirectHandler(_resolver), disposeHandler: true)
         {
             Timeout = Timeout.InfiniteTimeSpan
         };
+        _proxyClient = proxy is null
+            ? null
+            : new HttpClient(CreateProxyHandler(proxy), disposeHandler: true)
+            {
+                Timeout = Timeout.InfiniteTimeSpan
+            };
     }
 
     public ScriptNetworkClient(
@@ -40,10 +56,12 @@ public sealed class ScriptNetworkClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(handler);
         _resolver = resolver ?? ResolveAsync;
-        _client = new HttpClient(handler, disposeHandler: false)
+        _directClient = new HttpClient(handler, disposeHandler: false)
         {
             Timeout = Timeout.InfiniteTimeSpan
         };
+        _proxyClient = null;
+        _proxy = null;
     }
 
     public async Task<string> GetScriptAsync(Uri uri, CancellationToken cancellationToken = default)
@@ -87,7 +105,8 @@ public sealed class ScriptNetworkClient : IDisposable
         {
             for (var redirectCount = 0; ; redirectCount++)
             {
-                await ValidateTargetAsync(currentUri, timeout.Token);
+                var useProxy = ShouldUseProxy(currentUri);
+                await ValidateTargetAsync(currentUri, useProxy, timeout.Token);
                 using var currentRequest = template.Create(
                     currentUri,
                     currentMethod,
@@ -96,7 +115,7 @@ public sealed class ScriptNetworkClient : IDisposable
                 HttpResponseMessage response;
                 try
                 {
-                    response = await _client.SendAsync(
+                    response = await (useProxy ? _proxyClient! : _directClient).SendAsync(
                     currentRequest,
                     HttpCompletionOption.ResponseHeadersRead,
                     timeout.Token);
@@ -141,7 +160,10 @@ public sealed class ScriptNetworkClient : IDisposable
         return null;
     }
 
-    private async Task ValidateTargetAsync(Uri uri, CancellationToken cancellationToken)
+    private async Task ValidateTargetAsync(
+        Uri uri,
+        bool useProxy,
+        CancellationToken cancellationToken)
     {
         if (uri.Scheme is not ("http" or "https")
             || string.IsNullOrWhiteSpace(uri.Host)
@@ -161,7 +183,50 @@ public sealed class ScriptNetworkClient : IDisposable
             throw new ScriptNetworkException("network_target_blocked");
         }
 
-        await ResolvePublicAddressesAsync(host, _resolver, cancellationToken);
+        if (useProxy)
+            await ValidateProxiedTargetAsync(host, _resolver, cancellationToken);
+        else
+            await ResolvePublicAddressesAsync(host, _resolver, cancellationToken);
+    }
+
+    private bool ShouldUseProxy(Uri uri)
+    {
+        if (_proxy is null || _proxyClient is null) return false;
+        if (_proxy.IsBypassed(uri)) return false;
+        var proxyUri = _proxy.GetProxy(uri);
+        return proxyUri is not null && proxyUri != uri;
+    }
+
+    private static async Task ValidateProxiedTargetAsync(
+        string host,
+        Func<string, CancellationToken, Task<IPAddress[]>> resolver,
+        CancellationToken cancellationToken)
+    {
+        if (IPAddress.TryParse(host, out var literalAddress))
+        {
+            if (!IsPublicAddress(literalAddress))
+                throw new ScriptNetworkException("network_target_blocked");
+            return;
+        }
+
+        IPAddress[] addresses;
+        try
+        {
+            addresses = await resolver(host, cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (SocketException)
+        {
+            // The user-configured proxy is a trust boundary and may be the only component
+            // able to resolve this hostname. Literal and locally private targets stay blocked.
+            return;
+        }
+
+        if (addresses.Length > 0
+            && addresses.Any(address => !IsAllowedTargetAddress(host, address)))
+        {
+            throw new ScriptNetworkException("network_target_blocked");
+        }
     }
 
     private static async Task<IPAddress[]> ResolvePublicAddressesAsync(
@@ -232,7 +297,7 @@ public sealed class ScriptNetworkClient : IDisposable
         return globalUnicast && !documentation;
     }
 
-    private static SocketsHttpHandler CreateProductionHandler(
+    private static SocketsHttpHandler CreateDirectHandler(
         Func<string, CancellationToken, Task<IPAddress[]>> resolver)
     {
         var handler = new SocketsHttpHandler
@@ -272,6 +337,16 @@ public sealed class ScriptNetworkClient : IDisposable
         };
         return handler;
     }
+
+    private static SocketsHttpHandler CreateProxyHandler(IWebProxy proxy) => new()
+    {
+        AllowAutoRedirect = false,
+        AutomaticDecompression = DecompressionMethods.None,
+        ConnectTimeout = TimeSpan.FromSeconds(5),
+        UseCookies = false,
+        UseProxy = true,
+        Proxy = proxy
+    };
 
     private static async Task<byte[]> ReadResponseBodyAsync(
         HttpResponseMessage response,
@@ -370,7 +445,11 @@ public sealed class ScriptNetworkClient : IDisposable
     private static Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken)
         => Dns.GetHostAddressesAsync(host, cancellationToken);
 
-    public void Dispose() => _client.Dispose();
+    public void Dispose()
+    {
+        _directClient.Dispose();
+        _proxyClient?.Dispose();
+    }
 
     private sealed record RequestTemplate(
         IReadOnlyList<KeyValuePair<string, IEnumerable<string>>> Headers,
