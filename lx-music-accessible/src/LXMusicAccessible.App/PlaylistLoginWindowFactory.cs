@@ -5,10 +5,10 @@ using Microsoft.Extensions.Logging;
 
 namespace LXMusicAccessible.App;
 
-internal readonly record struct PlaylistLoginDialogResult(bool Succeeded, string? AccountName = null);
+public readonly record struct PlaylistLoginDialogResult(bool Succeeded, string? AccountName = null);
 
 /// <summary>The single seam used by the playlist view to open Host-owned login dialogs.</summary>
-internal interface IPlaylistLoginWindowFactory
+public interface IPlaylistLoginWindowFactory
 {
     PlaylistLoginDialogResult ShowWebLogin(string platform, Window? owner);
     bool ShowKugouQrLogin(Window? owner);

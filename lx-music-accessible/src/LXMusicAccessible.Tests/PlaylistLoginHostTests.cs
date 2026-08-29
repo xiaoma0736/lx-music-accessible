@@ -57,11 +57,24 @@ public sealed class PlaylistLoginHostTests
             Assert.Same(host.Services.GetRequiredService<ILogger<WebLoginWindow>>(), factory.Logger);
             Assert.Same(service, host.Services.GetRequiredService<IPlaylistImportService>());
 
-            var login = await RunOnStaThread(() =>
-                host.Services.GetRequiredService<PlaylistImportView>().LoginWithWebDialogAsync());
+            var login = await RunOnStaThread(async () =>
+            {
+                var owner = new System.Windows.Window { ShowInTaskbar = false };
+                owner.Show();
+                var window = host.Services.GetRequiredService<ApplicationWindowFactory>()
+                    .CreatePlaylistImport(owner, _ => false, _ => { }, _ => { });
+                window.Show();
+                try { return await window.LoginWithWebDialogAsync(); }
+                finally
+                {
+                    window.Close();
+                    owner.Close();
+                }
+            });
 
             Assert.True(login.Succeeded);
             Assert.Equal("受控账号", login.AccountName);
+            Assert.Equal("导入个人歌单", factory.LastOwnerTitle);
             Assert.Equal("受控账号", service.GetAccount("netease")?.DisplayName);
 
             var playlist = Assert.Single(await service.GetMyPlaylistsAsync("netease"));
@@ -87,6 +100,7 @@ public sealed class PlaylistLoginHostTests
         {
             try { completion.SetResult(action().GetAwaiter().GetResult()); }
             catch (Exception exception) { completion.SetException(exception); }
+            finally { System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeShutdown(); }
         });
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
@@ -106,10 +120,12 @@ public sealed class PlaylistLoginHostTests
         public MusicHttpClient Http => http;
         public ILogger<WebLoginWindow> Logger => logger;
         public int DisposeCount { get; private set; }
+        public string? LastOwnerTitle { get; private set; }
 
         public PlaylistLoginDialogResult ShowWebLogin(string platform, System.Windows.Window? owner)
         {
-            Assert.Null(owner);
+            Assert.NotNull(owner);
+            LastOwnerTitle = owner.Title;
             var account = service.LoginWithCookieAsync(platform, "controlled-cookie")
                 .GetAwaiter().GetResult();
             return new PlaylistLoginDialogResult(account is not null, account?.DisplayName);

@@ -12,7 +12,10 @@ public sealed class ApplicationWindowFactory(
     IMusicSourceService sources,
     SettingsWorkflow settings,
     ITtsService tts,
-    IDownloadWorkflow downloads)
+    IDownloadWorkflow downloads,
+    IPlaylistImportService playlistImport,
+    IPlaylistLoginWindowFactory playlistLoginWindows,
+    BackgroundWorkHost backgroundWork)
 {
     public UserGuideWindow CreateUserGuide(Window? owner) =>
         WithOwner(new UserGuideWindow(announcer), owner);
@@ -65,6 +68,26 @@ public sealed class ApplicationWindowFactory(
             handleHotkey,
             setInputSuppressed,
             reconfigure), owner);
+    }
+
+    public PlaylistImportWindow CreatePlaylistImport(
+        Window owner,
+        Func<KeyEventArgs, bool> handleHotkey,
+        Action<System.Windows.Controls.ListBox> attachSongList,
+        Action<System.Windows.Controls.ListBox> detachSongList)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(handleHotkey);
+        ArgumentNullException.ThrowIfNull(attachSongList);
+        ArgumentNullException.ThrowIfNull(detachSongList);
+        return WithOwner(new PlaylistImportWindow(
+            playlistImport,
+            announcer,
+            playlistLoginWindows,
+            backgroundWork,
+            handleHotkey,
+            attachSongList,
+            detachSongList), owner);
     }
 
     private static T WithOwner<T>(T window, Window? owner) where T : Window

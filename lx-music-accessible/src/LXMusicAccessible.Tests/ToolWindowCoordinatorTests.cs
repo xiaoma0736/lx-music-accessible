@@ -117,6 +117,51 @@ public sealed class ToolWindowCoordinatorTests
     }
 
     [Fact]
+    public async Task Playlist_import_is_non_modal_single_instance_recreated_and_part_of_the_window_group()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var created = new List<RecordingToolWindow>();
+            var coordinator = new ToolWindowCoordinator(
+                null,
+                (_, _) => new RecordingToolWindow(ToolWindowKind.SourceManager),
+                null,
+                (_, _, _, _) =>
+                {
+                    var window = new RecordingToolWindow(ToolWindowKind.PlaylistImport)
+                    {
+                        Visible = true,
+                        Active = true,
+                        Focus = new object()
+                    };
+                    created.Add(window);
+                    return window;
+                });
+            var owner = new Window();
+
+            Assert.Equal(
+                ToolWindowOpenResult.Created,
+                coordinator.ShowPlaylistImport(owner, _ => false, _ => { }, _ => { }));
+            Assert.Equal(
+                ToolWindowOpenResult.Activated,
+                coordinator.ShowPlaylistImport(owner, _ => false, _ => { }, _ => { }));
+            Assert.Single(created);
+            Assert.Equal(1, created[0].ActivateCount);
+
+            var snapshot = coordinator.HideVisibleWindows();
+            Assert.False(created[0].Visible);
+            Assert.Same(created[0], snapshot.ActiveWindow);
+            Assert.True(coordinator.RestoreVisibleWindows(snapshot));
+            Assert.Same(created[0].Focus, created[0].RestoredFocus);
+
+            created[0].Close();
+            Assert.False(coordinator.IsOpen(ToolWindowKind.PlaylistImport));
+            coordinator.ShowPlaylistImport(owner, _ => false, _ => { }, _ => { });
+            Assert.Equal(2, created.Count);
+        });
+    }
+
+    [Fact]
     public async Task Download_manager_participates_in_window_group_focus_restore()
     {
         await RunOnStaThreadAsync(() =>

@@ -1,8 +1,10 @@
 using System.Buffers.Binary;
 using System.IO;
 using Dapper;
+using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Data;
 using LXMusicAccessible.Models;
+using LXMusicAccessible.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -11,6 +13,46 @@ namespace LXMusicAccessible.Tests;
 
 public sealed class PlaylistSnapshotTests
 {
+    [Fact]
+    public async Task Shutdown_cancellation_waits_for_current_fetch_keeps_completed_and_skips_pending_snapshots()
+    {
+        using var fixture = await TemporaryDatabase.CreateAsync();
+        var provider = new DelayedBatchProvider();
+        var service = new PlaylistImportService(
+            [provider],
+            fixture.Data,
+            NullLogger<PlaylistImportService>.Instance);
+        await using var backgroundWork = new BackgroundWorkHost(
+            NullLogger<BackgroundWorkHost>.Instance);
+        var playlists = new[]
+        {
+            Remote("completed"),
+            Remote("current"),
+            Remote("pending")
+        };
+
+        backgroundWork.StartLatest(
+            "playlist-import",
+            async context =>
+            {
+                await service.ImportPlaylistsAsync(
+                    provider.PlatformId,
+                    playlists,
+                    cancellationToken: context.CancellationToken);
+            });
+        await provider.CurrentFetchStarted.Task;
+        var stop = backgroundWork.StopAsync();
+        Assert.False(stop.IsCompleted);
+        provider.ReleaseCurrentFetch.SetResult();
+
+        await stop;
+        var snapshots = (await fixture.Data.GetPlaylistsAsync())
+            .Where(playlist => playlist.IsSnapshot && playlist.Source == provider.PlatformId)
+            .ToList();
+        Assert.Equal("completed", Assert.Single(snapshots).Name);
+        Assert.Equal(["completed", "current"], provider.FetchedRemoteIds);
+    }
+
     [Fact]
     public async Task Empty_and_single_song_snapshots_replace_the_previous_snapshot_exactly()
     {
@@ -316,6 +358,43 @@ public sealed class PlaylistSnapshotTests
         Title = title ?? id,
         Artist = "artist"
     };
+
+    private static RemotePlaylist Remote(string id) => new()
+    {
+        Platform = "test",
+        RemoteId = id,
+        Name = id,
+        TrackCount = 1
+    };
+
+    private sealed class DelayedBatchProvider : IPlaylistImportProvider
+    {
+        public string PlatformId => "test";
+        public string PlatformName => "测试平台";
+        public List<string> FetchedRemoteIds { get; } = [];
+        public TaskCompletionSource CurrentFetchStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseCurrentFetch { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<AccountInfo?> LoginByCookieAsync(string cookieText) =>
+            throw new NotSupportedException();
+        public Task LoadAccountAsync(AccountInfo account) => Task.CompletedTask;
+        public Task LogoutAsync() => Task.CompletedTask;
+        public Task<List<RemotePlaylist>> GetMyPlaylistsAsync() =>
+            throw new NotSupportedException();
+
+        public async Task<List<MusicInfo>> GetPlaylistSongsAsync(RemotePlaylist playlist)
+        {
+            FetchedRemoteIds.Add(playlist.RemoteId);
+            if (playlist.RemoteId == "current")
+            {
+                CurrentFetchStarted.SetResult();
+                await ReleaseCurrentFetch.Task;
+            }
+            return [CreateSong(playlist.RemoteId)];
+        }
+    }
 
     private static async Task<SqliteConnection> OpenAsync(string databasePath)
     {

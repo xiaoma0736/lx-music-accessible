@@ -101,7 +101,7 @@ public sealed class WorkflowConsolidationTests
         Assert.Contains("_browseWorkflow.ContinuePlaybackAsync", window, StringComparison.Ordinal);
         Assert.Contains("_savedPlaylists", window, StringComparison.Ordinal);
         Assert.DoesNotContain("(HostWindow as MainWindow)", File.ReadAllText(Path.Combine(
-            root, "src", "LXMusicAccessible.App", "PlaylistImportView.xaml.cs")), StringComparison.Ordinal);
+            root, "src", "LXMusicAccessible.App", "PlaylistImportWindow.xaml.cs")), StringComparison.Ordinal);
         Assert.Empty(Directory.Exists(Path.Combine(root, ".github", "workflows"))
             ? Directory.EnumerateFiles(Path.Combine(root, ".github", "workflows"))
             : []);

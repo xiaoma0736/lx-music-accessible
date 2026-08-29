@@ -53,6 +53,7 @@ public sealed class ApplicationHostTests
             owner.Show();
             var sourceManager = windows.CreateSourceManager(owner, _ => false);
             var downloadManager = windows.CreateDownloadManager(owner, _ => false);
+            var playlistImport = windows.CreatePlaylistImport(owner, _ => false, _ => { }, _ => { });
             try
             {
                 Assert.Empty(AutomationProperties.GetName(guide));
@@ -76,6 +77,11 @@ public sealed class ApplicationHostTests
                 Assert.Equal(ResizeMode.CanResize, downloadManager.ResizeMode);
                 Assert.False(downloadManager.ShowInTaskbar);
                 Assert.Same(owner, downloadManager.Owner);
+                Assert.Equal("导入个人歌单", playlistImport.Title);
+                Assert.Equal(WindowStartupLocation.CenterOwner, playlistImport.WindowStartupLocation);
+                Assert.Equal(ResizeMode.CanResize, playlistImport.ResizeMode);
+                Assert.False(playlistImport.ShowInTaskbar);
+                Assert.Same(owner, playlistImport.Owner);
 
                 guide.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent, guide));
                 Assert.False(string.IsNullOrWhiteSpace(guide.GuideText.Text));
@@ -86,6 +92,7 @@ public sealed class ApplicationHostTests
             }
             finally
             {
+                playlistImport.Close();
                 downloadManager.Close();
                 sourceManager.Close();
                 owner.Close();
@@ -201,15 +208,18 @@ public sealed class ApplicationHostTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
+            Exception? failure = null;
             try
             {
                 action();
-                completion.SetResult();
             }
             catch (Exception exception)
             {
-                completion.SetException(exception);
+                failure = exception;
             }
+            finally { System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeShutdown(); }
+            if (failure is null) completion.SetResult();
+            else completion.SetException(failure);
         });
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();

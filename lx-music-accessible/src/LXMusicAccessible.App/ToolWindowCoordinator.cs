@@ -48,6 +48,7 @@ public sealed class ToolWindowCoordinator
     private readonly Func<Window, Func<KeyEventArgs, bool>, Action<bool>, Hotkey?, IToolWindowHandle>? _createSettings;
     private readonly Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle> _createSourceManager;
     private readonly Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle>? _createDownloadManager;
+    private readonly Func<Window, Func<KeyEventArgs, bool>, Action<System.Windows.Controls.ListBox>, Action<System.Windows.Controls.ListBox>, IToolWindowHandle>? _createPlaylistImport;
     private readonly Dictionary<ToolWindowKind, IToolWindowHandle> _windows = [];
 
     public ToolWindowCoordinator(ApplicationWindowFactory windows)
@@ -63,25 +64,31 @@ public sealed class ToolWindowCoordinator
             (owner, handleHotkey) => new WpfToolWindowHandle(
                 ToolWindowKind.DownloadManager,
                 windows.CreateDownloadManager(owner, handleHotkey),
+                modal: false),
+            (owner, handleHotkey, attachSongList, detachSongList) => new WpfToolWindowHandle(
+                ToolWindowKind.PlaylistImport,
+                windows.CreatePlaylistImport(owner, handleHotkey, attachSongList, detachSongList),
                 modal: false))
     {
     }
 
     internal ToolWindowCoordinator(
         Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle> createSourceManager)
-        : this(null, createSourceManager, null)
+        : this(null, createSourceManager, null, null)
     {
     }
 
     internal ToolWindowCoordinator(
         Func<Window, Func<KeyEventArgs, bool>, Action<bool>, Hotkey?, IToolWindowHandle>? createSettings,
         Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle> createSourceManager,
-        Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle>? createDownloadManager = null)
+        Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle>? createDownloadManager = null,
+        Func<Window, Func<KeyEventArgs, bool>, Action<System.Windows.Controls.ListBox>, Action<System.Windows.Controls.ListBox>, IToolWindowHandle>? createPlaylistImport = null)
     {
         ArgumentNullException.ThrowIfNull(createSourceManager);
         _createSettings = createSettings;
         _createSourceManager = createSourceManager;
         _createDownloadManager = createDownloadManager;
+        _createPlaylistImport = createPlaylistImport;
     }
 
     internal ToolWindowOpenResult ShowSettings(
@@ -126,6 +133,23 @@ public sealed class ToolWindowCoordinator
         return Show(
             ToolWindowKind.DownloadManager,
             () => _createDownloadManager(owner, handleHotkey));
+    }
+
+    internal ToolWindowOpenResult ShowPlaylistImport(
+        Window owner,
+        Func<KeyEventArgs, bool> handleHotkey,
+        Action<System.Windows.Controls.ListBox> attachSongList,
+        Action<System.Windows.Controls.ListBox> detachSongList)
+    {
+        if (_createPlaylistImport is null)
+            throw new InvalidOperationException("The playlist-import factory is unavailable.");
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(handleHotkey);
+        ArgumentNullException.ThrowIfNull(attachSongList);
+        ArgumentNullException.ThrowIfNull(detachSongList);
+        return Show(
+            ToolWindowKind.PlaylistImport,
+            () => _createPlaylistImport(owner, handleHotkey, attachSongList, detachSongList));
     }
 
     private ToolWindowOpenResult ShowModal(

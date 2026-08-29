@@ -110,10 +110,6 @@ public static class ApplicationHost
                 services.AddSingleton<KugouQrLoginService>();
                 services.AddSingleton<IPlaylistLoginWindowFactory, PlaylistLoginWindowFactory>();
 
-                services.AddSingleton(sp => new PlaylistImportView(
-                    sp.GetRequiredService<IPlaylistImportService>(),
-                    sp.GetRequiredService<IAccessibleAnnouncer>(),
-                    sp.GetRequiredService<IPlaylistLoginWindowFactory>()));
                 services.AddSingleton<ApplicationWindowFactory>();
                 services.AddSingleton<ToolWindowCoordinator>();
                 services.AddSingleton<ApplicationShutdownRequest>();

@@ -49,13 +49,14 @@
             <MenuItem Header="浏览(_B)">
                 <MenuItem Header="搜索(_S)" Click="MenuNavigateToSearch"/>
                 <MenuItem Header="播放列表(_L)" Click="MenuNavigateToPlaylist"/>
-                <MenuItem Header="导入个人歌单(_I)" Click="MenuNavigateToImport"/>
                 <MenuItem Header="分类歌单(_C)" Click="MenuNavigateToCategory"/>
                 <MenuItem Header="排行榜(_R)" Click="MenuNavigateToRanking"/>
                 <MenuItem Header="歌词(_G)" Click="MenuNavigateToLyrics"/>
             </MenuItem>
             <MenuItem Header="工具(_T)">
                 <MenuItem Header="下载管理(_D)" Click="MenuOpenDownloadManager"/>
+                <MenuItem Header="导入个人歌单(_I)" Click="MenuOpenPlaylistImport"/>
+                <Separator/>
                 <MenuItem Header="音源管理(_M)" Click="MenuOpenSourceManager"/>
                 <MenuItem x:Name="SettingsMenuItem" Header="设置(_S)" Click="MenuOpenSettings"/>
             </MenuItem>
@@ -220,13 +221,6 @@
                             </StackPanel>
                         </StackPanel>
                     </local:SafeScrollViewer>
-                </TabItem>
-
-                <!-- ===== 标签：导入个人歌单（并入主界面） ===== -->
-                <TabItem Header="导入个人歌单"
-                         KeyboardNavigation.TabNavigation="Cycle"
-                         KeyboardNavigation.DirectionalNavigation="None">
-                    <ContentControl x:Name="PlaylistImportHost"/>
                 </TabItem>
 
 <!-- ===== 标签3：分类歌单 ===== -->

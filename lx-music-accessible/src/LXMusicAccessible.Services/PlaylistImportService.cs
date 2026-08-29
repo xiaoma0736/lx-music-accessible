@@ -44,6 +44,13 @@ public interface IPlaylistImportService
         RemotePlaylist remote,
         Action<string>? announce = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>按顺序导入一批歌单；取消时保留已完成项并跳过尚未开始项。</summary>
+    Task<IReadOnlyList<PlaylistImportResult>> ImportPlaylistsAsync(
+        string platformId,
+        IReadOnlyList<RemotePlaylist> remotes,
+        Action<string>? announce = null,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -212,5 +219,26 @@ public class PlaylistImportService : IPlaylistImportService
             ImportedCount = replacement.ImportedCount,
             SkippedCount = replacement.SkippedCount
         };
+    }
+
+    public async Task<IReadOnlyList<PlaylistImportResult>> ImportPlaylistsAsync(
+        string platformId,
+        IReadOnlyList<RemotePlaylist> remotes,
+        Action<string>? announce = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(remotes);
+        var results = new List<PlaylistImportResult>(remotes.Count);
+        foreach (var remote in remotes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await ImportPlaylistAsync(
+                platformId,
+                remote,
+                announce,
+                cancellationToken);
+            results.Add(result);
+        }
+        return results;
     }
 }

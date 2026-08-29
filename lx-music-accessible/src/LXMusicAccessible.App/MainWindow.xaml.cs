@@ -26,7 +26,6 @@ public partial class MainWindow : Window
     private readonly LyricsWorkflow _lyrics;
     private readonly IDownloadWorkflow _downloads;
     private readonly SavedPlaylistWorkflow _savedPlaylists;
-    private readonly PlaylistImportView _playlistImportPanel;
     private readonly ApplicationWindowFactory _windowFactory;
     private readonly ToolWindowCoordinator _toolWindows;
     private readonly DesktopLifecycleWorkflow _desktopLifecycle;
@@ -98,7 +97,6 @@ public partial class MainWindow : Window
         LyricsWorkflow lyrics,
         IDownloadWorkflow downloads,
         SavedPlaylistWorkflow savedPlaylists,
-        PlaylistImportView playlistImportPanel,
         ApplicationWindowFactory windowFactory,
         ToolWindowCoordinator toolWindows,
         DesktopLifecycleWorkflow desktopLifecycle,
@@ -113,7 +111,6 @@ public partial class MainWindow : Window
         _lyrics = lyrics;
         _downloads = downloads;
         _savedPlaylists = savedPlaylists;
-        _playlistImportPanel = playlistImportPanel;
         _windowFactory = windowFactory;
         _toolWindows = toolWindows;
         _desktopLifecycle = desktopLifecycle;
@@ -124,8 +121,6 @@ public partial class MainWindow : Window
         if (_accessibilityService is WpfAccessibleAnnouncer wpfAnnouncer)
             wpfAnnouncer.Attach(LiveRegion);
         _accessibilityService.SpeechEnabled = true;
-        PlaylistImportHost.Content = _playlistImportPanel;
-        AttachSongListCapabilities(_playlistImportPanel.SongList);
         StatusText.Text = "正在初始化...";
         InitializePlayMode();
         _positionTimer.Tick += PositionTimer_Tick;
@@ -238,9 +233,8 @@ public partial class MainWindow : Window
         {
             case 0: FocusControl(SearchBox); break;
             case 1: FocusListContent(FavoriteSongsList); break;
-            case 2: FocusControl(_playlistImportPanel.FirstFocusable); break;
-            case 3: FocusListContent(CategoryList); break;
-            case 4: FocusListContent(RankingList); break;
+            case 2: FocusListContent(CategoryList); break;
+            case 3: FocusListContent(RankingList); break;
         }
     }
 
@@ -253,12 +247,17 @@ public partial class MainWindow : Window
     // 菜单导航
     private void MenuNavigateToSearch(object sender, RoutedEventArgs e) => NavigateToTab(0);
     private void MenuNavigateToPlaylist(object sender, RoutedEventArgs e) => NavigateToTab(1);
-    private void MenuNavigateToImport(object sender, RoutedEventArgs e) => NavigateToTab(2);
-    private void MenuNavigateToCategory(object sender, RoutedEventArgs e) => NavigateToTab(3);
-    private void MenuNavigateToRanking(object sender, RoutedEventArgs e) => NavigateToTab(4);
+    private void MenuNavigateToCategory(object sender, RoutedEventArgs e) => NavigateToTab(2);
+    private void MenuNavigateToRanking(object sender, RoutedEventArgs e) => NavigateToTab(3);
     private void MenuNavigateToLyrics(object sender, RoutedEventArgs e) => OpenLyricsWindow();
     private void MenuOpenDownloadManager(object sender, RoutedEventArgs e) =>
         _toolWindows.ShowDownloadManager(this, TryHandleToolWindowHotkey);
+    private void MenuOpenPlaylistImport(object sender, RoutedEventArgs e) =>
+        _toolWindows.ShowPlaylistImport(
+            this,
+            TryHandleToolWindowHotkey,
+            AttachSongListCapabilities,
+            DetachSongListCapabilities);
     private void MenuOpenSourceManager(object sender, RoutedEventArgs e) =>
         _toolWindows.ShowSourceManager(
             this,
@@ -383,8 +382,8 @@ public partial class MainWindow : Window
             {
                 Key.D1 or Key.NumPad1 => 0,
                 Key.D2 or Key.NumPad2 => 1,
-                Key.D3 or Key.NumPad3 => 3,
-                Key.D4 or Key.NumPad4 => 4,
+                Key.D3 or Key.NumPad3 => 2,
+                Key.D4 or Key.NumPad4 => 3,
                 _ => null
             };
             if (tab.HasValue) { NavigateToTab(tab.Value); e.Handled = true; return; }
@@ -393,15 +392,15 @@ public partial class MainWindow : Window
             {
                 case Key.M: FocusSourceCombo(); e.Handled = true; return;
                 case Key.C:
-                    if (MainTabControl.SelectedIndex == 3) FocusListContent(CategoryList);
+                    if (MainTabControl.SelectedIndex == 2) FocusListContent(CategoryList);
                     e.Handled = true; return;
                 case Key.L:
                     if (MainTabControl.SelectedIndex == 1) FocusListContent(FavoriteSongsList);
-                    else if (MainTabControl.SelectedIndex == 3) FocusListContent(CategoryPlaylistsListBox);
+                    else if (MainTabControl.SelectedIndex == 2) FocusListContent(CategoryPlaylistsListBox);
                     e.Handled = true; return;
                 case Key.S: FocusSongList(); e.Handled = true; return;
                 case Key.R:
-                    if (MainTabControl.SelectedIndex == 4) FocusListContent(RankingList);
+                    if (MainTabControl.SelectedIndex == 3) FocusListContent(RankingList);
                     e.Handled = true; return;
             }
         }
@@ -442,13 +441,6 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-        // ESC：导入个人歌单页在歌曲预览态先返回歌单列表
-        if (e.Key == Key.Escape && MainTabControl.SelectedIndex == 2 && _playlistImportPanel.TryHandleEscape())
-        {
-            e.Handled = true;
-            return;
-        }
-
         // ESC：菜单栏激活时逐级关闭菜单，不隐藏窗口；焦点回到主窗口内容后才隐藏到托盘
         if (e.Key == Key.Escape && IsMainMenuActive())
         {
@@ -591,8 +583,8 @@ public partial class MainWindow : Window
         switch (MainTabControl.SelectedIndex)
         {
             case 0: SearchSourceCombo.Focus(); break;
-            case 3: CategorySourceCombo.Focus(); break;
-            case 4: RankingSourceCombo.Focus(); break;
+            case 2: CategorySourceCombo.Focus(); break;
+            case 3: RankingSourceCombo.Focus(); break;
         }
     }
 
@@ -603,9 +595,8 @@ public partial class MainWindow : Window
         {
             case 0: FocusListContent(SearchResultsList); break;
             case 1: FocusListContent(FavoriteSongsList); break;
-            case 2: FocusListContent(_playlistImportPanel.SongList); break;
-            case 3: FocusListContent(CategorySongsList); break;
-            case 4: FocusListContent(RankingSongsList); break;
+            case 2: FocusListContent(CategorySongsList); break;
+            case 3: FocusListContent(RankingSongsList); break;
         }
     }
 
@@ -623,12 +614,9 @@ public partial class MainWindow : Window
                 Announce("在线收藏已刷新");
                 break;
             case 2:
-                Announce("导入个人歌单页面无需刷新");
-                break;
-            case 3:
                 _ = LoadCategoriesAsync(GetComboTag(CategorySourceCombo, "netease"));
                 break;
-            case 4:
+            case 3:
                 _ = LoadRankingsAsync(GetComboTag(RankingSourceCombo, "netease"));
                 break;
             default:
@@ -2190,6 +2178,15 @@ public partial class MainWindow : Window
     }
 
     /// <summary>解除外部歌曲列表挂接（窗口关闭时调用，避免播放队列引用已关闭窗口的列表）</summary>
+    private void DetachSongListCapabilities(ListBox list)
+    {
+        if (!_externalSongLists.Remove(list)) return;
+        list.PreviewMouseRightButtonDown -= SongList_PreviewMouseRightButtonDown;
+        list.ContextMenuOpening -= SongList_ContextMenuOpening;
+        list.KeyDown -= ExternalSongList_KeyDown;
+        list.ContextMenu = null;
+    }
+
     /// <summary>外部歌曲列表回车/空格直接播放</summary>
     private async void ExternalSongList_KeyDown(object sender, KeyEventArgs e)
     {
@@ -2755,8 +2752,8 @@ public partial class MainWindow : Window
         if (fe == null) return null;
         var list = FindAncestor<ListBox>(fe);
         if (list == null) return null;
-        var songLists = new ListBox?[] { SearchResultsList, CategorySongsList, RankingSongsList, FavoriteSongsList, _playlistImportPanel.SongList };
-        if (!songLists.Contains(list)) return null;
+        var songLists = new ListBox?[] { SearchResultsList, CategorySongsList, RankingSongsList, FavoriteSongsList };
+        if (!songLists.Contains(list) && !_externalSongLists.Contains(list)) return null;
         return list.SelectedItem as MusicInfo;
     }
 
@@ -2770,9 +2767,8 @@ public partial class MainWindow : Window
         {
             0 => SearchResultsList,
             1 => FavoriteSongsList,
-            2 => _playlistImportPanel.LastFocusable,
-            3 => CategorySongsList,
-            4 => RankingSongsList,
+            2 => CategorySongsList,
+            3 => RankingSongsList,
             _ => null
         };
     }
@@ -2784,9 +2780,8 @@ public partial class MainWindow : Window
         {
             0 => SearchSourceCombo,
             1 => NewOnlinePlaylistBtn,
-            2 => _playlistImportPanel.FirstFocusable,
-            3 => CategorySourceCombo,
-            4 => RankingSourceCombo,
+            2 => CategorySourceCombo,
+            3 => RankingSourceCombo,
             _ => null
         };
     }

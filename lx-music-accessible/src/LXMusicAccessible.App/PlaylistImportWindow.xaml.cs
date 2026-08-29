@@ -1,6 +1,9 @@
+using System.ComponentModel;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
@@ -9,77 +12,90 @@ using Serilog;
 namespace LXMusicAccessible.App;
 
 /// <summary>
-/// 导入个人歌单视图（并入主窗口的标签页，无障碍：全程键盘导航 + 语音播报）。
+/// 导入个人歌单工具窗体（无障碍：全程键盘导航 + 状态播报）。
 /// 流程：选择平台 → 网页登录 / 粘贴Cookie登录 → 获取我的歌单 → 多选导入为本地快照。
 /// 登录弹窗（网页登录/酷狗扫码）保持为独立窗口；歌曲预览列表挂接主窗口的播放/右键菜单/收藏能力。
 /// </summary>
-public partial class PlaylistImportView : UserControl
+internal enum PlaylistImportCloseDecision
 {
+    ContinueImport,
+    CancelImportAndClose
+}
+
+public partial class PlaylistImportWindow : Window
+{
+    private const string ImportWorkSlot = "playlist-import";
     private readonly IPlaylistImportService _service;
     private readonly IAccessibleAnnouncer _announce;
     private readonly IPlaylistLoginWindowFactory _loginWindows;
+    private readonly BackgroundWorkHost _backgroundWork;
+    private readonly Func<KeyEventArgs, bool> _handleHotkey;
+    private readonly Action<ListBox> _detachSongList;
+    private readonly Func<Window, PlaylistImportCloseDecision> _confirmClose;
     private string _platform = "netease";
     private bool _loggedIn;
     private List<RemotePlaylist> _playlists = new();
     private bool _selectAllState;
+    private bool _importing;
+    private bool _canceling;
+    private bool _closeAfterCancel;
+    private bool _allowClose;
+    private bool _closed;
 
-    internal PlaylistImportView(
+    internal PlaylistImportWindow(
         IPlaylistImportService service,
         IAccessibleAnnouncer announce,
-        IPlaylistLoginWindowFactory loginWindows)
+        IPlaylistLoginWindowFactory loginWindows,
+        BackgroundWorkHost backgroundWork,
+        Func<KeyEventArgs, bool> handleHotkey,
+        Action<ListBox> attachSongList,
+        Action<ListBox> detachSongList,
+        Func<Window, PlaylistImportCloseDecision>? confirmClose = null)
     {
+        ArgumentNullException.ThrowIfNull(service);
+        ArgumentNullException.ThrowIfNull(announce);
+        ArgumentNullException.ThrowIfNull(loginWindows);
+        ArgumentNullException.ThrowIfNull(backgroundWork);
+        ArgumentNullException.ThrowIfNull(handleHotkey);
+        ArgumentNullException.ThrowIfNull(attachSongList);
+        ArgumentNullException.ThrowIfNull(detachSongList);
         InitializeComponent();
         _service = service;
         _announce = announce;
         _loginWindows = loginWindows;
+        _backgroundWork = backgroundWork;
+        _handleHotkey = handleHotkey;
+        _detachSongList = detachSongList;
+        _confirmClose = confirmClose ?? ConfirmClose;
+        attachSongList(PlaylistSongsList);
+        UpdatePlatformSelectionState();
+        SetImportStatus("就绪");
         Loaded += OnLoaded;
+        Closed += Window_Closed;
     }
 
-    /// <summary>宿主主窗口（本视图嵌入主窗口标签页）</summary>
-    private Window? HostWindow => Window.GetWindow(this);
-
-    /// <summary>本页第一个可聚焦控件（主窗口页边界 Tab 循环用）。</summary>
-    public FrameworkElement FirstFocusable => PlatformNeteaseBtn;
-
-    /// <summary>本页最后一个可聚焦控件（主窗口页边界 Tab 循环用）。
-    /// 折叠控件不可聚焦（会卡住页边界 Shift+Tab），因此始终返回当前可见的最后一个可聚焦控件；
-    /// 登录入口按平台可能被折叠（酷狗隐藏网页登录、酷我隐藏粘贴Cookie），最后兜底到始终可见的平台按钮。</summary>
-    public FrameworkElement LastFocusable
-    {
-        get
-        {
-            if (ImportSelectedBtn.Visibility == Visibility.Visible) return ImportSelectedBtn;
-            if (SelectAllBtn.Visibility == Visibility.Visible) return SelectAllBtn;
-            if (LoadPlaylistsBtn.Visibility == Visibility.Visible) return LoadPlaylistsBtn;
-            if (LogoutBtn.Visibility == Visibility.Visible) return LogoutBtn;
-            if (KugouQrLoginBtn.Visibility == Visibility.Visible) return KugouQrLoginBtn;
-            if (CookieLoginBtn.Visibility == Visibility.Visible) return CookieLoginBtn;
-            if (WebLoginBtn.Visibility == Visibility.Visible) return WebLoginBtn;
-            return PlatformKwBtn; // 平台按钮始终可见
-        }
-    }
-
-    /// <summary>歌曲预览列表（供主窗口全局歌曲操作识别）</summary>
-    public ListBox SongList => PlaylistSongsList;
+    /// <summary>登录与确认对话框的所属工具窗体。</summary>
+    private Window HostWindow => this;
 
     private void Announce(
         string message,
         AnnouncementKind kind = AnnouncementKind.Status,
         string? activityId = null)
     {
+        if (_closed) return;
         _announce.Announce(new AccessibleAnnouncement(message, kind, activityId));
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _ = Dispatcher.BeginInvoke(PlatformNeteaseBtn.Focus, DispatcherPriority.Input);
         try { await _service.EnsureAccountsLoadedAsync(); }
         catch (Exception ex)
         {
             Log.Warning("Playlist account restoration failed: ErrorType={ErrorType}", ex.GetType().Name);
         }
+        if (_closed) return;
         await RefreshAccountUiAsync();
-        // 不再在此处抢焦点：主窗口切到本标签时会统一把焦点放到 FirstFocusable（平台选择按钮），
-        // 否则 TabControl 每次切到本页触发 Loaded，会把焦点抢到“获取我的歌单”按钮。
         if (!_loggedIn)
         {
             Announce("导入个人歌单：当前未登录，请先选择平台，再按 Tab 键到“网页登录”或“粘贴Cookie登录”。");
@@ -135,6 +151,7 @@ public partial class PlaylistImportView : UserControl
 
         CookieArea.Visibility = Visibility.Collapsed;
         _platform = tag;
+        UpdatePlatformSelectionState();
         var name = (sender as Button)?.Content?.ToString() ?? "该平台";
 
         RefreshAccountUiAsync();
@@ -148,6 +165,18 @@ public partial class PlaylistImportView : UserControl
         Announce(_loggedIn
             ? $"已切换到{name}平台，已恢复登录状态。"
             : $"已切换到{name}平台。当前未登录，{loginHint}。");
+    }
+
+    private void UpdatePlatformSelectionState()
+    {
+        foreach (var button in new[] { PlatformNeteaseBtn, PlatformQqBtn, PlatformKgBtn, PlatformKwBtn })
+        {
+            var selected = string.Equals(
+                button.Tag?.ToString(),
+                _platform,
+                StringComparison.OrdinalIgnoreCase);
+            AutomationProperties.SetItemStatus(button, selected ? "当前平台" : string.Empty);
+        }
     }
 
     // ============ 酷狗 APP 扫码登录（仅酷狗；获取客户端 token 才能读取个人歌单） ============
@@ -222,6 +251,7 @@ public partial class PlaylistImportView : UserControl
         {
             Announce("正在校验 Cookie，请稍候。", AnnouncementKind.Busy, activityId);
             var acc = await _service.LoginWithCookieAsync(_platform, cookie);
+            if (_closed) return;
             if (acc == null)
             {
                 Announce("Cookie 无效或已过期，登录失败。请重新登录后复制最新 Cookie。", AnnouncementKind.Error, activityId);
@@ -241,7 +271,7 @@ public partial class PlaylistImportView : UserControl
         }
         finally
         {
-            CookieSubmitBtn.IsEnabled = true;
+            if (!_closed) CookieSubmitBtn.IsEnabled = true;
         }
     }
 
@@ -260,6 +290,7 @@ public partial class PlaylistImportView : UserControl
                 LoginDiagnosticOutcome.Exception, LoginDiagnosticError.Unexpected, correlationId));
             return;
         }
+        if (_closed) return;
         _playlists.Clear();
         MyPlaylistsList.ItemsSource = null;
         MyPlaylistsList.Items.Clear();
@@ -276,6 +307,7 @@ public partial class PlaylistImportView : UserControl
         {
             Announce("正在获取我的歌单，请稍候。");
             _playlists = await _service.GetMyPlaylistsAsync(_platform);
+            if (_closed) return;
             MyPlaylistsList.ItemsSource = null;
             MyPlaylistsList.Items.Clear();
             foreach (var pl in _playlists)
@@ -294,13 +326,14 @@ public partial class PlaylistImportView : UserControl
         }
         catch (Exception ex)
         {
+            if (_closed) return;
             if (ex.Message.Contains("登录已过期"))
                 await RefreshAccountUiAsync();
             Announce("获取歌单失败：" + ex.Message);
         }
         finally
         {
-            LoadPlaylistsBtn.IsEnabled = true;
+            if (!_closed) LoadPlaylistsBtn.IsEnabled = true;
         }
     }
 
@@ -328,31 +361,7 @@ public partial class PlaylistImportView : UserControl
             Announce("请先选择要导入的歌单。");
             return;
         }
-
-        ImportSelectedBtn.IsEnabled = false;
-        LoadPlaylistsBtn.IsEnabled = false;
-        var activityId = $"playlist-import:{Guid.NewGuid():N}";
-        try
-        {
-            foreach (var remote in selected)
-            {
-                var result = await _service.ImportPlaylistAsync(
-                    _platform,
-                    remote,
-                    message => Announce(message, AnnouncementKind.Progress, activityId));
-                Announce(result.ToString(), AnnouncementKind.Progress, activityId);
-            }
-            Announce("全部歌单导入完成，已保存到“在线收藏”，可切换到“播放列表”标签页查看。", AnnouncementKind.Success, activityId);
-        }
-        catch (Exception ex)
-        {
-            Announce("导入失败：" + ex.Message, AnnouncementKind.Error, activityId);
-        }
-        finally
-        {
-            ImportSelectedBtn.IsEnabled = true;
-            LoadPlaylistsBtn.IsEnabled = true;
-        }
+        await StartImportAsync(selected);
     }
 
     // ============ 歌单歌曲预览（回车打开歌曲列表） ============
@@ -373,6 +382,7 @@ public partial class PlaylistImportView : UserControl
         try
         {
             var songs = await _service.GetPlaylistSongsPreviewAsync(_platform, remote);
+            if (_closed) return;
             PlaylistSongsList.ItemsSource = null;
             PlaylistSongsList.Items.Clear();
             foreach (var m in songs)
@@ -426,30 +436,76 @@ public partial class PlaylistImportView : UserControl
             Announce("未选择要导入的歌单。");
             return;
         }
-        ImportThisPlaylistBtn.IsEnabled = false;
+        await StartImportAsync([remote]);
+    }
+
+    private async Task StartImportAsync(IReadOnlyList<RemotePlaylist> playlists)
+    {
+        if (_importing || playlists.Count == 0) return;
+        _importing = true;
+        SetImportControlsEnabled(false);
         var activityId = $"playlist-import:{Guid.NewGuid():N}";
+        SetImportStatus($"正在导入，共 {playlists.Count} 个歌单");
         try
         {
-            var result = await _service.ImportPlaylistAsync(
-                _platform,
-                remote,
-                message => Announce(message, AnnouncementKind.Progress, activityId));
-            Announce(result.ToString(), AnnouncementKind.Success, activityId);
-        }
-        catch (Exception ex)
-        {
-            Announce("导入失败：" + ex.Message, AnnouncementKind.Error, activityId);
+            await _backgroundWork.RunLatestAsync(ImportWorkSlot, async context =>
+            {
+                try
+                {
+                    var results = await _service.ImportPlaylistsAsync(
+                        _platform,
+                        playlists,
+                        message =>
+                        {
+                            SetImportStatus(message);
+                            Announce(message, AnnouncementKind.Progress, activityId);
+                        },
+                        context.CancellationToken);
+                    if (!context.CancellationToken.IsCancellationRequested)
+                    {
+                        var message = results.Count == 1
+                            ? results[0].ToString()
+                            : "全部歌单导入完成，已保存到“在线收藏”。";
+                        SetImportStatus(message);
+                        Announce(message, AnnouncementKind.Success, activityId);
+                    }
+                }
+                catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+                {
+                    SetImportStatus("导入已取消");
+                    Announce("导入已取消", AnnouncementKind.Status, activityId);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    SetImportStatus("导入失败");
+                    Announce("导入失败：" + ex.Message, AnnouncementKind.Error, activityId);
+                }
+            });
         }
         finally
         {
-            ImportThisPlaylistBtn.IsEnabled = true;
+            if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    _importing = false;
+                    _canceling = false;
+                    SetImportControlsEnabled(true);
+                    if (_closeAfterCancel && !_closed)
+                    {
+                        _allowClose = true;
+                        Close();
+                    }
+                });
+            }
         }
     }
 
     /// <summary>
-    /// 主窗口 Esc 委托：歌曲预览状态下 Esc 先返回歌单列表，返回是否已处理。
+    /// 工具窗体 Esc 路由：歌曲预览状态下先返回歌单列表，返回是否已处理。
     /// </summary>
-    public bool TryHandleEscape()
+    private bool TryHandleEscape()
     {
         if (SongPreviewArea.Visibility == Visibility.Visible)
         {
@@ -457,6 +513,107 @@ public partial class PlaylistImportView : UserControl
             return true;
         }
         return false;
+    }
+
+    private void SetImportControlsEnabled(bool enabled)
+    {
+        PlatformNeteaseBtn.IsEnabled = enabled;
+        PlatformQqBtn.IsEnabled = enabled;
+        PlatformKgBtn.IsEnabled = enabled;
+        PlatformKwBtn.IsEnabled = enabled;
+        WebLoginBtn.IsEnabled = enabled;
+        CookieLoginBtn.IsEnabled = enabled;
+        KugouQrLoginBtn.IsEnabled = enabled;
+        LogoutBtn.IsEnabled = enabled;
+        LoadPlaylistsBtn.IsEnabled = enabled;
+        SelectAllBtn.IsEnabled = enabled;
+        ImportSelectedBtn.IsEnabled = enabled;
+        ImportThisPlaylistBtn.IsEnabled = enabled;
+    }
+
+    private void SetImportStatus(string status)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+                Dispatcher.Invoke(() => SetImportStatus(status));
+            return;
+        }
+        if (_closed) return;
+        ImportStatusText.Text = status;
+        AutomationProperties.SetItemStatus(ImportStatusText, status);
+    }
+
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            if (PlaylistSongsList.ContextMenu?.IsOpen == true) return;
+            if (!TryHandleEscape()) Close();
+            e.Handled = true;
+            return;
+        }
+        if ((e.Key == Key.F4 || e.SystemKey == Key.F4)
+            && (Keyboard.Modifiers & ModifierKeys.Alt) != 0)
+        {
+            Close();
+            e.Handled = true;
+            return;
+        }
+        if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase { IsReadOnly: false }
+            or PasswordBox)
+        {
+            return;
+        }
+        if (_handleHotkey(e)) e.Handled = true;
+    }
+
+    private void Window_Closing(object? sender, CancelEventArgs e)
+    {
+        if (_allowClose || !_importing) return;
+        e.Cancel = true;
+        if (_canceling) return;
+
+        if (_confirmClose(this) == PlaylistImportCloseDecision.ContinueImport)
+        {
+            Announce("导入继续进行，窗口保持打开");
+            return;
+        }
+
+        _canceling = true;
+        _closeAfterCancel = true;
+        SetImportControlsEnabled(false);
+        SetImportStatus("正在取消");
+        Announce("正在取消", AnnouncementKind.Busy, "playlist-import-cancel");
+        _backgroundWork.Cancel(ImportWorkSlot);
+    }
+
+    private static PlaylistImportCloseDecision ConfirmClose(Window owner)
+    {
+        var result = MessageBox.Show(
+            owner,
+            "歌单仍在导入。\n\n选择“是”保留窗口并继续导入；选择“否”取消导入并在当前歌单安全回滚后关闭窗口。",
+            "关闭导入个人歌单",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.Yes);
+        return result == MessageBoxResult.Yes
+            ? PlaylistImportCloseDecision.ContinueImport
+            : PlaylistImportCloseDecision.CancelImportAndClose;
+    }
+
+    private void Window_Closed(object? sender, EventArgs e)
+    {
+        if (_closed) return;
+        _closed = true;
+        Loaded -= OnLoaded;
+        Closed -= Window_Closed;
+        _detachSongList(PlaylistSongsList);
+        PlaylistSongsList.ItemsSource = null;
+        PlaylistSongsList.Items.Clear();
+        MyPlaylistsList.ItemsSource = null;
+        MyPlaylistsList.Items.Clear();
+        CookieBox.Clear();
     }
 
     /// <summary>聚焦列表中的指定条目（读屏进入焦点模式），延迟回退避免容器抢焦</summary>
@@ -470,7 +627,7 @@ public partial class PlaylistImportView : UserControl
             return;
         list.Dispatcher.BeginInvoke(new Action(() =>
         {
-            if (list.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement c)
+            if (!_closed && list.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement c)
                 c.Focus();
         }), System.Windows.Threading.DispatcherPriority.Loaded);
     }
