@@ -66,6 +66,67 @@ public sealed class SourceManagerWindowTests
     }
 
     [Fact]
+    public async Task Nonempty_source_list_starts_on_the_selected_first_item_without_side_effects()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var sources = new RecordingSourceService(
+                Source("a", "甲"),
+                Source("b", "乙"));
+            var window = new SourceManagerWindow(new RecordingAnnouncer(), sources, _ => false);
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+
+                var first = Assert.IsType<ListBoxItem>(
+                    window.SourceList.ItemContainerGenerator.ContainerFromIndex(0));
+                Assert.Equal(0, window.SourceList.SelectedIndex);
+                Assert.Same(window.SourceList.SelectedItem, window.SourceList.Items.CurrentItem);
+                Assert.Same(first, Keyboard.FocusedElement);
+
+                RaiseKey(first, Key.Down);
+                Assert.Equal(1, window.SourceList.SelectedIndex);
+                Assert.Equal(0, sources.OperationCount);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Tab_from_initial_source_item_leaves_the_list_in_both_directions()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var sources = new RecordingSourceService(Source("a", "甲"));
+            var window = new SourceManagerWindow(new RecordingAnnouncer(), sources, _ => false);
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+
+                var initial = Assert.IsAssignableFrom<UIElement>(Keyboard.FocusedElement);
+                Assert.True(initial.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next)));
+                Assert.Same(window.ImportLocalSourceBtn, Keyboard.FocusedElement);
+
+                var first = Assert.IsType<ListBoxItem>(
+                    window.SourceList.ItemContainerGenerator.ContainerFromIndex(0));
+                Assert.True(first.Focus());
+                Assert.True(first.MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous)));
+                Assert.Same(window.RefreshSourcesBtn, Keyboard.FocusedElement);
+                Assert.Equal(0, sources.OperationCount);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public async Task Refresh_preserves_source_identity_and_uses_the_adjacent_index_when_removed()
     {
         await RunOnStaThreadAsync(() =>
@@ -79,12 +140,16 @@ public sealed class SourceManagerWindowTests
                 window.Show();
                 Pump(window.Dispatcher);
                 window.SourceList.SelectedIndex = 1;
-                window.SourceList.Focus();
+                var selected = Assert.IsType<ListBoxItem>(
+                    window.SourceList.ItemContainerGenerator.ContainerFromIndex(1));
+                Assert.True(selected.Focus());
 
                 sources.Replace(Source("a", "甲新版"), Source("b", "乙新版"));
                 Pump(window.Dispatcher);
                 Assert.Equal("b", Assert.IsType<MusicSource>(window.SourceList.SelectedItem).Id);
-                Assert.Same(window.SourceList, Keyboard.FocusedElement);
+                var refreshed = Assert.IsType<ListBoxItem>(
+                    window.SourceList.ItemContainerGenerator.ContainerFromIndex(1));
+                Assert.Same(refreshed, Keyboard.FocusedElement);
 
                 sources.Replace(Source("a", "甲新版"), Source("c", "丙"));
                 Pump(window.Dispatcher);
@@ -168,6 +233,16 @@ public sealed class SourceManagerWindowTests
         IsEnabled = true,
         TrustState = ScriptTrustState.UserApproved
     };
+
+    private static void RaiseKey(UIElement element, Key key)
+    {
+        var source = PresentationSource.FromVisual(element);
+        Assert.NotNull(source);
+        element.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key)
+        {
+            RoutedEvent = Keyboard.KeyDownEvent
+        });
+    }
 
     private static void Pump(Dispatcher dispatcher) =>
         dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);

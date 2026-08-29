@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using LXMusicAccessible.Models;
@@ -34,7 +35,12 @@ public partial class SourceManagerWindow : Window
     internal bool IsSourceSubscriptionActive { get; private set; } = true;
 
     private void Window_Loaded(object sender, RoutedEventArgs e) =>
-        Dispatcher.BeginInvoke(SourceList.Focus, DispatcherPriority.Input);
+        Dispatcher.BeginInvoke(FocusSelectedSource, DispatcherPriority.Input);
+
+    private bool FocusSelectedSource() =>
+        SourceList.ItemContainerGenerator.ContainerFromIndex(SourceList.SelectedIndex) is ListBoxItem item
+            ? item.Focus()
+            : SourceList.Focus();
 
     private void Sources_SourcesChanged(object? sender, EventArgs e)
     {
@@ -73,7 +79,7 @@ public partial class SourceManagerWindow : Window
         var empty = sources.Count == 0;
         EmptySourceText.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         AutomationProperties.SetItemStatus(SourceList, empty ? "暂无音源" : $"共 {sources.Count} 个音源");
-        if (hadFocus) SourceList.Focus();
+        if (hadFocus) Dispatcher.BeginInvoke(FocusSelectedSource, DispatcherPriority.Input);
     }
 
     private async void ImportLocalSourceBtn_Click(object sender, RoutedEventArgs e)
