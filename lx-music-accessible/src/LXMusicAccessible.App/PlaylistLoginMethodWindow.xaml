@@ -1,0 +1,31 @@
+<Window x:Class="LXMusicAccessible.App.PlaylistLoginMethodWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:LXMusicAccessible.App"
+        Width="460" Height="300" MinWidth="380" MinHeight="240"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <Grid Margin="20" KeyboardNavigation.TabNavigation="Cycle">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Text="请选择登录方式。使用上下方向键浏览，按回车确认。"
+                   TextWrapping="Wrap" Margin="0,0,0,8"/>
+        <local:SingleReadListBox x:Name="MethodsList" Grid.Row="1" MinHeight="120"
+                                 AutomationProperties.Name="登录方式"
+                                 KeyDown="MethodsList_KeyDown">
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>
+                </Style>
+            </ListBox.ItemContainerStyle>
+        </local:SingleReadListBox>
+        <Button x:Name="UseSelectedMethodBtn" Grid.Row="2"
+                Content="使用所选方式" Width="130" Height="30" Margin="0,10,0,0"
+                HorizontalAlignment="Left" Click="UseSelectedMethodBtn_Click"/>
+    </Grid>
+</Window>

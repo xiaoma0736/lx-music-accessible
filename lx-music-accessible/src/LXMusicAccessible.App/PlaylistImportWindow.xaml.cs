@@ -13,7 +13,7 @@ namespace LXMusicAccessible.App;
 
 /// <summary>
 /// 导入个人歌单工具窗体（无障碍：全程键盘导航 + 状态播报）。
-/// 流程：选择平台 → 网页登录 / 粘贴Cookie登录 → 获取我的歌单 → 多选导入为本地快照。
+/// 流程：选择平台与登录方式 → 登录 → 获取我的歌单 → 多选导入为本地快照。
 /// 登录弹窗（网页登录/酷狗扫码）保持为独立窗口；歌曲预览列表挂接主窗口的播放/右键菜单/收藏能力。
 /// </summary>
 internal enum PlaylistImportCloseDecision
@@ -41,6 +41,7 @@ public partial class PlaylistImportWindow : Window
     private bool _closeAfterCancel;
     private bool _allowClose;
     private bool _closed;
+    private Button? _loginInitiator;
 
     internal PlaylistImportWindow(
         IPlaylistImportService service,
@@ -98,7 +99,7 @@ public partial class PlaylistImportWindow : Window
         await RefreshAccountUiAsync();
         if (!_loggedIn)
         {
-            Announce("导入个人歌单：当前未登录，请先选择平台，再按 Tab 键到“网页登录”或“粘贴Cookie登录”。");
+            Announce("导入个人歌单：当前未登录，请按下平台按钮选择登录方式。");
         }
         else
         {
@@ -110,15 +111,6 @@ public partial class PlaylistImportWindow : Window
 
     private Task RefreshAccountUiAsync()
     {
-        // 登录入口按平台可用性显示：
-        //  - 酷狗：网页登录无法获取个人歌单，隐藏“网页登录”，保留“粘贴Cookie登录”与“APP扫码登录”
-        //  - 酷我：反爬导致粘贴Cookie无法获取歌单，隐藏“粘贴Cookie登录”，保留“网页登录”（页面内拉取歌单）
-        //  - 网易云 / QQ：网页登录与粘贴Cookie均可用
-        var isKg = string.Equals(_platform, "kg", StringComparison.OrdinalIgnoreCase);
-        var isKw = string.Equals(_platform, "kw", StringComparison.OrdinalIgnoreCase);
-        WebLoginBtn.Visibility = isKg ? Visibility.Collapsed : Visibility.Visible;
-        CookieLoginBtn.Visibility = isKw ? Visibility.Collapsed : Visibility.Visible;
-        KugouQrLoginBtn.Visibility = isKg ? Visibility.Visible : Visibility.Collapsed;
         var acc = _service.GetAccount(_platform);
         _loggedIn = acc != null;
         if (_loggedIn)
@@ -144,27 +136,34 @@ public partial class PlaylistImportWindow : Window
 
     // ============ 平台选择 ============
 
-    private void PlatformBtn_Click(object sender, RoutedEventArgs e)
+    private async void PlatformBtn_Click(object sender, RoutedEventArgs e)
     {
-        var tag = (sender as Button)?.Tag?.ToString() ?? "netease";
-        if (string.Equals(tag, _platform, StringComparison.OrdinalIgnoreCase)) return;
-
+        var button = sender as Button ?? PlatformNeteaseBtn;
+        var tag = button.Tag?.ToString() ?? "netease";
         CookieArea.Visibility = Visibility.Collapsed;
         _platform = tag;
+        _loginInitiator = button;
         UpdatePlatformSelectionState();
-        var name = (sender as Button)?.Content?.ToString() ?? "该平台";
+        await RefreshAccountUiAsync();
 
-        RefreshAccountUiAsync();
-
-        var loginHint = _platform switch
+        var method = _loginWindows.SelectLoginMethod(_platform, HostWindow);
+        if (_closed) return;
+        switch (method)
         {
-            "kg" => "可使用粘贴Cookie登录或酷狗APP扫码登录",
-            "kw" => "可使用网页登录",
-            _ => "可使用网页登录或粘贴Cookie登录"
-        };
-        Announce(_loggedIn
-            ? $"已切换到{name}平台，已恢复登录状态。"
-            : $"已切换到{name}平台。当前未登录，{loginHint}。");
+            case PlaylistLoginMethod.Web:
+                await StartWebLoginAsync(button);
+                break;
+            case PlaylistLoginMethod.Cookie:
+                ShowCookieLogin();
+                break;
+            case PlaylistLoginMethod.KugouQr:
+                await StartKugouQrLoginAsync(button);
+                break;
+            default:
+                button.Focus();
+                Announce("已取消选择登录方式。");
+                break;
+        }
     }
 
     private void UpdatePlatformSelectionState()
@@ -181,16 +180,19 @@ public partial class PlaylistImportWindow : Window
 
     // ============ 酷狗 APP 扫码登录（仅酷狗；获取客户端 token 才能读取个人歌单） ============
 
-    private async void KugouQrLoginBtn_Click(object sender, RoutedEventArgs e)
+    private async Task StartKugouQrLoginAsync(Button initiator)
     {
         CookieArea.Visibility = Visibility.Collapsed;
         if (await LoginWithKugouQrDialogAsync())
         {
             var acc = _service.GetAccount("kg");
             var msg = acc == null ? "酷狗扫码登录成功。" : $"酷狗扫码登录成功：{acc.DisplayName}。";
-            Announce(msg);
-            MessageBox.Show(HostWindow, msg, "登录成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            Announce(msg, AnnouncementKind.Success);
+            FocusLoadedPlaylistsOr(initiator);
+            return;
         }
+        Announce("酷狗扫码登录已取消或失败。");
+        initiator.Focus();
     }
 
     internal async Task<bool> LoginWithKugouQrDialogAsync()
@@ -201,7 +203,7 @@ public partial class PlaylistImportWindow : Window
     }
     // ============ 网页登录（内嵌浏览器，四个平台通用） ============
 
-    private async void WebLoginBtn_Click(object sender, RoutedEventArgs e)
+    private async Task StartWebLoginAsync(Button initiator)
     {
         CookieArea.Visibility = Visibility.Collapsed;
         var result = await LoginWithWebDialogAsync();
@@ -212,9 +214,12 @@ public partial class PlaylistImportWindow : Window
             var msg = string.IsNullOrEmpty(accountName)
                 ? "Cookie获取成功，登录成功。"
                 : $"Cookie获取成功，登录成功：{accountName}。";
-            Announce(msg);
-            MessageBox.Show(HostWindow, msg, "登录成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            Announce(msg, AnnouncementKind.Success);
+            FocusLoadedPlaylistsOr(initiator);
+            return;
         }
+        Announce("网页登录已取消或失败。");
+        initiator.Focus();
     }
 
     internal async Task<PlaylistLoginDialogResult> LoginWithWebDialogAsync()
@@ -226,15 +231,12 @@ public partial class PlaylistImportWindow : Window
 
     // ============ 粘贴 Cookie 登录 ============
 
-    private void CookieLoginBtn_Click(object sender, RoutedEventArgs e)
+    private void ShowCookieLogin()
     {
-        CookieArea.Visibility = CookieArea.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-        if (CookieArea.Visibility == Visibility.Visible)
-        {
-            CookieBox.Focus();
-            var site = _platform switch { "netease" => "music.163.com", "qq" => "y.qq.com", "kg" => "www.kugou.com", "kw" => "www.kuwo.cn", _ => "对应平台网页版" };
-            Announce($"请在电脑浏览器登录{site}后，按 F12 打开开发者工具，在控制台输入 document.cookie 回车，复制显示的内容粘贴到输入框，然后按提交Cookie按钮。");
-        }
+        CookieArea.Visibility = Visibility.Visible;
+        CookieBox.Focus();
+        var site = _platform switch { "netease" => "music.163.com", "qq" => "y.qq.com", "kg" => "www.kugou.com", "kw" => "www.kuwo.cn", _ => "对应平台网页版" };
+        Announce($"请在电脑浏览器登录{site}后，按 F12 打开开发者工具，在控制台输入 document.cookie 回车，复制显示的内容粘贴到输入框，然后按提交Cookie按钮。");
     }
 
     private async void CookieSubmitBtn_Click(object sender, RoutedEventArgs e)
@@ -255,11 +257,13 @@ public partial class PlaylistImportWindow : Window
             if (acc == null)
             {
                 Announce("Cookie 无效或已过期，登录失败。请重新登录后复制最新 Cookie。", AnnouncementKind.Error, activityId);
+                _loginInitiator?.Focus();
                 return;
             }
             CookieArea.Visibility = Visibility.Collapsed;
             await RefreshAccountUiAsync();
             Announce($"登录成功：{acc.DisplayName}。按 Tab 到“获取我的歌单”按钮。", AnnouncementKind.Success, activityId);
+            FocusLoadedPlaylistsOr(_loginInitiator);
         }
         catch (Exception)
         {
@@ -268,6 +272,7 @@ public partial class PlaylistImportWindow : Window
                 LoginDiagnosticOutcome.Exception, LoginDiagnosticError.LogoutFailed, correlationId),
                 AnnouncementKind.Error,
                 activityId);
+            _loginInitiator?.Focus();
         }
         finally
         {
@@ -513,6 +518,14 @@ public partial class PlaylistImportWindow : Window
         }
     }
 
+    private void FocusLoadedPlaylistsOr(Button? fallback)
+    {
+        if (LoadPlaylistsBtn.Visibility == Visibility.Visible && LoadPlaylistsBtn.IsEnabled)
+            LoadPlaylistsBtn.Focus();
+        else
+            fallback?.Focus();
+    }
+
     /// <summary>
     /// 工具窗体 Esc 路由：歌曲预览状态下先返回歌单列表，返回是否已处理。
     /// </summary>
@@ -532,9 +545,6 @@ public partial class PlaylistImportWindow : Window
         PlatformQqBtn.IsEnabled = enabled;
         PlatformKgBtn.IsEnabled = enabled;
         PlatformKwBtn.IsEnabled = enabled;
-        WebLoginBtn.IsEnabled = enabled;
-        CookieLoginBtn.IsEnabled = enabled;
-        KugouQrLoginBtn.IsEnabled = enabled;
         LogoutBtn.IsEnabled = enabled;
         LoadPlaylistsBtn.IsEnabled = enabled;
         SelectAllBtn.IsEnabled = enabled;

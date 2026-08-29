@@ -45,6 +45,7 @@ public sealed class ListFocusAuditTests
             "MainWindow.xaml:SearchResultsList",
             "PlaylistImportWindow.xaml:MyPlaylistsList",
             "PlaylistImportWindow.xaml:PlaylistSongsList",
+            "PlaylistLoginMethodWindow.xaml:MethodsList",
             "SettingsWindow.xaml:CategoryList",
             "SettingsWindow.xaml:HotkeyListBox",
             "SongDetailDialog.xaml:DetailsList",

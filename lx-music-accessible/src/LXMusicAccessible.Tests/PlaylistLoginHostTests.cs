@@ -122,6 +122,9 @@ public sealed class PlaylistLoginHostTests
         public int DisposeCount { get; private set; }
         public string? LastOwnerTitle { get; private set; }
 
+        public PlaylistLoginMethod? SelectLoginMethod(string platform, System.Windows.Window? owner) =>
+            PlaylistLoginMethod.Web;
+
         public PlaylistLoginDialogResult ShowWebLogin(string platform, System.Windows.Window? owner)
         {
             Assert.NotNull(owner);

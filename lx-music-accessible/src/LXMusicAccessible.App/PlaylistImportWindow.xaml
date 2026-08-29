@@ -14,36 +14,28 @@
             <TextBlock x:Name="TitleText" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Text="导入个人歌单"/>
 
             <!-- 平台选择 -->
-            <TextBlock Text="请选择音乐平台："/>
-            <StackPanel Orientation="Horizontal" Margin="0,4,0,8">
-                <Button x:Name="PlatformNeteaseBtn" Content="网易云" Width="90" Height="30" Margin="0,0,6,0"
+            <TextBlock Text="请选择音乐平台并打开登录方式："/>
+            <WrapPanel Margin="0,4,0,8">
+                <Button x:Name="PlatformNeteaseBtn" Content="网易云，选择登录方式" MinWidth="150" Height="30" Margin="0,0,6,6"
                         KeyboardNavigation.TabIndex="10"
                         Click="PlatformBtn_Click" Tag="netease" IsTabStop="True"/>
-                <Button x:Name="PlatformQqBtn" Content="QQ音乐" Width="90" Height="30" Margin="0,0,6,0"
+                <Button x:Name="PlatformQqBtn" Content="QQ音乐，选择登录方式" MinWidth="150" Height="30" Margin="0,0,6,6"
                         KeyboardNavigation.TabIndex="11"
                         Click="PlatformBtn_Click" Tag="qq" IsTabStop="True"/>
-                <Button x:Name="PlatformKgBtn" Content="酷狗" Width="90" Height="30" Margin="0,0,6,0"
+                <Button x:Name="PlatformKgBtn" Content="酷狗，选择登录方式" MinWidth="150" Height="30" Margin="0,0,6,6"
                         KeyboardNavigation.TabIndex="12"
                         Click="PlatformBtn_Click" Tag="kg" IsTabStop="True"/>
-                <Button x:Name="PlatformKwBtn" Content="酷我" Width="90" Height="30"
+                <Button x:Name="PlatformKwBtn" Content="酷我，选择登录方式" MinWidth="150" Height="30" Margin="0,0,6,6"
                         KeyboardNavigation.TabIndex="13"
                         Click="PlatformBtn_Click" Tag="kw" IsTabStop="True"/>
-            </StackPanel>
+            </WrapPanel>
 
-            <!-- 账号状态与登录 -->
-            <TextBlock x:Name="AccountStatusText" Text="未登录" FontWeight="SemiBold" Margin="0,0,0,6"/>
+            <!-- 账号状态 -->
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                <Button x:Name="WebLoginBtn" Content="网页登录" Width="100" Height="30" Margin="0,0,6,0"
-                        KeyboardNavigation.TabIndex="20"
-                        Click="WebLoginBtn_Click" IsTabStop="True"/>
-                <Button x:Name="CookieLoginBtn" Content="粘贴Cookie登录" Width="130" Height="30" Margin="0,0,6,0"
-                        KeyboardNavigation.TabIndex="21"
-                        Click="CookieLoginBtn_Click" IsTabStop="True"/>
-                <Button x:Name="KugouQrLoginBtn" Content="酷狗APP扫码登录" Width="150" Height="30" Margin="0,0,6,0"
-                        KeyboardNavigation.TabIndex="22"
-                        Click="KugouQrLoginBtn_Click" IsTabStop="True" Visibility="Collapsed"/>
+                <TextBlock x:Name="AccountStatusText" Text="未登录" FontWeight="SemiBold"
+                           VerticalAlignment="Center" Margin="0,0,10,0"/>
                 <Button x:Name="LogoutBtn" Content="退出登录" Width="100" Height="30"
-                        KeyboardNavigation.TabIndex="23"
+                        KeyboardNavigation.TabIndex="20"
                         Click="LogoutBtn_Click" IsTabStop="True" Visibility="Collapsed"/>
             </StackPanel>
 
@@ -57,7 +49,7 @@
                              AutomationProperties.Name="Cookie"
                              VerticalScrollBarVisibility="Auto" Margin="0,8,0,8" IsTabStop="True"/>
                     <Button x:Name="CookieSubmitBtn" Content="提交Cookie" Width="110" Height="28"
-                            KeyboardNavigation.TabIndex="23"
+                            KeyboardNavigation.TabIndex="22"
                             Click="CookieSubmitBtn_Click" IsTabStop="True"/>
                 </StackPanel>
             </Border>
