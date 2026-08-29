@@ -180,7 +180,7 @@ public sealed class QualitySelectionRegressionTests
     public void Settings_expose_the_same_complete_quality_token_set_for_playback_and_download()
     {
         var xaml = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "src", "LXMusicAccessible.App", "MainWindow.xaml"));
+            FindRepositoryRoot(), "src", "LXMusicAccessible.App", "SettingsWindow.xaml"));
 
         Assert.Equal(ProductionQualities, ComboTokens(xaml, "DefaultQualityCombo"));
         Assert.Equal(ProductionQualities, ComboTokens(xaml, "DownloadQualityCombo"));

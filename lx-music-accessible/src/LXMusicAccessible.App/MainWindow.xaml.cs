@@ -8,7 +8,6 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using LXMusicAccessible.Services;
 using LXMusicAccessible.Models;
-using System.Collections.ObjectModel;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Runtime.InteropServices;
@@ -34,9 +33,7 @@ public partial class MainWindow : Window
     private readonly MusicBrowseWorkflow _browseWorkflow;
     private bool _shutdownBlocked;
     private bool _settingsLoaded = false;
-    private bool _suppressPlaybackSettingChanges;
-    private ObservableCollection<HotkeySettingItem> _hotkeySettingItems = new();
-    private HotkeySettingItem? _recordingHotkeyItem;
+    private bool _settingsInputSuppressed;
     private bool _hotkeyConflictDialogOpen;
     private int _tabFocusToken;
     private bool _suppressTabContentFocus;
@@ -246,8 +243,7 @@ public partial class MainWindow : Window
             case 2: FocusControl(_playlistImportPanel.FirstFocusable); break;
             case 3: FocusListContent(CategoryList); break;
             case 4: FocusListContent(RankingList); break;
-            case 5: FocusControl(AutoPlayCheckBox); break;
-            case 6: FocusListContent(DownloadTaskList); break;
+            case 5: FocusListContent(DownloadTaskList); break;
         }
     }
 
@@ -264,26 +260,27 @@ public partial class MainWindow : Window
     private void MenuNavigateToCategory(object sender, RoutedEventArgs e) => NavigateToTab(3);
     private void MenuNavigateToRanking(object sender, RoutedEventArgs e) => NavigateToTab(4);
     private void MenuNavigateToLyrics(object sender, RoutedEventArgs e) => OpenLyricsWindow();
-    private void MenuNavigateToSettings(object sender, RoutedEventArgs e) => NavigateToTab(5);
-    private void MenuNavigateToDownload(object sender, RoutedEventArgs e) => NavigateToTab(6);
+    private void MenuNavigateToDownload(object sender, RoutedEventArgs e) => NavigateToTab(5);
     private void MenuOpenSourceManager(object sender, RoutedEventArgs e) =>
         _toolWindows.ShowSourceManager(
             this,
             TryHandleToolWindowHotkey,
             () => (sender as MenuItem)?.Focus());
+    private void MenuOpenSettings(object sender, RoutedEventArgs e) =>
+        ShowSettings(reconfigure: null);
+
+    private void ShowSettings(Hotkey? reconfigure) =>
+        _toolWindows.ShowSettings(
+            this,
+            TryHandleToolWindowHotkey,
+            suppressed => _settingsInputSuppressed = suppressed,
+            () => SettingsMenuItem.Focus(),
+            reconfigure);
 
     // ==================== 键盘导航 ====================
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        // 快捷键录制模式：吞掉所有按键，交给录制处理
-        if (_recordingHotkeyItem != null)
-        {
-            HandleHotkeyRecording(e);
-            e.Handled = true;
-            return;
-        }
-
         // Alt+F4：按设置决定关闭应用或隐藏到系统托盘
         if ((e.Key == Key.F4 || e.SystemKey == Key.F4) && (Keyboard.Modifiers & ModifierKeys.Alt) != 0)
         {
@@ -381,18 +378,15 @@ public partial class MainWindow : Window
         var effectiveKey = e.Key == Key.System ? e.SystemKey : e.Key;
         if (TryExecuteFallbackHotkey(effectiveKey, mods)) { e.Handled = true; return; }
 
-        // Alt+1~7 快速切换主窗口页面
+        // Alt+1~4 只切换四个音乐浏览主页面；工具与临时管理页不占用数字键。
         if (mods == ModifierKeys.Alt)
         {
             int? tab = e.SystemKey switch
             {
                 Key.D1 or Key.NumPad1 => 0,
                 Key.D2 or Key.NumPad2 => 1,
-                Key.D3 or Key.NumPad3 => 2,
-                Key.D4 or Key.NumPad4 => 3,
-                Key.D5 or Key.NumPad5 => 4,
-                Key.D6 or Key.NumPad6 => 5,
-                Key.D7 or Key.NumPad7 => 6,
+                Key.D3 or Key.NumPad3 => 3,
+                Key.D4 or Key.NumPad4 => 4,
                 _ => null
             };
             if (tab.HasValue) { NavigateToTab(tab.Value); e.Handled = true; return; }
@@ -482,7 +476,7 @@ public partial class MainWindow : Window
     internal bool TryHandleToolWindowHotkey(KeyEventArgs e)
     {
         ArgumentNullException.ThrowIfNull(e);
-        if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase or PasswordBox)
+        if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase { IsReadOnly: false } or PasswordBox)
             return false;
         if (FindAncestor<ComboBox>(Keyboard.FocusedElement as DependencyObject) is { IsEditable: true })
             return false;
@@ -639,7 +633,7 @@ public partial class MainWindow : Window
             case 4:
                 _ = LoadRankingsAsync(GetComboTag(RankingSourceCombo, "netease"));
                 break;
-            case 6:
+            case 5:
                 Announce(DownloadTaskList.Items.Count > 0 ? $"当前有 {DownloadTaskList.Items.Count} 个下载任务" : "暂无下载任务");
                 break;
             default:
@@ -689,41 +683,12 @@ public partial class MainWindow : Window
             var settings = (await _settingsWorkflow.LoadAsync(handle)).Settings;
             if (settings != null)
             {
-                AutoPlayCheckBox.IsChecked = settings.AutoPlay;
-                var mode = settings.DefaultPlayMode ?? PlayMode.Sequential;
-                ShufflePlayCheckBox.IsChecked = mode == PlayMode.Shuffle;
-                RepeatPlayCheckBox.IsChecked = mode is PlayMode.Loop or PlayMode.SingleLoop;
-                EnableScreenReaderCheckBox.IsChecked = settings.EnableScreenReader;
-                EnableVoiceAnnouncementCheckBox.IsChecked = settings.EnableVoiceAnnouncement;
-                var defaultQuality = string.IsNullOrEmpty(settings.DefaultPlayQuality) ? "128k" : settings.DefaultPlayQuality;
-                SelectComboByTag(DefaultQualityCombo, defaultQuality);
-                SelectComboByTag(DownloadQualityCombo,
-                    string.IsNullOrEmpty(settings.DefaultDownloadQuality) ? "128k" : settings.DefaultDownloadQuality);
-                DownloadPathBox.Text = settings.DownloadPath?.Trim() ?? string.Empty;
-                DownloadLyricCheckBox.IsChecked = settings.DownloadLyric;
-                DownloadNameQualityCheckBox.IsChecked = settings.DownloadNameIncludeQuality;
-                SelectComboByTag(DownloadNameOrderCombo, settings.DownloadNameOrder.ToString());
-                DataDirBox.Text = _settingsWorkflow.DataDirectory;
-                if (ThirdPartyPlayerPathBox != null)
-                    ThirdPartyPlayerPathBox.Text = settings.ThirdPartyPlayerPath ?? string.Empty;
-                LyricAnnounceCheckBox.IsChecked = settings.LyricAutoAnnounce;
-                LyricScrollCheckBox.IsChecked = settings.LyricAutoScroll;
                 SelectComboByTag(SearchSourceCombo, settings.DefaultSearchSource);
                 UpdatePlayModeDisplay();
-
-                if (CloseBehaviorCombo != null)
-                    SelectComboByTag(CloseBehaviorCombo, settings.HideToTrayOnAltF4 ? "hide" : "close");
             }
 
             // 加载本地收藏与在线收藏（歌单结构）
             _ = LoadOnlinePlaylistsAsync();
-
-            // 语音设置：朗读语音 + 语速（自动路由后端）
-            LoadVoiceSettings(settings);
-
-            // 快捷键配置：载入 + 注册全局热键
-            BuildHotkeySettingItems();
-            RefreshHotkeyConflictMarkers();
 
             // 恢复上次选择的输出设备（无效索引回退系统默认）
             if (_playerService != null && settings != null)
@@ -767,16 +732,6 @@ public partial class MainWindow : Window
         if (previous is null || previous.DefaultPlayMode != current.DefaultPlayMode)
         {
             _playback.Mode = currentMode;
-            _suppressPlaybackSettingChanges = true;
-            try
-            {
-                ShufflePlayCheckBox.IsChecked = currentMode == PlayMode.Shuffle;
-                RepeatPlayCheckBox.IsChecked = currentMode is PlayMode.Loop or PlayMode.SingleLoop;
-            }
-            finally
-            {
-                _suppressPlaybackSettingChanges = false;
-            }
             UpdatePlayModeDisplay();
         }
 
@@ -822,193 +777,10 @@ public partial class MainWindow : Window
         return false;
     }
 
-    private void ShufflePlayCheckBox_Changed(object sender, RoutedEventArgs e)
-    {
-        if (!_settingsLoaded || _suppressPlaybackSettingChanges) return;
-        var mode = ShufflePlayCheckBox.IsChecked == true
-            ? PlayMode.Shuffle
-            : RepeatPlayCheckBox.IsChecked == true ? PlayMode.Loop : PlayMode.Sequential;
-        EditSettings(settings => settings.DefaultPlayMode = mode);
-    }
-
-    private void RepeatPlayCheckBox_Changed(object sender, RoutedEventArgs e)
-    {
-        if (!_settingsLoaded || _suppressPlaybackSettingChanges) return;
-        var mode = ShufflePlayCheckBox.IsChecked == true
-            ? PlayMode.Shuffle
-            : RepeatPlayCheckBox.IsChecked == true ? PlayMode.Loop : PlayMode.Sequential;
-        EditSettings(settings => settings.DefaultPlayMode = mode);
-    }
-
     private void SearchSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_settingsLoaded) return;
         EditSettings(settings => settings.DefaultSearchSource = GetComboTag(SearchSourceCombo, "all"));
-    }
-
-    private void CloseBehaviorCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_settingsLoaded) return;
-        EditSettings(settings => settings.HideToTrayOnAltF4 = string.Equals(
-            GetComboTag(CloseBehaviorCombo, "close"),
-            "hide",
-            StringComparison.OrdinalIgnoreCase));
-    }
-
-    private void DownloadQualityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_settingsLoaded) return;
-        EditSettings(settings => settings.DefaultDownloadQuality =
-            GetComboTag(DownloadQualityCombo, "128k"));
-    }
-
-    private void VoiceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_settingsLoaded || _ttsService == null) return;
-        if (VoiceCombo.SelectedItem is ComboBoxItem cbi && cbi.Tag is string voiceId)
-            EditSettings(settings => settings.AccessibilitySettings.AnnouncementVoiceId = voiceId);
-    }
-
-    private void DefaultQualityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_settingsLoaded) return;
-        var q = GetComboTag(DefaultQualityCombo, "128k");
-        if (string.IsNullOrEmpty(q)) return;
-        EditSettings(settings => settings.DefaultPlayQuality = q);
-    }
-
-    private void SpeechRateCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_settingsLoaded || _ttsService == null) return;
-        if (SpeechRateCombo.SelectedItem is ComboBoxItem cbi &&
-            double.TryParse(cbi.Tag?.ToString(), out var rate))
-            EditSettings(settings => settings.AccessibilitySettings.AnnouncementRate = rate);
-    }
-
-    private void VoiceAnnouncementCheckBox_Changed(object sender, RoutedEventArgs e)
-    {
-        if (!_settingsLoaded) return;
-        var enabled = EnableVoiceAnnouncementCheckBox.IsChecked == true;
-        EditSettings(settings => settings.EnableVoiceAnnouncement = enabled);
-        Announce(enabled ? "已开启语音朗读提示" : "已关闭语音朗读提示");
-    }
-
-    private void LyricAnnounceCheckBox_Changed(object sender, RoutedEventArgs e)
-    {
-        if (!_settingsLoaded) return;
-        var enabled = LyricAnnounceCheckBox.IsChecked == true;
-        EditSettings(settings => settings.LyricAutoAnnounce = enabled);
-        Announce(enabled ? "已开启歌词自动朗读" : "已关闭歌词自动朗读");
-    }
-
-    private void LyricScrollCheckBox_Changed(object sender, RoutedEventArgs e)
-    {
-        if (!_settingsLoaded) return;
-        var enabled = LyricScrollCheckBox.IsChecked == true;
-        EditSettings(settings => settings.LyricAutoScroll = enabled);
-        Announce(enabled ? "已开启歌词自动滚动" : "已关闭歌词自动滚动");
-    }
-
-    /// <summary>清理下载模块拥有且当前未使用的外部播放临时文件。</summary>
-    private void ClearCacheBtn_Click(object sender, RoutedEventArgs e)
-    {
-        var result = _downloads.ClearTemporaryFiles();
-        Announce(result.DeletedFiles > 0
-            ? $"已清理缓存 {result.DeletedFiles} 个文件，释放 {FormatBytes(result.FreedBytes)}。"
-            : "没有可清理的缓存文件。");
-    }
-
-    private static string FormatBytes(long bytes)
-    {
-        if (bytes >= 1024L * 1024 * 1024) return $"{bytes / (1024.0 * 1024 * 1024):0.0} GB";
-        if (bytes >= 1024L * 1024) return $"{bytes / (1024.0 * 1024):0.0} MB";
-        if (bytes >= 1024L) return $"{bytes / 1024.0:0.0} KB";
-        return $"{bytes} B";
-    }
-    private void BrowseDownloadPathBtn_Click(object sender, RoutedEventArgs e)
-    {
-        var folderDialog = new System.Windows.Forms.FolderBrowserDialog { Description = "选择歌曲下载目录" };
-        var current = GetEffectiveDownloadDir();
-        folderDialog.SelectedPath = current;
-        if (folderDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-        {
-            DownloadPathBox.Text = folderDialog.SelectedPath;
-            if (CommitDownloadPath()) Announce($"下载目录已设置为 {folderDialog.SelectedPath}");
-        }
-    }
-
-    /// <summary>浏览并选择第三方播放器 exe 路径</summary>
-    private void BrowseThirdPartyPlayerBtn_Click(object sender, RoutedEventArgs e)
-    {
-        var openFileDialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Filter = "播放器程序|*.exe|所有文件|*.*",
-            Title = "选择第三方播放器程序",
-            Multiselect = false
-        };
-        if (openFileDialog.ShowDialog() != true) return;
-        ThirdPartyPlayerPathBox.Text = openFileDialog.FileName;
-        if (CommitThirdPartyPlayerPath()) Announce($"第三方播放器已设置为 {openFileDialog.FileName}");
-    }
-
-    private void DownloadPathBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
-    {
-        if (_settingsLoaded) CommitDownloadPath();
-    }
-
-    private void ThirdPartyPlayerPathBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
-    {
-        if (_settingsLoaded) CommitThirdPartyPlayerPath();
-    }
-
-    private void SettingsPathBox_PreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key != Key.Enter) return;
-        e.Handled = true;
-        if (ReferenceEquals(sender, DownloadPathBox)) CommitDownloadPath();
-        else if (ReferenceEquals(sender, ThirdPartyPlayerPathBox)) CommitThirdPartyPlayerPath();
-    }
-
-    private bool CommitDownloadPath()
-    {
-        var path = DownloadPathBox.Text?.Trim() ?? string.Empty;
-        if (EditSettings(settings => settings.DownloadPath = path)) return true;
-        DownloadPathBox.Text = _settingsWorkflow.Current.Settings.DownloadPath;
-        _ = Dispatcher.BeginInvoke(() => DownloadPathBox.Focus());
-        return false;
-    }
-
-    private bool CommitThirdPartyPlayerPath()
-    {
-        var path = ThirdPartyPlayerPathBox.Text?.Trim() ?? string.Empty;
-        if (EditSettings(settings => settings.ThirdPartyPlayerPath = path)) return true;
-        ThirdPartyPlayerPathBox.Text = _settingsWorkflow.Current.Settings.ThirdPartyPlayerPath;
-        _ = Dispatcher.BeginInvoke(() => ThirdPartyPlayerPathBox.Focus());
-        return false;
-    }
-
-    /// <summary>Browse and apply a custom data directory (database + logs).</summary>
-    private void BrowseDataDirBtn_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            using var dlg = new System.Windows.Forms.FolderBrowserDialog
-            {
-                Description = "选择数据目录（将保存数据库与日志）",
-                UseDescriptionForTitle = true
-            };
-            if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
-            var selectedParent = dlg.SelectedPath?.Trim();
-            if (string.IsNullOrEmpty(selectedParent)) return;
-            var result = _settingsWorkflow.ChangeDataDirectory(selectedParent);
-            DataDirBox.Text = result.Path;
-            Announce(result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine("Set data dir failed: " + ex.Message);
-            Announce("设置数据目录失败");
-        }
     }
 
     /// <summary>当前生效的下载目录（设置优先，非法/不可用的路径自动回退到服务默认值）</summary>
@@ -1025,53 +797,6 @@ public partial class MainWindow : Window
             settings.DownloadLyric,
             settings.DownloadNameOrder,
             settings.DownloadNameIncludeQuality));
-    }
-
-    private void DownloadSetting_Changed(object sender, RoutedEventArgs e)
-    {
-        if (!_settingsLoaded) return;
-        EditSettings(settings =>
-        {
-            settings.DownloadLyric = DownloadLyricCheckBox?.IsChecked ?? true;
-            settings.DownloadNameIncludeQuality = DownloadNameQualityCheckBox?.IsChecked ?? true;
-        });
-    }
-
-    private void DownloadNameOrderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_settingsLoaded) return;
-        EditSettings(settings => settings.DownloadNameOrder = string.Equals(
-            GetComboTag(DownloadNameOrderCombo, "ArtistTitle"),
-            "TitleArtist",
-            StringComparison.OrdinalIgnoreCase)
-            ? DownloadNameOrder.TitleArtist
-            : DownloadNameOrder.ArtistTitle);
-    }
-
-    /// <summary>载入朗读语音/语速设置并应用到 TTS 服务</summary>
-    private void LoadVoiceSettings(UserSettings? settings)
-    {
-        if (_ttsService == null || VoiceCombo == null) return;
-        try
-        {
-            VoiceCombo.Items.Clear();
-            VoiceCombo.Items.Add(new ComboBoxItem { Content = "自动检测（推荐）", Tag = "" });
-            foreach (var v in _ttsService.GetAvailableVoices())
-                VoiceCombo.Items.Add(new ComboBoxItem { Content = $"{v.Name}（{v.Culture}）", Tag = v.Id });
-
-            var voiceId = settings?.AccessibilitySettings?.AnnouncementVoiceId ?? "";
-            SelectComboByTag(VoiceCombo, voiceId);
-            var rate = settings?.AccessibilitySettings?.AnnouncementRate ?? 1.0;
-            SelectComboByTag(SpeechRateCombo, rate.ToString("0.##"));
-
-            // 朗读后端指示（争渡/保益/读屏/SAPI）
-            if (SpeechBackendText != null)
-                SpeechBackendText.Text = $"朗读后端：{_ttsService.ActiveBackendName}（自动检测）";
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"加载语音设置失败: {ex.Message}");
-        }
     }
 
     /// <summary>按 Tag 选中组合框项（找不到则保持现状）</summary>
@@ -2050,7 +1775,7 @@ public partial class MainWindow : Window
             menu.Items.Add(removeFav);
         }
 
-        // 用第三方播放器播放（所有歌曲列表通用；路径在“设置→第三方播放器”中配置）
+        // 用第三方播放器播放（所有歌曲列表通用；路径在“工具→设置→播放”中配置）
         var playExternal = new MenuItem { Header = "用第三方播放器播放" };
         playExternal.Click += SongMenu_PlayWithExternal_Click;
         menu.Items.Add(playExternal);
@@ -2249,7 +1974,6 @@ public partial class MainWindow : Window
         if (music == null) return;
         await PlayMusicAsync(music, q, GetContextList(sender));
         EditSettings(settings => settings.DefaultPlayQuality = q);
-        SelectComboByTag(DefaultQualityCombo, q);
         Announce($"已将默认播放音质设为 {TranslateQuality(q)}");
     }
 
@@ -2686,10 +2410,10 @@ public partial class MainWindow : Window
     {
         MessageBox.Show(
             "落雪音乐 无障碍版\n\n当前版本：V2.0（全部功能免费）\n\n常用快捷键：\n" +
-            "Alt+1~7：切换主窗口页面\n" +
+            "Alt+1~4：搜索、播放列表、分类歌单、排行榜\n" +
             "Ctrl+F：搜索\n" +
             "Ctrl+R：刷新当前页面\n" +
-            "播放/暂停、停止、上下首、快进快退、播放模式、下载、音量等：设置→快捷键设置 中自定义\n" +
+            "播放/暂停、停止、上下首、快进快退、播放模式、下载、音量等：工具→设置→快捷键 中自定义\n" +
             "Alt+M：音源选择\n" +
             "Alt+C：分类列表\n" +
             "Alt+L：歌单列表\n" +
@@ -2847,6 +2571,7 @@ public partial class MainWindow : Window
 
     private void HotkeyManager_HotkeyPressed(object? sender, HotkeyPressedEventArgs e)
     {
+        if (_settingsInputSuppressed) return;
         // 修复：NumLock 关闭时小键盘 4/6/2/8 会作为方向键上报（NVDA 桌面布局下常见），
         // 全局热键是方向键组合时，若由物理小键盘触发则忽略，避免误触发。
         if (IsNumpadOriginHotkey(e.Hotkey.Key)) return;
@@ -2866,178 +2591,14 @@ public partial class MainWindow : Window
                 var dlg = new HotkeyConflictDialog(e.FailedHotkeys) { Owner = this };
                 var result = dlg.ShowDialog();
                 if (result == true && dlg.SelectedHotkey != null)
-                    StartHotkeyRecordingFor(dlg.SelectedHotkey);
+                    ShowSettings(dlg.SelectedHotkey);
             }
             finally
             {
                 _hotkeyConflictDialogOpen = false;
-                RefreshHotkeyConflictMarkers();
             }
         }), System.Windows.Threading.DispatcherPriority.Input);
     }
-
-    /// <summary>针对指定冲突快捷键直接进入重新录制（切到设置页并聚焦该热键项）</summary>
-    private void StartHotkeyRecordingFor(Hotkey hotkey)
-    {
-        var item = _hotkeySettingItems.FirstOrDefault(i => i.ActionId == hotkey.ActionId && i.IsGlobal == hotkey.IsGlobal);
-        if (item == null) return;
-        NavigateToTab(5);
-        HotkeyListBox.SelectedItem = item;
-        HotkeyListBox.ScrollIntoView(item);
-        FocusListContent(HotkeyListBox);
-        StartHotkeyRecording(item);
-    }
-
-    /// <summary>刷新设置列表中全局快捷键的“（冲突）”标记（注册失败的全局项）</summary>
-    private void RefreshHotkeyConflictMarkers()
-    {
-        foreach (var item in _hotkeySettingItems)
-        {
-            var h = _settingsWorkflow.GetHotkeys().FirstOrDefault(x => x.ActionId == item.ActionId && x.IsGlobal == item.IsGlobal);
-            if (h == null) continue;
-            var text = FormatHotkey(h);
-            var conflicted = h.IsGlobal && h.IsEnabled && h.Key != Key.None
-                && !_settingsWorkflow.IsGlobalHotkeyRegistered(h);
-            item.ShortcutText = conflicted ? $"{text}（冲突）" : text;
-            item.HasConflict = conflicted;
-        }
-    }
-
-    private void BuildHotkeySettingItems()
-    {
-        _hotkeySettingItems.Clear();
-        foreach (var h in _settingsWorkflow.GetHotkeys())
-        {
-            _hotkeySettingItems.Add(new HotkeySettingItem
-            {
-                ActionId = h.ActionId,
-                ActionName = h.IsGlobal ? h.Name : $"{h.Name}（局部）",
-                IsGlobal = h.IsGlobal,
-                IsEnabled = h.IsEnabled,
-                ShortcutText = FormatHotkey(h)
-            });
-        }
-        HotkeyListBox.ItemsSource = _hotkeySettingItems;
-    }
-
-    private static string FormatHotkey(Hotkey h)
-    {
-        if (!h.IsEnabled || h.Key == Key.None) return "未设置";
-        var parts = new List<string>();
-        if ((h.Modifiers & ModifierKeys.Control) != 0) parts.Add("Ctrl");
-        if ((h.Modifiers & ModifierKeys.Alt) != 0) parts.Add("Alt");
-        if ((h.Modifiers & ModifierKeys.Shift) != 0) parts.Add("Shift");
-        if ((h.Modifiers & ModifierKeys.Windows) != 0) parts.Add("Win");
-        parts.Add(KeyName(h.Key));
-        return string.Join("+", parts);
-    }
-
-    private static string KeyName(Key key) => key switch
-    {
-        Key.Space => "空格",
-        Key.Left => "左方向键",
-        Key.Right => "右方向键",
-        Key.Up => "上方向键",
-        Key.Down => "下方向键",
-        Key.MediaPlayPause => "播放媒体键",
-        Key.MediaStop => "停止媒体键",
-        Key.MediaNextTrack => "下一曲媒体键",
-        Key.MediaPreviousTrack => "上一曲媒体键",
-                _ => key.ToString()
-    };
-
-    private void HotkeyListBox_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (HotkeyListBox.SelectedItem is not HotkeySettingItem item) return;
-        if (e.Key == Key.Enter || e.Key == Key.Space)
-        {
-            StartHotkeyRecording(item);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.Delete)
-        {
-            ClearHotkey(item);
-            e.Handled = true;
-        }
-    }
-
-    private void StartHotkeyRecording(HotkeySettingItem item)
-    {
-        _recordingHotkeyItem = item;
-        Announce($"请按下{item.ActionName}的快捷键，Esc取消，Delete清除");
-    }
-
-    private async void ClearHotkey(HotkeySettingItem item)
-    {
-        var result = await _settingsWorkflow.ClearHotkeyAsync(item.ActionId, item.IsGlobal);
-        PresentHotkeyResult(result, null, $"{item.ActionName}快捷键已清除");
-    }
-
-    private async void ResetHotkeysBtn_Click(object sender, RoutedEventArgs e)
-    {
-        var result = await _settingsWorkflow.ResetHotkeysAsync();
-        PresentHotkeyResult(result, null, "快捷键已恢复默认");
-    }
-
-    private async void HandleHotkeyRecording(KeyEventArgs e)
-    {
-        var item = _recordingHotkeyItem!;
-        if (e.Key == Key.Escape)
-        {
-            _recordingHotkeyItem = null;
-            Announce("已取消，快捷键未更改");
-            RefocusHotkeyList();
-            return;
-        }
-        if (e.Key == Key.Delete)
-        {
-            _recordingHotkeyItem = null;
-            ClearHotkey(item);
-            RefocusHotkeyList();
-            return;
-        }
-
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        var mods = Keyboard.Modifiers;
-        bool isModifierOnly = key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl
-            or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin;
-        if (isModifierOnly) return;
-        var result = await _settingsWorkflow.ReplaceHotkeyAsync(
-            item.ActionId,
-            item.IsGlobal,
-            key,
-            mods);
-        _recordingHotkeyItem = null;
-        var saved = _settingsWorkflow.GetHotkeys().First(h =>
-            h.ActionId == item.ActionId && h.IsGlobal == item.IsGlobal);
-        var message = $"{item.ActionName}功能，{FormatHotkey(saved)}热键设置完成";
-        PresentHotkeyResult(result, item, message);
-        RefocusHotkeyList();
-    }
-
-    private void PresentHotkeyResult(
-        HotkeyEditResult result,
-        HotkeySettingItem? item,
-        string successMessage)
-    {
-        BuildHotkeySettingItems();
-        RefreshHotkeyConflictMarkers();
-        var message = result.Status switch
-        {
-            HotkeyEditStatus.Applied or HotkeyEditStatus.Unchanged => successMessage,
-            HotkeyEditStatus.Invalid => "该组合不是有效快捷键，请使用带修饰键的组合、功能键或媒体键。",
-            HotkeyEditStatus.Conflict => $"该快捷键已被{result.Conflicts.FirstOrDefault()?.Name ?? "其他功能"}使用。",
-            HotkeyEditStatus.RegistrationFailed => "该全局快捷键已被其他程序占用，原快捷键已恢复。",
-            HotkeyEditStatus.RollbackFailed => "快捷键注册失败，旧注册也无法恢复；请重新设置冲突项。",
-            HotkeyEditStatus.PersistenceFailed => "快捷键已生效，但保存失败；退出时将再次保存。",
-            _ => "快捷键未更改。"
-        };
-        Announce(message);
-        if (result.Applied && item is not null)
-            new HotkeyConfirmDialog(message) { Owner = this }.ShowDialog();
-    }
-
-    private void RefocusHotkeyList() => FocusListContent(HotkeyListBox);
 
     private void ExecuteHotkeyAction(string actionId)
     {
@@ -3250,8 +2811,7 @@ public partial class MainWindow : Window
             2 => _playlistImportPanel.LastFocusable,
             3 => CategorySongsList,
             4 => RankingSongsList,
-            5 => ResetHotkeysBtn,
-            6 => DownloadTaskList,
+            5 => DownloadTaskList,
             _ => null
         };
     }
@@ -3266,8 +2826,7 @@ public partial class MainWindow : Window
             2 => _playlistImportPanel.FirstFocusable,
             3 => CategorySourceCombo,
             4 => RankingSourceCombo,
-            5 => DefaultQualityCombo,
-            6 => DownloadCancelBtn,
+            5 => DownloadCancelBtn,
             _ => null
         };
     }

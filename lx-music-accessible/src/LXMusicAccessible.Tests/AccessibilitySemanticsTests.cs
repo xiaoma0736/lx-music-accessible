@@ -27,6 +27,7 @@ public sealed partial class AccessibilitySemanticsTests
             ["CategorySourceCombo"] = "分类歌单音源",
             ["RankingSourceCombo"] = "排行榜音源",
             ["DefaultQualityCombo"] = "默认播放音质",
+            ["DefaultPlayModeCombo"] = "默认播放模式",
             ["CloseBehaviorCombo"] = "按 Alt+F4 时",
             ["ThirdPartyPlayerPathBox"] = "第三方播放器路径",
             ["DownloadPathBox"] = "下载目录",
@@ -64,7 +65,7 @@ public sealed partial class AccessibilitySemanticsTests
     public async Task Close_behavior_combo_exposes_task_name_separately_from_selection()
     {
         var mainWindow = LoadXamlDocuments()
-            .Single(item => item.File.Name == "MainWindow.xaml")
+            .Single(item => item.File.Name == "SettingsWindow.xaml")
             .Root;
         var comboMetadata = mainWindow.Descendants()
             .Single(element => ElementId(element) == "CloseBehaviorCombo");

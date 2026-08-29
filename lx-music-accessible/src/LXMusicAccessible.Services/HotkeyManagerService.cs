@@ -468,7 +468,7 @@ internal sealed class HotkeyManagerService
             or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin;
 
     private static bool IsReserved(Key key, ModifierKeys modifiers) =>
-        modifiers == ModifierKeys.Alt && key is >= Key.D1 and <= Key.D7
+        modifiers == ModifierKeys.Alt && key is >= Key.D1 and <= Key.D4
         || modifiers == ModifierKeys.Control && key is Key.F or Key.R
         || modifiers == ModifierKeys.Alt && key is Key.M or Key.C or Key.L or Key.S or Key.R;
 

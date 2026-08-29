@@ -32,6 +32,11 @@ public sealed class SettingsWorkflowTests
         Assert.Contains(invalid.Errors, error => error.Contains("绝对路径", StringComparison.Ordinal));
         Assert.Equal(string.Empty, workflow.Current.Settings.DownloadPath);
 
+        var invalidPlayer = workflow.Edit(settings => settings.ThirdPartyPlayerPath = "player.exe");
+        Assert.False(invalidPlayer.Accepted);
+        Assert.Contains(invalidPlayer.Errors, error => error.Contains("播放器路径", StringComparison.Ordinal));
+        Assert.Equal(string.Empty, workflow.Current.Settings.ThirdPartyPlayerPath);
+
         var changed = workflow.Edit(settings =>
         {
             settings.DefaultVolume = 0.42;
@@ -177,26 +182,28 @@ public sealed class SettingsWorkflowTests
     }
 
     [Fact]
-    public async Task Alt_8_is_released_when_source_management_leaves_the_main_tabs()
+    public async Task Alt_5_through_8_are_released_while_Alt_1_through_4_remain_reserved()
     {
-        var workflow = CreateWorkflow(new RecordingSettingsStore(), new RecordingHotkeyAdapter());
-        await workflow.LoadAsync(IntPtr.Zero);
+        foreach (var key in new[] { Key.D5, Key.D6, Key.D7, Key.D8 })
+        {
+            var workflow = CreateWorkflow(new RecordingSettingsStore(), new RecordingHotkeyAdapter());
+            await workflow.LoadAsync(IntPtr.Zero);
+            var result = await workflow.ReplaceHotkeyAsync(
+                HotkeyActions.PlayPause,
+                isGlobal: false,
+                key,
+                ModifierKeys.Alt);
+            Assert.Equal(HotkeyEditStatus.Applied, result.Status);
+        }
 
-        var released = await workflow.ReplaceHotkeyAsync(
+        var reservedWorkflow = CreateWorkflow(new RecordingSettingsStore(), new RecordingHotkeyAdapter());
+        await reservedWorkflow.LoadAsync(IntPtr.Zero);
+        var reserved = await reservedWorkflow.ReplaceHotkeyAsync(
             HotkeyActions.PlayPause,
             isGlobal: false,
-            Key.D8,
+            Key.D4,
             ModifierKeys.Alt);
-        var stillReserved = await workflow.ReplaceHotkeyAsync(
-            HotkeyActions.Next,
-            isGlobal: false,
-            Key.D7,
-            ModifierKeys.Alt);
-
-        Assert.Equal(HotkeyEditStatus.Applied, released.Status);
-        Assert.Equal(HotkeyEditStatus.Invalid, stillReserved.Status);
-        Assert.Equal(Key.D8, workflow.GetHotkeys().Single(item =>
-            item.ActionId == HotkeyActions.PlayPause && !item.IsGlobal).Key);
+        Assert.Equal(HotkeyEditStatus.Invalid, reserved.Status);
     }
 
     [Fact]
@@ -354,6 +361,8 @@ public sealed class SettingsWorkflowTests
             root, "src", "LXMusicAccessible.App", "MainWindow.xaml.cs"));
         var mainXaml = File.ReadAllText(Path.Combine(
             root, "src", "LXMusicAccessible.App", "MainWindow.xaml"));
+        var settingsXaml = File.ReadAllText(Path.Combine(
+            root, "src", "LXMusicAccessible.App", "SettingsWindow.xaml"));
         var conflictXaml = File.ReadAllText(Path.Combine(
             root, "src", "LXMusicAccessible.App", "HotkeyConflictDialog.xaml"));
 
@@ -373,7 +382,12 @@ public sealed class SettingsWorkflowTests
         Assert.DoesNotContain("settings.ThirdPartyPlayerPath = ThirdPartyPlayerPathBox", mainCode);
         Assert.DoesNotContain("settings.ShuffleMode = ShufflePlayCheckBox", mainCode);
         Assert.DoesNotContain("settings.LoopMode = RepeatPlayCheckBox", mainCode);
-        Assert.Contains("Property=\"AutomationProperties.Name\" Value=\"{Binding AccessibleText}\"", mainXaml);
+        Assert.DoesNotContain("<TabItem Header=\"设置\"", mainXaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("AutoPlayCheckBox", settingsXaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnableScreenReaderCheckBox", settingsXaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Content=\"关闭\"", settingsXaml, StringComparison.Ordinal);
+        Assert.Contains("if (_settingsInputSuppressed) return;", mainCode, StringComparison.Ordinal);
+        Assert.Contains("Property=\"AutomationProperties.Name\" Value=\"{Binding AccessibleText}\"", settingsXaml);
         Assert.DoesNotContain("Property=\"AutomationProperties.HelpText\"", mainXaml);
         Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding ConflictStatus}\"", mainXaml);
         Assert.Contains("Title=\"快捷键冲突提示\"", conflictXaml);

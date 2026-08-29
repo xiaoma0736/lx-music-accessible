@@ -419,6 +419,9 @@ public sealed class SettingsWorkflow
         if (!string.IsNullOrWhiteSpace(settings.DownloadPath)
             && !Path.IsPathFullyQualified(settings.DownloadPath))
             errors.Add("下载目录必须是绝对路径。");
+        if (!string.IsNullOrWhiteSpace(settings.ThirdPartyPlayerPath)
+            && !Path.IsPathFullyQualified(settings.ThirdPartyPlayerPath))
+            errors.Add("第三方播放器路径必须是绝对路径。");
         if (settings.AccessibilitySettings.AnnouncementRate is < 0.5 or > 2)
             errors.Add("朗读语速必须在 0.5 到 2 之间。");
         return errors;

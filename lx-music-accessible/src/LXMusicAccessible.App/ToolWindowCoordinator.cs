@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Input;
+using LXMusicAccessible.Models;
 
 namespace LXMusicAccessible.App;
 
@@ -44,22 +45,54 @@ internal sealed record ToolWindowGroupSnapshot(
 /// <summary>Owns the four fixed tool-window instances and their window-group visibility snapshot.</summary>
 public sealed class ToolWindowCoordinator
 {
+    private readonly Func<Window, Func<KeyEventArgs, bool>, Action<bool>, Hotkey?, IToolWindowHandle>? _createSettings;
     private readonly Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle> _createSourceManager;
     private readonly Dictionary<ToolWindowKind, IToolWindowHandle> _windows = [];
 
     public ToolWindowCoordinator(ApplicationWindowFactory windows)
-        : this((owner, handleHotkey) => new WpfToolWindowHandle(
-            ToolWindowKind.SourceManager,
-            windows.CreateSourceManager(owner, handleHotkey),
-            modal: true))
+        : this(
+            (owner, handleHotkey, setInputSuppressed, reconfigure) => new WpfToolWindowHandle(
+                ToolWindowKind.Settings,
+                windows.CreateSettings(owner, handleHotkey, setInputSuppressed, reconfigure),
+                modal: true),
+            (owner, handleHotkey) => new WpfToolWindowHandle(
+                ToolWindowKind.SourceManager,
+                windows.CreateSourceManager(owner, handleHotkey),
+                modal: true))
     {
     }
 
     internal ToolWindowCoordinator(
         Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle> createSourceManager)
+        : this(null, createSourceManager)
+    {
+    }
+
+    internal ToolWindowCoordinator(
+        Func<Window, Func<KeyEventArgs, bool>, Action<bool>, Hotkey?, IToolWindowHandle>? createSettings,
+        Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle> createSourceManager)
     {
         ArgumentNullException.ThrowIfNull(createSourceManager);
+        _createSettings = createSettings;
         _createSourceManager = createSourceManager;
+    }
+
+    internal ToolWindowOpenResult ShowSettings(
+        Window owner,
+        Func<KeyEventArgs, bool> handleHotkey,
+        Action<bool> setInputSuppressed,
+        Action restoreOwnerFocus,
+        Hotkey? reconfigure = null)
+    {
+        if (_createSettings is null)
+            throw new InvalidOperationException("The settings-window factory is unavailable.");
+        ArgumentNullException.ThrowIfNull(setInputSuppressed);
+        return ShowModal(
+            ToolWindowKind.Settings,
+            owner,
+            handleHotkey,
+            restoreOwnerFocus,
+            () => _createSettings(owner, handleHotkey, setInputSuppressed, reconfigure));
     }
 
     internal ToolWindowOpenResult ShowSourceManager(
@@ -67,19 +100,34 @@ public sealed class ToolWindowCoordinator
         Func<KeyEventArgs, bool> handleHotkey,
         Action restoreOwnerFocus)
     {
+        return ShowModal(
+            ToolWindowKind.SourceManager,
+            owner,
+            handleHotkey,
+            restoreOwnerFocus,
+            () => _createSourceManager(owner, handleHotkey));
+    }
+
+    private ToolWindowOpenResult ShowModal(
+        ToolWindowKind kind,
+        Window owner,
+        Func<KeyEventArgs, bool> handleHotkey,
+        Action restoreOwnerFocus,
+        Func<IToolWindowHandle> create)
+    {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(handleHotkey);
         ArgumentNullException.ThrowIfNull(restoreOwnerFocus);
 
-        if (_windows.TryGetValue(ToolWindowKind.SourceManager, out var existing))
+        if (_windows.TryGetValue(kind, out var existing))
         {
             existing.Activate();
             return ToolWindowOpenResult.Activated;
         }
 
-        var window = _createSourceManager(owner, handleHotkey);
-        if (window.Kind != ToolWindowKind.SourceManager)
-            throw new InvalidOperationException("The source-manager factory returned the wrong tool-window kind.");
+        var window = create();
+        if (window.Kind != kind)
+            throw new InvalidOperationException("The tool-window factory returned the wrong kind.");
         _windows.Add(window.Kind, window);
         window.Closed += Window_Closed;
         try

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Input;
+using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
 
 namespace LXMusicAccessible.App;
@@ -8,7 +9,10 @@ namespace LXMusicAccessible.App;
 public sealed class ApplicationWindowFactory(
     IAccessibleAnnouncer announcer,
     LyricsWorkflow lyrics,
-    IMusicSourceService sources)
+    IMusicSourceService sources,
+    SettingsWorkflow settings,
+    ITtsService tts,
+    IDownloadWorkflow downloads)
 {
     public UserGuideWindow CreateUserGuide(Window? owner) =>
         WithOwner(new UserGuideWindow(announcer), owner);
@@ -29,6 +33,25 @@ public sealed class ApplicationWindowFactory(
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(handleHotkey);
         return WithOwner(new SourceManagerWindow(announcer, sources, handleHotkey), owner);
+    }
+
+    public SettingsWindow CreateSettings(
+        Window owner,
+        Func<KeyEventArgs, bool> handleHotkey,
+        Action<bool> setInputSuppressed,
+        Hotkey? reconfigure = null)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(handleHotkey);
+        ArgumentNullException.ThrowIfNull(setInputSuppressed);
+        return WithOwner(new SettingsWindow(
+            announcer,
+            settings,
+            tts,
+            downloads,
+            handleHotkey,
+            setInputSuppressed,
+            reconfigure), owner);
     }
 
     private static T WithOwner<T>(T window, Window? owner) where T : Window

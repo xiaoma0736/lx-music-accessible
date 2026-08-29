@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using LXMusicAccessible.App;
+using LXMusicAccessible.Models;
 using Xunit;
 
 namespace LXMusicAccessible.Tests;
@@ -11,6 +12,42 @@ namespace LXMusicAccessible.Tests;
 public sealed class ToolWindowCoordinatorTests
 {
     [Fact]
+    public async Task Settings_is_modal_single_instance_and_receives_the_optional_reconfigure_target()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var created = new List<(RecordingToolWindow Window, Hotkey? Target)>();
+            var coordinator = new ToolWindowCoordinator(
+                (_, _, _, target) =>
+                {
+                    var window = new RecordingToolWindow(ToolWindowKind.Settings);
+                    created.Add((window, target));
+                    return window;
+                },
+                (_, _) => new RecordingToolWindow(ToolWindowKind.SourceManager));
+            var owner = new Window();
+            var target = new Hotkey { ActionId = HotkeyActions.Next, IsGlobal = true };
+
+            Assert.Equal(
+                ToolWindowOpenResult.Created,
+                coordinator.ShowSettings(owner, _ => false, _ => { }, () => { }, target));
+            Assert.Equal(1, created[0].Window.ShowModalCount);
+            Assert.Same(target, created[0].Target);
+
+            Assert.Equal(
+                ToolWindowOpenResult.Activated,
+                coordinator.ShowSettings(owner, _ => false, _ => { }, () => { }));
+            Assert.Single(created);
+            Assert.Equal(1, created[0].Window.ActivateCount);
+
+            created[0].Window.Close();
+            coordinator.ShowSettings(owner, _ => false, _ => { }, () => { });
+            Assert.Equal(2, created.Count);
+            Assert.Null(created[1].Target);
+        });
+    }
+
+    [Fact]
     public async Task Source_manager_is_modal_single_instance_and_recreated_after_close()
     {
         await RunOnStaThreadAsync(() =>
@@ -18,7 +55,7 @@ public sealed class ToolWindowCoordinatorTests
             var created = new List<RecordingToolWindow>();
             var coordinator = new ToolWindowCoordinator((_, _) =>
             {
-                var window = new RecordingToolWindow();
+                var window = new RecordingToolWindow(ToolWindowKind.SourceManager);
                 created.Add(window);
                 return window;
             });
@@ -54,7 +91,7 @@ public sealed class ToolWindowCoordinatorTests
             try
             {
                 var coordinator = new ToolWindowCoordinator((_, _) =>
-                    new RecordingToolWindow { CloseWhenShown = true });
+                    new RecordingToolWindow(ToolWindowKind.SourceManager) { CloseWhenShown = true });
 
                 coordinator.ShowSourceManager(owner, _ => false, () => restored++);
 
@@ -73,7 +110,7 @@ public sealed class ToolWindowCoordinatorTests
     {
         await RunOnStaThreadAsync(() =>
         {
-            var window = new RecordingToolWindow
+            var window = new RecordingToolWindow(ToolWindowKind.SourceManager)
             {
                 Visible = true,
                 Active = true,
@@ -150,9 +187,9 @@ public sealed class ToolWindowCoordinatorTests
         return completion.Task;
     }
 
-    private sealed class RecordingToolWindow : IToolWindowHandle
+    private sealed class RecordingToolWindow(ToolWindowKind kind) : IToolWindowHandle
     {
-        public ToolWindowKind Kind => ToolWindowKind.SourceManager;
+        public ToolWindowKind Kind => kind;
         public bool IsVisible => Visible;
         public bool IsActive => Active;
         public bool IsClosed { get; private set; }

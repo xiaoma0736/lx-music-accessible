@@ -1,0 +1,192 @@
+<Window x:Class="LXMusicAccessible.App.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:LXMusicAccessible.App"
+        Title="设置" Height="650" Width="900" MinHeight="480" MinWidth="700"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize" ShowInTaskbar="False"
+        KeyboardNavigation.TabNavigation="Continue"
+        PreviewKeyDown="Window_PreviewKeyDown" PreviewGotKeyboardFocus="Window_FocusChanged"
+        PreviewLostKeyboardFocus="Window_FocusChanged" Closing="Window_Closing" Closed="Window_Closed">
+    <Grid Margin="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="170"/>
+            <ColumnDefinition Width="12"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <ListBox x:Name="CategoryList" Grid.Column="0"
+                 AutomationProperties.Name="设置分类"
+                 SelectionChanged="CategoryList_SelectionChanged"
+                 KeyboardNavigation.TabIndex="0" KeyboardNavigation.TabNavigation="Once" IsTabStop="True">
+            <ListBoxItem Content="常规"/>
+            <ListBoxItem Content="播放"/>
+            <ListBoxItem Content="歌词"/>
+            <ListBoxItem Content="下载"/>
+            <ListBoxItem Content="存储与缓存"/>
+            <ListBoxItem Content="无障碍"/>
+            <ListBoxItem Content="快捷键"/>
+        </ListBox>
+
+        <Border Grid.Column="2" BorderBrush="Gray" BorderThickness="1" Padding="12">
+            <local:SafeScrollViewer x:Name="ContentScroller" VerticalScrollBarVisibility="Auto"
+                                    Focusable="False" IsTabStop="False">
+                <Grid>
+                    <StackPanel x:Name="GeneralPanel">
+                        <TextBlock Text="常规" FontSize="22" FontWeight="Bold" Margin="0,0,0,16"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Label Content="按 Alt+F4 时：" Target="{Binding ElementName=CloseBehaviorCombo}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="CloseBehaviorCombo" AutomationProperties.Name="按 Alt+F4 时" Width="190"
+                                      SelectionChanged="CloseBehaviorCombo_SelectionChanged">
+                                <ComboBoxItem Content="关闭应用" Tag="close"/>
+                                <ComboBoxItem Content="隐藏到系统托盘" Tag="hide"/>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel x:Name="PlaybackPanel" Visibility="Collapsed">
+                        <TextBlock Text="播放" FontSize="22" FontWeight="Bold" Margin="0,0,0,16"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Label Content="默认播放音质：" Target="{Binding ElementName=DefaultQualityCombo}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="DefaultQualityCombo" AutomationProperties.Name="默认播放音质" Width="190"
+                                      SelectionChanged="DefaultQualityCombo_SelectionChanged">
+                                <ComboBoxItem Content="128k 标准" Tag="128k"/>
+                                <ComboBoxItem Content="192k" Tag="192k"/>
+                                <ComboBoxItem Content="320k 高品质" Tag="320k"/>
+                                <ComboBoxItem Content="FLAC 无损" Tag="flac"/>
+                                <ComboBoxItem Content="FLAC 24bit 高解析" Tag="flac24bit"/>
+                                <ComboBoxItem Content="Hi-Res 高解析" Tag="hires"/>
+                                <ComboBoxItem Content="杜比全景声" Tag="atmos"/>
+                                <ComboBoxItem Content="杜比全景声增强" Tag="atmos_plus"/>
+                                <ComboBoxItem Content="母带级" Tag="master"/>
+                                <ComboBoxItem Content="至臻音效" Tag="jyeffect"/>
+                                <ComboBoxItem Content="至臻全景声" Tag="sky"/>
+                                <ComboBoxItem Content="杜比音效" Tag="dolby"/>
+                                <ComboBoxItem Content="至臻母带" Tag="jymaster"/>
+                            </ComboBox>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Label Content="默认播放模式：" Target="{Binding ElementName=DefaultPlayModeCombo}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="DefaultPlayModeCombo" AutomationProperties.Name="默认播放模式" Width="190"
+                                      SelectionChanged="DefaultPlayModeCombo_SelectionChanged">
+                                <ComboBoxItem Content="顺序播放" Tag="Sequential"/>
+                                <ComboBoxItem Content="列表循环" Tag="Loop"/>
+                                <ComboBoxItem Content="单曲循环" Tag="SingleLoop"/>
+                                <ComboBoxItem Content="随机播放" Tag="Shuffle"/>
+                            </ComboBox>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Label Content="播放器路径：" Target="{Binding ElementName=ThirdPartyPlayerPathBox}" VerticalAlignment="Center"/>
+                            <TextBox x:Name="ThirdPartyPlayerPathBox" AutomationProperties.Name="第三方播放器路径"
+                                     Width="330" Margin="0,0,8,0" LostKeyboardFocus="ThirdPartyPlayerPathBox_LostKeyboardFocus"
+                                     PreviewKeyDown="SettingsPathBox_PreviewKeyDown"/>
+                            <Button Content="浏览..." Click="BrowseThirdPartyPlayerBtn_Click"/>
+                        </StackPanel>
+                        <TextBlock Text="用于歌曲菜单中的“用第三方播放器播放”。" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="LyricsPanel" Visibility="Collapsed">
+                        <TextBlock Text="歌词" FontSize="22" FontWeight="Bold" Margin="0,0,0,16"/>
+                        <CheckBox x:Name="LyricAnnounceCheckBox" Content="自动朗读当前歌词" Margin="0,0,0,10"
+                                  Checked="LyricAnnounceCheckBox_Changed" Unchecked="LyricAnnounceCheckBox_Changed"/>
+                        <CheckBox x:Name="LyricScrollCheckBox" Content="歌词自动滚动到当前句"
+                                  Checked="LyricScrollCheckBox_Changed" Unchecked="LyricScrollCheckBox_Changed"/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="DownloadPanel" Visibility="Collapsed">
+                        <TextBlock Text="下载" FontSize="22" FontWeight="Bold" Margin="0,0,0,16"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Label Content="下载目录：" Target="{Binding ElementName=DownloadPathBox}" VerticalAlignment="Center"/>
+                            <TextBox x:Name="DownloadPathBox" AutomationProperties.Name="下载目录" Width="350" Margin="0,0,8,0"
+                                     LostKeyboardFocus="DownloadPathBox_LostKeyboardFocus" PreviewKeyDown="SettingsPathBox_PreviewKeyDown"/>
+                            <Button Content="浏览..." Click="BrowseDownloadPathBtn_Click"/>
+                        </StackPanel>
+                        <TextBlock Text="留空时使用系统默认下载目录。" TextWrapping="Wrap" Margin="0,-4,0,10"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Label Content="默认下载音质：" Target="{Binding ElementName=DownloadQualityCombo}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="DownloadQualityCombo" AutomationProperties.Name="默认下载音质" Width="190"
+                                      SelectionChanged="DownloadQualityCombo_SelectionChanged">
+                                <ComboBoxItem Content="128k 标准" Tag="128k"/>
+                                <ComboBoxItem Content="192k" Tag="192k"/>
+                                <ComboBoxItem Content="320k 高品质" Tag="320k"/>
+                                <ComboBoxItem Content="FLAC 无损" Tag="flac"/>
+                                <ComboBoxItem Content="FLAC 24bit 高解析" Tag="flac24bit"/>
+                                <ComboBoxItem Content="Hi-Res 高解析" Tag="hires"/>
+                                <ComboBoxItem Content="杜比全景声" Tag="atmos"/>
+                                <ComboBoxItem Content="杜比全景声增强" Tag="atmos_plus"/>
+                                <ComboBoxItem Content="母带级" Tag="master"/>
+                                <ComboBoxItem Content="至臻音效" Tag="jyeffect"/>
+                                <ComboBoxItem Content="至臻全景声" Tag="sky"/>
+                                <ComboBoxItem Content="杜比音效" Tag="dolby"/>
+                                <ComboBoxItem Content="至臻母带" Tag="jymaster"/>
+                            </ComboBox>
+                        </StackPanel>
+                        <CheckBox x:Name="DownloadLyricCheckBox" Content="下载时同时下载歌词" Margin="0,0,0,10"
+                                  Checked="DownloadSetting_Changed" Unchecked="DownloadSetting_Changed"/>
+                        <CheckBox x:Name="DownloadNameQualityCheckBox" Content="文件名包含音质（如 [mp3]）" Margin="0,0,0,10"
+                                  Checked="DownloadSetting_Changed" Unchecked="DownloadSetting_Changed"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Label Content="命名顺序：" Target="{Binding ElementName=DownloadNameOrderCombo}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="DownloadNameOrderCombo" AutomationProperties.Name="歌曲命名顺序" Width="190"
+                                      SelectionChanged="DownloadNameOrderCombo_SelectionChanged">
+                                <ComboBoxItem Content="艺术家 - 歌名" Tag="ArtistTitle"/>
+                                <ComboBoxItem Content="歌名 - 艺术家" Tag="TitleArtist"/>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel x:Name="StoragePanel" Visibility="Collapsed">
+                        <TextBlock Text="存储与缓存" FontSize="22" FontWeight="Bold" Margin="0,0,0,16"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                            <Label Content="数据目录：" Target="{Binding ElementName=DataDirBox}" VerticalAlignment="Center"/>
+                            <TextBox x:Name="DataDirBox" AutomationProperties.Name="数据目录" Width="350" Margin="0,0,8,0" IsReadOnly="True"/>
+                            <Button Content="浏览..." Click="BrowseDataDirBtn_Click"/>
+                        </StackPanel>
+                        <Button x:Name="ClearCacheBtn" Content="清理缓存" HorizontalAlignment="Left" Click="ClearCacheBtn_Click"/>
+                        <TextBlock Text="只清理当前未使用的播放和外部播放器临时文件。" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="AccessibilityPanel" Visibility="Collapsed">
+                        <TextBlock Text="无障碍" FontSize="22" FontWeight="Bold" Margin="0,0,0,16"/>
+                        <CheckBox x:Name="EnableVoiceAnnouncementCheckBox" Content="启用语音朗读提示" Margin="0,0,0,10"
+                                  Checked="VoiceAnnouncementCheckBox_Changed" Unchecked="VoiceAnnouncementCheckBox_Changed"/>
+                        <TextBlock x:Name="SpeechBackendText" Text="朗读后端：自动检测" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Label Content="朗读语音：" Target="{Binding ElementName=VoiceCombo}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="VoiceCombo" AutomationProperties.Name="朗读语音" Width="260"
+                                      SelectionChanged="VoiceCombo_SelectionChanged"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Label Content="朗读语速：" Target="{Binding ElementName=SpeechRateCombo}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="SpeechRateCombo" AutomationProperties.Name="朗读语速" Width="190"
+                                      SelectionChanged="SpeechRateCombo_SelectionChanged">
+                                <ComboBoxItem Content="慢" Tag="0.75"/>
+                                <ComboBoxItem Content="标准" Tag="1"/>
+                                <ComboBoxItem Content="快" Tag="1.25"/>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel x:Name="HotkeysPanel" Visibility="Collapsed">
+                        <TextBlock Text="快捷键" FontSize="22" FontWeight="Bold" Margin="0,0,0,12"/>
+                        <TextBlock Text="选中快捷键后按 Enter 或空格录制，按 Delete 清除。录制时按 Esc 取消。"
+                                   TextWrapping="Wrap" Margin="0,0,0,10"/>
+                        <local:SingleReadListBox x:Name="HotkeyListBox" Height="360" AutomationProperties.Name="快捷键"
+                                                 KeyDown="HotkeyListBox_KeyDown" HorizontalContentAlignment="Stretch">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleText}"/>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding AccessibleText}" TextWrapping="Wrap"/>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </local:SingleReadListBox>
+                        <Button Content="恢复默认快捷键" Margin="0,8,0,0" HorizontalAlignment="Left" Click="ResetHotkeysBtn_Click"/>
+                    </StackPanel>
+                </Grid>
+            </local:SafeScrollViewer>
+        </Border>
+    </Grid>
+</Window>
