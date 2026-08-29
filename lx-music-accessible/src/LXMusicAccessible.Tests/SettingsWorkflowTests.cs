@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Json;
 using System.Windows.Input;
 using LXMusicAccessible.Data;
 using LXMusicAccessible.Models;
@@ -40,6 +41,117 @@ public sealed class SettingsWorkflowTests
         Assert.True(changed.State.Version > loaded.Version);
         Assert.Equal(0.42, changed.State.Settings.DefaultVolume);
         Assert.Equal("320k", changed.State.Settings.DefaultPlayQuality);
+    }
+
+    [Fact]
+    public async Task Flac24bit_and_default_download_directory_survive_unrelated_edits_and_save()
+    {
+        var store = new RecordingSettingsStore
+        {
+            Loaded = new UserSettings
+            {
+                DefaultPlayQuality = "flac24bit",
+                DefaultDownloadQuality = "flac24bit",
+                DownloadPath = string.Empty
+            }
+        };
+        var workflow = CreateWorkflow(store, new RecordingHotkeyAdapter());
+
+        await workflow.LoadAsync(IntPtr.Zero);
+        var edited = workflow.Edit(settings => settings.LyricAutoScroll = false);
+        await workflow.SaveAsync(edited.State);
+
+        Assert.Equal("flac24bit", edited.State.Settings.DefaultPlayQuality);
+        Assert.Equal("flac24bit", edited.State.Settings.DefaultDownloadQuality);
+        Assert.Equal(string.Empty, edited.State.Settings.DownloadPath);
+        Assert.Equal("flac24bit", store.Saved.Single().DefaultPlayQuality);
+        Assert.Equal("flac24bit", store.Saved.Single().DefaultDownloadQuality);
+        Assert.Equal(string.Empty, store.Saved.Single().DownloadPath);
+    }
+
+    [Theory]
+    [InlineData(false, false, PlayMode.Sequential)]
+    [InlineData(false, true, PlayMode.Loop)]
+    [InlineData(true, false, PlayMode.Shuffle)]
+    [InlineData(true, true, PlayMode.Shuffle)]
+    public async Task Legacy_play_flags_are_migrated_to_one_authoritative_mode(
+        bool shuffle,
+        bool loop,
+        PlayMode expected)
+    {
+        var legacy = JsonSerializer.Deserialize<UserSettings>(
+            $$"""{"ShuffleMode":{{shuffle.ToString().ToLowerInvariant()}},"LoopMode":{{loop.ToString().ToLowerInvariant()}}}""");
+        var workflow = CreateWorkflow(
+            new RecordingSettingsStore { Loaded = legacy },
+            new RecordingHotkeyAdapter());
+
+        var loaded = await workflow.LoadAsync(IntPtr.Zero);
+
+        Assert.Equal(expected, loaded.Settings.DefaultPlayMode);
+    }
+
+    [Theory]
+    [InlineData(PlayMode.Sequential)]
+    [InlineData(PlayMode.Loop)]
+    [InlineData(PlayMode.SingleLoop)]
+    [InlineData(PlayMode.Shuffle)]
+    public async Task Every_play_mode_round_trips_without_loss(PlayMode mode)
+    {
+        var store = new RecordingSettingsStore();
+        var workflow = CreateWorkflow(store, new RecordingHotkeyAdapter());
+        await workflow.LoadAsync(IntPtr.Zero);
+
+        workflow.Edit(settings => settings.DefaultPlayMode = mode == PlayMode.Sequential
+            ? PlayMode.Loop
+            : PlayMode.Sequential);
+        var edited = workflow.Edit(settings => settings.DefaultPlayMode = mode);
+        await workflow.SaveAsync(edited.State);
+        var restarted = CreateWorkflow(
+            new RecordingSettingsStore { Loaded = store.Saved.Single() },
+            new RecordingHotkeyAdapter());
+
+        Assert.Equal(mode, (await restarted.LoadAsync(IntPtr.Zero)).Settings.DefaultPlayMode);
+    }
+
+    [Fact]
+    public async Task Accepted_change_is_published_once_while_noop_and_rejection_are_silent()
+    {
+        var workflow = CreateWorkflow(new RecordingSettingsStore(), new RecordingHotkeyAdapter());
+        await workflow.LoadAsync(IntPtr.Zero);
+        var changes = new List<SettingsChangedEventArgs>();
+        workflow.SettingsChanged += (_, change) => changes.Add(change);
+
+        var changed = workflow.Edit(settings => settings.DefaultVolume = 0.42);
+        var noop = workflow.Edit(settings => settings.DefaultVolume = 0.42);
+        var rejected = workflow.Edit(settings => settings.DownloadPath = "relative\\path");
+
+        Assert.True(changed.Accepted);
+        Assert.True(noop.Accepted);
+        Assert.False(rejected.Accepted);
+        Assert.Single(changes);
+        Assert.Equal(changed.State.Version, changes[0].Current.Version);
+        Assert.Equal(0.8, changes[0].Previous!.Settings.DefaultVolume);
+        Assert.Equal(0.42, changes[0].Current.Settings.DefaultVolume);
+    }
+
+    [Fact]
+    public async Task Load_publishes_one_initial_snapshot_for_runtime_consumers()
+    {
+        var workflow = CreateWorkflow(
+            new RecordingSettingsStore
+            {
+                Loaded = new UserSettings { DefaultPlayMode = PlayMode.SingleLoop }
+            },
+            new RecordingHotkeyAdapter());
+        var changes = new List<SettingsChangedEventArgs>();
+        workflow.SettingsChanged += (_, change) => changes.Add(change);
+
+        var loaded = await workflow.LoadAsync(IntPtr.Zero);
+
+        var change = Assert.Single(changes);
+        Assert.Null(change.Previous);
+        Assert.Same(loaded, change.Current);
+        Assert.Equal(PlayMode.SingleLoop, change.Current.Settings.DefaultPlayMode);
     }
 
     [Fact]
@@ -173,7 +285,14 @@ public sealed class SettingsWorkflowTests
             var firstData = new DataService(NullLogger<DataService>.Instance, directory);
             var first = new SettingsWorkflow(firstData, NullLoggerFactory.Instance);
             await first.LoadAsync(IntPtr.Zero);
-            var edited = first.Edit(settings => settings.DefaultVolume = 0.37).State;
+            var edited = first.Edit(settings =>
+            {
+                settings.DefaultVolume = 0.37;
+                settings.DefaultPlayMode = PlayMode.SingleLoop;
+                settings.DefaultPlayQuality = "flac24bit";
+                settings.DefaultDownloadQuality = "flac24bit";
+                settings.DownloadPath = string.Empty;
+            }).State;
             var hotkey = await first.ReplaceHotkeyAsync(
                 HotkeyActions.Next,
                 isGlobal: false,
@@ -188,6 +307,10 @@ public sealed class SettingsWorkflowTests
             var restored = await restarted.LoadAsync(IntPtr.Zero);
 
             Assert.Equal(0.37, restored.Settings.DefaultVolume);
+            Assert.Equal(PlayMode.SingleLoop, restored.Settings.DefaultPlayMode);
+            Assert.Equal("flac24bit", restored.Settings.DefaultPlayQuality);
+            Assert.Equal("flac24bit", restored.Settings.DefaultDownloadQuality);
+            Assert.Equal(string.Empty, restored.Settings.DownloadPath);
             var restoredHotkey = restored.Settings.CustomHotkeys.Single(item =>
                 item.ActionId == HotkeyActions.Next && !item.IsGlobal);
             Assert.Equal(Key.F12, restoredHotkey.Key);
@@ -216,6 +339,17 @@ public sealed class SettingsWorkflowTests
         Assert.DoesNotContain("RegisterHotKey", mainCode, StringComparison.Ordinal);
         Assert.DoesNotContain("UnregisterHotKey", mainCode, StringComparison.Ordinal);
         Assert.Contains("SettingsWorkflow settingsWorkflow", mainCode, StringComparison.Ordinal);
+        Assert.Contains("_settingsWorkflow.SettingsChanged += SettingsWorkflow_SettingsChanged", mainCode);
+        Assert.Contains("_settingsWorkflow.Current.Settings.HideToTrayOnAltF4", mainCode);
+        Assert.Contains("_settingsWorkflow.Current.Settings.DownloadPath", mainCode);
+        Assert.Contains("_settingsWorkflow.Current.Settings.ThirdPartyPlayerPath", mainCode);
+        Assert.Contains("GetDefaultDownloadQuality()", mainCode);
+        Assert.DoesNotContain("settings.AutoPlay = AutoPlayCheckBox", mainCode);
+        Assert.DoesNotContain("settings.EnableScreenReader = EnableScreenReaderCheckBox", mainCode);
+        Assert.DoesNotContain("settings.DownloadPath = DownloadPathBox", mainCode);
+        Assert.DoesNotContain("settings.ThirdPartyPlayerPath = ThirdPartyPlayerPathBox", mainCode);
+        Assert.DoesNotContain("settings.ShuffleMode = ShufflePlayCheckBox", mainCode);
+        Assert.DoesNotContain("settings.LoopMode = RepeatPlayCheckBox", mainCode);
         Assert.Contains("Property=\"AutomationProperties.Name\" Value=\"{Binding AccessibleText}\"", mainXaml);
         Assert.DoesNotContain("Property=\"AutomationProperties.HelpText\"", mainXaml);
         Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding ConflictStatus}\"", mainXaml);

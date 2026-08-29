@@ -218,6 +218,12 @@ public class UserSettings
     public bool ShuffleMode { get; set; } = false;
 
     /// <summary>
+    /// 默认播放模式。null 仅表示尚未迁移的旧随机/循环字段。
+    /// </summary>
+    [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
+    public PlayMode? DefaultPlayMode { get; set; }
+
+    /// <summary>
     /// 默认搜索音源
     /// </summary>
     public string DefaultSearchSource { get; set; } = "all";

@@ -102,7 +102,7 @@
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                                 <Label Content="音源：" Target="{Binding ElementName=SearchSourceCombo}"
                                        VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
-                                <ComboBox x:Name="SearchSourceCombo" AutomationProperties.Name="搜索音源" Width="140" Height="28" Margin="0,0,15,0" KeyboardNavigation.TabIndex="10" IsTabStop="True">
+                                <ComboBox x:Name="SearchSourceCombo" AutomationProperties.Name="搜索音源" Width="140" Height="28" Margin="0,0,15,0" KeyboardNavigation.TabIndex="10" SelectionChanged="SearchSourceCombo_SelectionChanged" IsTabStop="True">
                                     <ComboBoxItem Content="全部音源" Tag="all" IsSelected="True"/>
                                     <ComboBoxItem Content="网易云音乐" Tag="netease"/>
                                     <ComboBoxItem Content="QQ音乐" Tag="qq"/>
@@ -452,7 +452,7 @@
                                         <Label Content="按 Alt+F4 时：" Target="{Binding ElementName=CloseBehaviorCombo}"
                                                VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
                                         <ComboBox x:Name="CloseBehaviorCombo" AutomationProperties.Name="按 Alt+F4 时" Width="180" Height="28" KeyboardNavigation.TabIndex="64"
-                                                  IsTabStop="True">
+                                                  SelectionChanged="CloseBehaviorCombo_SelectionChanged" IsTabStop="True">
                                             <ComboBoxItem Content="关闭应用" Tag="close" IsSelected="True"/>
                                             <ComboBoxItem Content="隐藏到系统托盘" Tag="hide"/>
                                         </ComboBox>
@@ -466,7 +466,7 @@
                                 <StackPanel Margin="10">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                         <Label Content="播放器路径：" Target="{Binding ElementName=ThirdPartyPlayerPathBox}" VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
-                                        <TextBox x:Name="ThirdPartyPlayerPathBox" AutomationProperties.Name="第三方播放器路径" Width="280" Height="28" Margin="0,0,8,0" KeyboardNavigation.TabIndex="65" IsTabStop="True"/>
+                                        <TextBox x:Name="ThirdPartyPlayerPathBox" AutomationProperties.Name="第三方播放器路径" Width="280" Height="28" Margin="0,0,8,0" KeyboardNavigation.TabIndex="65" LostKeyboardFocus="ThirdPartyPlayerPathBox_LostKeyboardFocus" PreviewKeyDown="SettingsPathBox_PreviewKeyDown" IsTabStop="True"/>
                                         <Button x:Name="BrowseThirdPartyPlayerBtn" Content="浏览..." Width="80" Height="28" KeyboardNavigation.TabIndex="66" Click="BrowseThirdPartyPlayerBtn_Click" IsTabStop="True"/>
                                     </StackPanel>
                                     <TextBlock Text="用于歌曲右键菜单“用第三方播放器播放”；在线歌曲将解析播放链接后交由该播放器播放。" TextWrapping="Wrap"/>
@@ -485,14 +485,14 @@
                                     <StackPanel Orientation="Horizontal">
                                         <Label Content="下载目录：" Target="{Binding ElementName=DownloadPathBox}"
                                                VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
-                                        <TextBox x:Name="DownloadPathBox" AutomationProperties.Name="下载目录" Width="320" Height="28" Margin="0,0,8,0" KeyboardNavigation.TabIndex="69" IsTabStop="True"/>
+                                        <TextBox x:Name="DownloadPathBox" AutomationProperties.Name="下载目录" Width="320" Height="28" Margin="0,0,8,0" KeyboardNavigation.TabIndex="69" LostKeyboardFocus="DownloadPathBox_LostKeyboardFocus" PreviewKeyDown="SettingsPathBox_PreviewKeyDown" IsTabStop="True"/>
                                         <Button x:Name="BrowseDownloadPathBtn" Content="浏览..." Width="80" Height="28" KeyboardNavigation.TabIndex="70" Click="BrowseDownloadPathBtn_Click" IsTabStop="True"/>
                                     </StackPanel>
                                     <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                         <Label Content="默认下载音质：" Target="{Binding ElementName=DownloadQualityCombo}"
                                                VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="SemiBold"/>
                                         <ComboBox x:Name="DownloadQualityCombo" AutomationProperties.Name="默认下载音质" Width="180" Height="28" KeyboardNavigation.TabIndex="71"
-                                                  IsTabStop="True">
+                                                  SelectionChanged="DownloadQualityCombo_SelectionChanged" IsTabStop="True">
                                             <ComboBoxItem Content="128k 标准" Tag="128k" IsSelected="True"/>
                                             <ComboBoxItem Content="192k" Tag="192k"/>
                                             <ComboBoxItem Content="320k 高品质" Tag="320k"/>

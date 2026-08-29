@@ -40,7 +40,14 @@ public sealed class SettingsEditState
     internal UserSettings CloneSettings() =>
         JsonSerializer.Deserialize<UserSettings>(_json)
         ?? throw new InvalidOperationException("Settings state could not be restored.");
+
+    internal bool HasSameContent(SettingsEditState other) =>
+        string.Equals(_json, other._json, StringComparison.Ordinal);
 }
+
+public sealed record SettingsChangedEventArgs(
+    SettingsEditState? Previous,
+    SettingsEditState Current);
 
 public enum SettingsSaveStatus
 {
@@ -95,7 +102,7 @@ public sealed class SettingsWorkflow
 {
     private static readonly HashSet<string> Qualities = new(StringComparer.OrdinalIgnoreCase)
     {
-        "128k", "192k", "320k", "flac", "hires", "atmos", "atmos_plus",
+        "128k", "192k", "320k", "flac", "flac24bit", "hires", "atmos", "atmos_plus",
         "master", "jyeffect", "sky", "dolby", "jymaster"
     };
 
@@ -142,6 +149,8 @@ public sealed class SettingsWorkflow
         add => _hotkeys.RegistrationFailed += value;
         remove => _hotkeys.RegistrationFailed -= value;
     }
+
+    public event EventHandler<SettingsChangedEventArgs>? SettingsChanged;
 
     public SettingsEditState Current
     {
@@ -198,34 +207,42 @@ public sealed class SettingsWorkflow
         CancellationToken cancellationToken = default)
     {
         var settings = Normalize(await _store.LoadAsync(cancellationToken) ?? new UserSettings());
+        SettingsEditState current;
         lock (_stateGate)
         {
             settings.CustomHotkeys = _hotkeys.Load(settings.CustomHotkeys).ToList();
-            _current = new SettingsEditState(++_version, settings);
+            current = _current = new SettingsEditState(++_version, settings);
             _persistedVersion = _version;
         }
         _hotkeys.AttachWindow(windowHandle);
-        return Current;
+        PublishSettingsChanged(previous: null, current);
+        return current;
     }
 
     public SettingsEditResult Edit(Action<UserSettings> edit)
     {
         ArgumentNullException.ThrowIfNull(edit);
         SettingsEditState basis;
-        lock (_stateGate) basis = _current;
-        var candidate = basis.CloneSettings();
-        edit(candidate);
-        candidate = Normalize(candidate);
-        candidate.CustomHotkeys = _hotkeys.Snapshot().ToList();
-        var errors = Validate(candidate);
-        if (errors.Count > 0)
-            return new(false, basis, errors);
-
+        SettingsEditState current;
         lock (_stateGate)
         {
-            _current = new SettingsEditState(++_version, candidate);
-            return new(true, _current, Array.Empty<string>());
+            basis = _current;
+            var candidate = basis.CloneSettings();
+            edit(candidate);
+            candidate = Normalize(candidate);
+            candidate.CustomHotkeys = _hotkeys.Snapshot().ToList();
+            var errors = Validate(candidate);
+            if (errors.Count > 0)
+                return new(false, basis, errors);
+
+            current = new SettingsEditState(_version + 1, candidate);
+            if (basis.HasSameContent(current))
+                return new(true, basis, Array.Empty<string>());
+            _version++;
+            _current = current;
         }
+        PublishSettingsChanged(basis, current);
+        return new(true, current, Array.Empty<string>());
     }
 
     public Task<HotkeyEditResult> ReplaceHotkeyAsync(
@@ -333,17 +350,21 @@ public sealed class SettingsWorkflow
     {
         HotkeyApplyResult native;
         SettingsEditState state;
+        SettingsEditState? previous = null;
         lock (_stateGate)
         {
             native = apply();
             if (native.Status == HotkeyApplyStatus.Applied)
             {
+                previous = _current;
                 var settings = _current.CloneSettings();
                 settings.CustomHotkeys = native.Hotkeys.ToList();
                 _current = new SettingsEditState(++_version, settings);
             }
             state = _current;
         }
+
+        if (previous is not null) PublishSettingsChanged(previous, state);
 
         var status = Map(native.Status);
         if (!native.Applied || native.Status == HotkeyApplyStatus.Unchanged)
@@ -374,6 +395,13 @@ public sealed class SettingsWorkflow
         settings.CustomHotkeys ??= new List<Hotkey>();
         settings.Playback ??= new PlaybackSessionState();
         settings.LyricOffsets ??= new Dictionary<string, int>();
+        var mode = settings.DefaultPlayMode ?? (settings.ShuffleMode
+            ? PlayMode.Shuffle
+            : settings.LoopMode ? PlayMode.Loop : PlayMode.Sequential);
+        if (!Enum.IsDefined(mode)) mode = PlayMode.Sequential;
+        settings.DefaultPlayMode = mode;
+        settings.ShuffleMode = mode == PlayMode.Shuffle;
+        settings.LoopMode = mode is PlayMode.Loop or PlayMode.SingleLoop;
         if (!Qualities.Contains(settings.DefaultPlayQuality)) settings.DefaultPlayQuality = "128k";
         if (!Qualities.Contains(settings.DefaultDownloadQuality)) settings.DefaultDownloadQuality = "128k";
         if (string.IsNullOrWhiteSpace(settings.DefaultSearchSource)) settings.DefaultSearchSource = "all";
@@ -394,5 +422,21 @@ public sealed class SettingsWorkflow
         if (settings.AccessibilitySettings.AnnouncementRate is < 0.5 or > 2)
             errors.Add("朗读语速必须在 0.5 到 2 之间。");
         return errors;
+    }
+
+    private void PublishSettingsChanged(SettingsEditState? previous, SettingsEditState current)
+    {
+        foreach (EventHandler<SettingsChangedEventArgs> handler in
+            SettingsChanged?.GetInvocationList() ?? [])
+        {
+            try { handler(this, new(previous, current)); }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    "Settings observer failed for version {Version}: {ErrorType}",
+                    current.Version,
+                    exception.GetType().Name);
+            }
+        }
     }
 }

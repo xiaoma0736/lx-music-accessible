@@ -137,6 +137,7 @@ public partial class MainWindow : Window
         _playback.QueueCompleted += PlayerService_QueueCompleted;
         _settingsWorkflow.HotkeyPressed += HotkeyManager_HotkeyPressed;
         _settingsWorkflow.HotkeysRegistrationFailed += HotkeyManager_HotkeysRegistrationFailed;
+        _settingsWorkflow.SettingsChanged += SettingsWorkflow_SettingsChanged;
         _musicSourceService.SourcesChanged += MusicSourceService_SourcesChanged;
         _musicSourceService.ScriptUpdateAlert += MusicSourceService_ScriptUpdateAlert;
         DownloadTaskList.ItemsSource = _downloads.Tasks;
@@ -298,7 +299,7 @@ public partial class MainWindow : Window
             e.Handled = true;
             _ = _desktopLifecycle.ExecuteAsync(
                 DesktopCommand.AltF4,
-                string.Equals(GetComboTag(CloseBehaviorCombo, "close"), "hide", StringComparison.OrdinalIgnoreCase));
+                _settingsWorkflow.Current.Settings.HideToTrayOnAltF4);
             return;
         }
 
@@ -690,40 +691,30 @@ public partial class MainWindow : Window
             var settings = (await _settingsWorkflow.LoadAsync(handle)).Settings;
             if (settings != null)
             {
-                ApplyVolume(settings.DefaultVolume, announce: false);
                 AutoPlayCheckBox.IsChecked = settings.AutoPlay;
-                ShufflePlayCheckBox.IsChecked = settings.ShuffleMode;
-                RepeatPlayCheckBox.IsChecked = settings.LoopMode;
+                var mode = settings.DefaultPlayMode ?? PlayMode.Sequential;
+                ShufflePlayCheckBox.IsChecked = mode == PlayMode.Shuffle;
+                RepeatPlayCheckBox.IsChecked = mode is PlayMode.Loop or PlayMode.SingleLoop;
                 EnableScreenReaderCheckBox.IsChecked = settings.EnableScreenReader;
                 EnableVoiceAnnouncementCheckBox.IsChecked = settings.EnableVoiceAnnouncement;
                 var defaultQuality = string.IsNullOrEmpty(settings.DefaultPlayQuality) ? "128k" : settings.DefaultPlayQuality;
                 SelectComboByTag(DefaultQualityCombo, defaultQuality);
                 SelectComboByTag(DownloadQualityCombo,
                     string.IsNullOrEmpty(settings.DefaultDownloadQuality) ? "128k" : settings.DefaultDownloadQuality);
-                var savedDownloadPath = settings.DownloadPath?.Trim();
-                DownloadPathBox.Text = _downloads.ResolveDownloadDirectory(savedDownloadPath);
+                DownloadPathBox.Text = settings.DownloadPath?.Trim() ?? string.Empty;
                 DownloadLyricCheckBox.IsChecked = settings.DownloadLyric;
                 DownloadNameQualityCheckBox.IsChecked = settings.DownloadNameIncludeQuality;
                 SelectComboByTag(DownloadNameOrderCombo, settings.DownloadNameOrder.ToString());
                 DataDirBox.Text = _settingsWorkflow.DataDirectory;
                 if (ThirdPartyPlayerPathBox != null)
                     ThirdPartyPlayerPathBox.Text = settings.ThirdPartyPlayerPath ?? string.Empty;
-                _lyrics.ApplySettings(
-                    settings.LyricAutoAnnounce,
-                    settings.LyricAutoScroll,
-                    settings.LyricOffsets);
-                LyricAnnounceCheckBox.IsChecked = _lyrics.AutoAnnounce;
-                LyricScrollCheckBox.IsChecked = _lyrics.AutoScroll;
+                LyricAnnounceCheckBox.IsChecked = settings.LyricAutoAnnounce;
+                LyricScrollCheckBox.IsChecked = settings.LyricAutoScroll;
                 SelectComboByTag(SearchSourceCombo, settings.DefaultSearchSource);
-                _playback.Mode = settings.ShuffleMode
-                    ? PlayMode.Shuffle
-                    : settings.LoopMode ? PlayMode.Loop : PlayMode.Sequential;
-                _playback.DefaultQuality = defaultQuality;
                 UpdatePlayModeDisplay();
 
                 if (CloseBehaviorCombo != null)
                     SelectComboByTag(CloseBehaviorCombo, settings.HideToTrayOnAltF4 ? "hide" : "close");
-                _accessibilityService.SpeechEnabled = settings.EnableVoiceAnnouncement;
             }
 
             // 加载本地收藏与在线收藏（歌单结构）
@@ -735,9 +726,6 @@ public partial class MainWindow : Window
             // 快捷键配置：载入 + 注册全局热键
             BuildHotkeySettingItems();
             RefreshHotkeyConflictMarkers();
-
-            // 应用下载歌词/命名设置到下载服务（立即生效）
-            ApplyDownloadSettings();
 
             // 恢复上次选择的输出设备（无效索引回退系统默认）
             if (_playerService != null && settings != null)
@@ -758,29 +746,129 @@ public partial class MainWindow : Window
         }
     }
 
+    private void SettingsWorkflow_SettingsChanged(object? sender, SettingsChangedEventArgs e)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(
+                () => ApplyRuntimeSettings(e.Previous, e.Current),
+                System.Windows.Threading.DispatcherPriority.DataBind);
+            return;
+        }
+        ApplyRuntimeSettings(e.Previous, e.Current);
+    }
+
+    private void ApplyRuntimeSettings(SettingsEditState? previousState, SettingsEditState currentState)
+    {
+        var previous = previousState?.Settings;
+        var current = currentState.Settings;
+        if (previous is null || previous.DefaultVolume != current.DefaultVolume)
+            _playerService.SetVolume(Math.Clamp(current.DefaultVolume, 0.0, 1.0));
+
+        var currentMode = current.DefaultPlayMode ?? PlayMode.Sequential;
+        if (previous is null || previous.DefaultPlayMode != current.DefaultPlayMode)
+        {
+            _playback.Mode = currentMode;
+            _suppressPlaybackSettingChanges = true;
+            try
+            {
+                ShufflePlayCheckBox.IsChecked = currentMode == PlayMode.Shuffle;
+                RepeatPlayCheckBox.IsChecked = currentMode is PlayMode.Loop or PlayMode.SingleLoop;
+            }
+            finally
+            {
+                _suppressPlaybackSettingChanges = false;
+            }
+            UpdatePlayModeDisplay();
+        }
+
+        if (previous is null || !string.Equals(
+            previous.DefaultPlayQuality,
+            current.DefaultPlayQuality,
+            StringComparison.OrdinalIgnoreCase))
+            _playback.DefaultQuality = current.DefaultPlayQuality;
+
+        if (previous is null
+            || previous.DownloadLyric != current.DownloadLyric
+            || previous.DownloadNameOrder != current.DownloadNameOrder
+            || previous.DownloadNameIncludeQuality != current.DownloadNameIncludeQuality)
+            ApplyDownloadSettings(current);
+
+        if (previous is null
+            || previous.LyricAutoAnnounce != current.LyricAutoAnnounce
+            || previous.LyricAutoScroll != current.LyricAutoScroll)
+            _lyrics.ApplySettings(
+                current.LyricAutoAnnounce,
+                current.LyricAutoScroll,
+                current.LyricOffsets);
+
+        if (previous is null || previous.EnableVoiceAnnouncement != current.EnableVoiceAnnouncement)
+            _accessibilityService.SpeechEnabled = current.EnableVoiceAnnouncement;
+
+        if (previous is null || previous.AccessibilitySettings.AnnouncementRate
+            != current.AccessibilitySettings.AnnouncementRate)
+            _ttsService.SetRate(current.AccessibilitySettings.AnnouncementRate);
+
+        if (previous is null || !string.Equals(
+                previous.AccessibilitySettings.AnnouncementVoiceId,
+                current.AccessibilitySettings.AnnouncementVoiceId,
+                StringComparison.Ordinal))
+            _ttsService.SetVoice(current.AccessibilitySettings.AnnouncementVoiceId);
+    }
+
+    private bool EditSettings(Action<UserSettings> edit)
+    {
+        var result = _settingsWorkflow.Edit(edit);
+        if (result.Accepted) return true;
+        Announce(string.Join(" ", result.Errors), AnnouncementKind.Error);
+        return false;
+    }
+
     private void ShufflePlayCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         if (!_settingsLoaded || _suppressPlaybackSettingChanges) return;
-        _playback.Mode = ShufflePlayCheckBox.IsChecked == true
+        var mode = ShufflePlayCheckBox.IsChecked == true
             ? PlayMode.Shuffle
             : RepeatPlayCheckBox.IsChecked == true ? PlayMode.Loop : PlayMode.Sequential;
-        UpdatePlayModeDisplay();
+        EditSettings(settings => settings.DefaultPlayMode = mode);
     }
 
     private void RepeatPlayCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         if (!_settingsLoaded || _suppressPlaybackSettingChanges) return;
-        _playback.Mode = ShufflePlayCheckBox.IsChecked == true
+        var mode = ShufflePlayCheckBox.IsChecked == true
             ? PlayMode.Shuffle
             : RepeatPlayCheckBox.IsChecked == true ? PlayMode.Loop : PlayMode.Sequential;
-        UpdatePlayModeDisplay();
+        EditSettings(settings => settings.DefaultPlayMode = mode);
+    }
+
+    private void SearchSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_settingsLoaded) return;
+        EditSettings(settings => settings.DefaultSearchSource = GetComboTag(SearchSourceCombo, "all"));
+    }
+
+    private void CloseBehaviorCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_settingsLoaded) return;
+        EditSettings(settings => settings.HideToTrayOnAltF4 = string.Equals(
+            GetComboTag(CloseBehaviorCombo, "close"),
+            "hide",
+            StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void DownloadQualityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_settingsLoaded) return;
+        EditSettings(settings => settings.DefaultDownloadQuality =
+            GetComboTag(DownloadQualityCombo, "128k"));
     }
 
     private void VoiceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_settingsLoaded || _ttsService == null) return;
         if (VoiceCombo.SelectedItem is ComboBoxItem cbi && cbi.Tag is string voiceId)
-            _ttsService.SetVoice(voiceId);
+            EditSettings(settings => settings.AccessibilitySettings.AnnouncementVoiceId = voiceId);
     }
 
     private void DefaultQualityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -788,7 +876,7 @@ public partial class MainWindow : Window
         if (!_settingsLoaded) return;
         var q = GetComboTag(DefaultQualityCombo, "128k");
         if (string.IsNullOrEmpty(q)) return;
-        _playback.DefaultQuality = q;
+        EditSettings(settings => settings.DefaultPlayQuality = q);
     }
 
     private void SpeechRateCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -796,29 +884,31 @@ public partial class MainWindow : Window
         if (!_settingsLoaded || _ttsService == null) return;
         if (SpeechRateCombo.SelectedItem is ComboBoxItem cbi &&
             double.TryParse(cbi.Tag?.ToString(), out var rate))
-            _ttsService.SetRate(rate);
+            EditSettings(settings => settings.AccessibilitySettings.AnnouncementRate = rate);
     }
 
     private void VoiceAnnouncementCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         if (!_settingsLoaded) return;
         var enabled = EnableVoiceAnnouncementCheckBox.IsChecked == true;
-        _accessibilityService.SpeechEnabled = enabled;
+        EditSettings(settings => settings.EnableVoiceAnnouncement = enabled);
         Announce(enabled ? "已开启语音朗读提示" : "已关闭语音朗读提示");
     }
 
     private void LyricAnnounceCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         if (!_settingsLoaded) return;
-        _lyrics.AutoAnnounce = LyricAnnounceCheckBox.IsChecked == true;
-        Announce(_lyrics.AutoAnnounce ? "已开启歌词自动朗读" : "已关闭歌词自动朗读");
+        var enabled = LyricAnnounceCheckBox.IsChecked == true;
+        EditSettings(settings => settings.LyricAutoAnnounce = enabled);
+        Announce(enabled ? "已开启歌词自动朗读" : "已关闭歌词自动朗读");
     }
 
     private void LyricScrollCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         if (!_settingsLoaded) return;
-        _lyrics.AutoScroll = LyricScrollCheckBox.IsChecked == true;
-        Announce(_lyrics.AutoScroll ? "已开启歌词自动滚动" : "已关闭歌词自动滚动");
+        var enabled = LyricScrollCheckBox.IsChecked == true;
+        EditSettings(settings => settings.LyricAutoScroll = enabled);
+        Announce(enabled ? "已开启歌词自动滚动" : "已关闭歌词自动滚动");
     }
 
     /// <summary>清理下载模块拥有且当前未使用的外部播放临时文件。</summary>
@@ -845,7 +935,7 @@ public partial class MainWindow : Window
         if (folderDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
         {
             DownloadPathBox.Text = folderDialog.SelectedPath;
-            Announce($"下载目录已设置为 {folderDialog.SelectedPath}");
+            if (CommitDownloadPath()) Announce($"下载目录已设置为 {folderDialog.SelectedPath}");
         }
     }
 
@@ -860,7 +950,43 @@ public partial class MainWindow : Window
         };
         if (openFileDialog.ShowDialog() != true) return;
         ThirdPartyPlayerPathBox.Text = openFileDialog.FileName;
-        Announce($"第三方播放器已设置为 {openFileDialog.FileName}");
+        if (CommitThirdPartyPlayerPath()) Announce($"第三方播放器已设置为 {openFileDialog.FileName}");
+    }
+
+    private void DownloadPathBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (_settingsLoaded) CommitDownloadPath();
+    }
+
+    private void ThirdPartyPlayerPathBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (_settingsLoaded) CommitThirdPartyPlayerPath();
+    }
+
+    private void SettingsPathBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        e.Handled = true;
+        if (ReferenceEquals(sender, DownloadPathBox)) CommitDownloadPath();
+        else if (ReferenceEquals(sender, ThirdPartyPlayerPathBox)) CommitThirdPartyPlayerPath();
+    }
+
+    private bool CommitDownloadPath()
+    {
+        var path = DownloadPathBox.Text?.Trim() ?? string.Empty;
+        if (EditSettings(settings => settings.DownloadPath = path)) return true;
+        DownloadPathBox.Text = _settingsWorkflow.Current.Settings.DownloadPath;
+        _ = Dispatcher.BeginInvoke(() => DownloadPathBox.Focus());
+        return false;
+    }
+
+    private bool CommitThirdPartyPlayerPath()
+    {
+        var path = ThirdPartyPlayerPathBox.Text?.Trim() ?? string.Empty;
+        if (EditSettings(settings => settings.ThirdPartyPlayerPath = path)) return true;
+        ThirdPartyPlayerPathBox.Text = _settingsWorkflow.Current.Settings.ThirdPartyPlayerPath;
+        _ = Dispatcher.BeginInvoke(() => ThirdPartyPlayerPathBox.Focus());
+        return false;
     }
 
     /// <summary>Browse and apply a custom data directory (database + logs).</summary>
@@ -889,23 +1015,40 @@ public partial class MainWindow : Window
 
     /// <summary>当前生效的下载目录（设置优先，非法/不可用的路径自动回退到服务默认值）</summary>
     private string GetEffectiveDownloadDir()
-        => _downloads.ResolveDownloadDirectory(DownloadPathBox?.Text);
+        => _downloads.ResolveDownloadDirectory(_settingsWorkflow.Current.Settings.DownloadPath);
+
+    private string GetDefaultDownloadQuality() =>
+        _settingsWorkflow.Current.Settings.DefaultDownloadQuality;
 
     /// <summary>把下载设置应用到下载服务（立即生效，影响之后的下载任务）</summary>
-    private void ApplyDownloadSettings()
+    private void ApplyDownloadSettings(UserSettings settings)
     {
-        var orderTag = GetComboTag(DownloadNameOrderCombo, "ArtistTitle");
         _downloads.ApplyPreferences(new DownloadPreferences(
-            DownloadLyricCheckBox?.IsChecked ?? true,
-            string.Equals(orderTag, "TitleArtist", StringComparison.OrdinalIgnoreCase)
-                ? DownloadNameOrder.TitleArtist
-                : DownloadNameOrder.ArtistTitle,
-            DownloadNameQualityCheckBox?.IsChecked ?? true));
+            settings.DownloadLyric,
+            settings.DownloadNameOrder,
+            settings.DownloadNameIncludeQuality));
     }
 
-    private void DownloadSetting_Changed(object sender, RoutedEventArgs e) => ApplyDownloadSettings();
+    private void DownloadSetting_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_settingsLoaded) return;
+        EditSettings(settings =>
+        {
+            settings.DownloadLyric = DownloadLyricCheckBox?.IsChecked ?? true;
+            settings.DownloadNameIncludeQuality = DownloadNameQualityCheckBox?.IsChecked ?? true;
+        });
+    }
 
-    private void DownloadNameOrderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyDownloadSettings();
+    private void DownloadNameOrderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_settingsLoaded) return;
+        EditSettings(settings => settings.DownloadNameOrder = string.Equals(
+            GetComboTag(DownloadNameOrderCombo, "ArtistTitle"),
+            "TitleArtist",
+            StringComparison.OrdinalIgnoreCase)
+            ? DownloadNameOrder.TitleArtist
+            : DownloadNameOrder.ArtistTitle);
+    }
 
     /// <summary>载入朗读语音/语速设置并应用到 TTS 服务</summary>
     private void LoadVoiceSettings(UserSettings? settings)
@@ -922,10 +1065,6 @@ public partial class MainWindow : Window
             SelectComboByTag(VoiceCombo, voiceId);
             var rate = settings?.AccessibilitySettings?.AnnouncementRate ?? 1.0;
             SelectComboByTag(SpeechRateCombo, rate.ToString("0.##"));
-
-            _ttsService.SetRate(rate);
-            if (!string.IsNullOrEmpty(voiceId))
-                _ttsService.SetVoice(voiceId);
 
             // 朗读后端指示（争渡/保益/读屏/SAPI）
             if (SpeechBackendText != null)
@@ -962,39 +1101,9 @@ public partial class MainWindow : Window
             settings.DefaultVolume = _playerService.Volume;
             settings.WindowWidth = (int)Math.Round(ActualWidth);
             settings.WindowHeight = (int)Math.Round(ActualHeight);
-            settings.AutoPlay = AutoPlayCheckBox.IsChecked ?? true;
-            settings.ShuffleMode = ShufflePlayCheckBox.IsChecked ?? false;
-            settings.LoopMode = RepeatPlayCheckBox.IsChecked ?? false;
-            settings.EnableScreenReader = EnableScreenReaderCheckBox.IsChecked ?? true;
-            settings.EnableVoiceAnnouncement = EnableVoiceAnnouncementCheckBox.IsChecked ?? true;
-            settings.DefaultPlayQuality = GetComboTag(DefaultQualityCombo, "128k");
-            settings.DefaultDownloadQuality = GetComboTag(DownloadQualityCombo, "128k");
-            settings.DownloadPath = DownloadPathBox.Text?.Trim() ?? string.Empty;
-            settings.DownloadLyric = DownloadLyricCheckBox?.IsChecked ?? true;
-            settings.DownloadNameOrder = string.Equals(
-                GetComboTag(DownloadNameOrderCombo, "ArtistTitle"),
-                "TitleArtist",
-                StringComparison.OrdinalIgnoreCase)
-                ? DownloadNameOrder.TitleArtist
-                : DownloadNameOrder.ArtistTitle;
-            settings.DownloadNameIncludeQuality = DownloadNameQualityCheckBox?.IsChecked ?? true;
-            settings.ThirdPartyPlayerPath = ThirdPartyPlayerPathBox?.Text?.Trim() ?? string.Empty;
-            settings.LyricAutoAnnounce = LyricAnnounceCheckBox.IsChecked ?? true;
-            settings.LyricAutoScroll = LyricScrollCheckBox.IsChecked ?? true;
-            settings.DefaultSearchSource = GetComboTag(SearchSourceCombo, "all");
-            settings.AccessibilitySettings ??= new AccessibilitySettings();
-            settings.AccessibilitySettings.AnnouncementVoiceId = GetComboTag(VoiceCombo, "");
-            settings.AccessibilitySettings.AnnouncementRate =
-                double.TryParse(GetComboTag(SpeechRateCombo, "1"), out var speechRate)
-                    ? speechRate
-                    : 1.0;
             settings.CustomHotkeys = _settingsWorkflow.GetHotkeys().ToList();
             settings.OutputDeviceIndex = _playerService.CurrentOutputDeviceIndex;
             settings.LyricOffsets = new Dictionary<string, int>(_lyrics.GetOffsetsSnapshot());
-            settings.HideToTrayOnAltF4 = string.Equals(
-                GetComboTag(CloseBehaviorCombo, "close"),
-                "hide",
-                StringComparison.OrdinalIgnoreCase);
             settings.Playback = new PlaybackSessionState
             {
                 CurrentMusic = _playback.CurrentMusic is null
@@ -1016,6 +1125,7 @@ public partial class MainWindow : Window
         _musicSourceService.SourcesChanged -= MusicSourceService_SourcesChanged;
         _musicSourceService.ScriptUpdateAlert -= MusicSourceService_ScriptUpdateAlert;
         _playback.QueueCompleted -= PlayerService_QueueCompleted;
+        _settingsWorkflow.SettingsChanged -= SettingsWorkflow_SettingsChanged;
         _desktopLifecycle.PrepareForShutdown();
 
         return new ApplicationShutdownSnapshot(edit.State);
@@ -2013,12 +2123,12 @@ public partial class MainWindow : Window
         {
             var qualities = await _musicSourceService!.GetQualitiesForSourceAsync(music.Source);
             RebuildQualityMenu(playQualityItem, qualities, SongMenu_PlayQuality_Click, _playback.DefaultQuality);
-            RebuildQualityMenu(downloadItem, qualities, SongMenu_Download_Click, GetComboTag(DownloadQualityCombo, "128k"));
+            RebuildQualityMenu(downloadItem, qualities, SongMenu_Download_Click, GetDefaultDownloadQuality());
         }
         catch
         {
             RebuildQualityMenu(playQualityItem, new List<string> { "128k" }, SongMenu_PlayQuality_Click, _playback.DefaultQuality);
-            RebuildQualityMenu(downloadItem, new List<string> { "128k" }, SongMenu_Download_Click, GetComboTag(DownloadQualityCombo, "128k"));
+            RebuildQualityMenu(downloadItem, new List<string> { "128k" }, SongMenu_Download_Click, GetDefaultDownloadQuality());
         }
     }
 
@@ -2141,7 +2251,7 @@ public partial class MainWindow : Window
         var music = GetContextMusic(sender);
         if (music == null) return;
         await PlayMusicAsync(music, q, GetContextList(sender));
-        _playback.DefaultQuality = q;
+        EditSettings(settings => settings.DefaultPlayQuality = q);
         SelectComboByTag(DefaultQualityCombo, q);
         Announce($"已将默认播放音质设为 {TranslateQuality(q)}");
     }
@@ -2305,7 +2415,7 @@ public partial class MainWindow : Window
         await _downloads.DownloadListAsync(new DownloadListRequest(
             online,
             label,
-            GetComboTag(DownloadQualityCombo, "128k"),
+            GetDefaultDownloadQuality(),
             GetEffectiveDownloadDir(),
             subFolder));
     }
@@ -2316,7 +2426,7 @@ public partial class MainWindow : Window
         var music = GetContextMusic(sender);
         if (music == null) return;
         var result = await _downloads.PlayExternallyAsync(new(
-            ThirdPartyPlayerPathBox?.Text ?? string.Empty,
+            _settingsWorkflow.Current.Settings.ThirdPartyPlayerPath,
             music,
             _playback.DefaultQuality));
         Announce(result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
@@ -2405,7 +2515,7 @@ public partial class MainWindow : Window
 
     private void DownloadOpenFolderBtn_Click(object sender, RoutedEventArgs e)
     {
-        var result = _downloads.OpenDownloadDirectory(DownloadPathBox?.Text);
+        var result = _downloads.OpenDownloadDirectory(_settingsWorkflow.Current.Settings.DownloadPath);
         Announce(result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
@@ -2622,25 +2732,15 @@ public partial class MainWindow : Window
 
     private void PlayModeButton_Click(object sender, RoutedEventArgs e)
     {
-        _playback.Mode = _playback.Mode switch
+        var mode = _playback.Mode switch
         {
             PlayMode.Sequential => PlayMode.Loop,
             PlayMode.Loop => PlayMode.SingleLoop,
             PlayMode.SingleLoop => PlayMode.Shuffle,
             _ => PlayMode.Sequential
         };
-        _suppressPlaybackSettingChanges = true;
-        try
-        {
-            ShufflePlayCheckBox.IsChecked = _playback.Mode == PlayMode.Shuffle;
-            RepeatPlayCheckBox.IsChecked = _playback.Mode is PlayMode.Loop or PlayMode.SingleLoop;
-        }
-        finally
-        {
-            _suppressPlaybackSettingChanges = false;
-        }
-        UpdatePlayModeDisplay();
-        Announce($"播放模式：{GetPlayModeName(_playback.Mode)}");
+        EditSettings(settings => settings.DefaultPlayMode = mode);
+        Announce($"播放模式：{GetPlayModeName(mode)}");
     }
 
     /// <summary>同步“播放控制”菜单与信息面板中的播放模式显示（原右侧按钮已移除）</summary>
@@ -3242,7 +3342,17 @@ public partial class MainWindow : Window
     private void ApplyVolume(double volume, bool announce = false)
     {
         if (_playerService == null) return;
-        _playerService.SetVolume(Math.Clamp(volume, 0.0, 1.0));
+        var target = Math.Clamp(volume, 0.0, 1.0);
+        if (_settingsLoaded)
+        {
+            var before = _settingsWorkflow.Current.Version;
+            if (!EditSettings(settings => settings.DefaultVolume = target)) return;
+            if (_settingsWorkflow.Current.Version == before) _playerService.SetVolume(target);
+        }
+        else
+        {
+            _playerService.SetVolume(target);
+        }
         if (announce)
         {
             Announce(
@@ -3262,7 +3372,7 @@ public partial class MainWindow : Window
         }
         await _downloads.DownloadAsync(new DownloadRequest(
             music,
-            GetComboTag(DownloadQualityCombo, "128k"),
+            GetDefaultDownloadQuality(),
             GetEffectiveDownloadDir()));
     }
 
