@@ -477,11 +477,10 @@ public sealed partial class AccessibilitySemanticsTests
             download.AccessibleName);
         Assert.Equal("已完成，请求 flac，已回退到 128k", download.AccessibleStatus);
 
-        var mainXaml = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "src", "LXMusicAccessible.App", "MainWindow.xaml"));
-        Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding ConflictStatus}\"", mainXaml);
-        Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding AccessibleStatus}\"", mainXaml);
-        Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding StatusText}\"", mainXaml);
+        var xaml = string.Join('\n', LoadXamlDocuments().Select(item => item.Root.ToString()));
+        Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding ConflictStatus}\"", xaml);
+        Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding AccessibleStatus}\"", xaml);
+        Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding StatusText}\"", xaml);
     }
 
     private static bool ContainsRedundantRole(string role, string name)
@@ -601,10 +600,8 @@ public sealed partial class AccessibilitySemanticsTests
 
     private static Style LoadListItemAutomationStyle(string listId)
     {
-        var mainWindow = LoadXamlDocuments()
-            .Single(item => item.File.Name == "MainWindow.xaml")
-            .Root;
-        var list = mainWindow.Descendants()
+        var list = LoadXamlDocuments()
+            .SelectMany(item => item.Root.Descendants())
             .Single(element => ElementId(element) == listId);
         var style = new Style(typeof(ListBoxItem));
         foreach (var setter in list.Descendants()

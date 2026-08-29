@@ -177,6 +177,29 @@ public sealed class SettingsWorkflowTests
     }
 
     [Fact]
+    public async Task Alt_8_is_released_when_source_management_leaves_the_main_tabs()
+    {
+        var workflow = CreateWorkflow(new RecordingSettingsStore(), new RecordingHotkeyAdapter());
+        await workflow.LoadAsync(IntPtr.Zero);
+
+        var released = await workflow.ReplaceHotkeyAsync(
+            HotkeyActions.PlayPause,
+            isGlobal: false,
+            Key.D8,
+            ModifierKeys.Alt);
+        var stillReserved = await workflow.ReplaceHotkeyAsync(
+            HotkeyActions.Next,
+            isGlobal: false,
+            Key.D7,
+            ModifierKeys.Alt);
+
+        Assert.Equal(HotkeyEditStatus.Applied, released.Status);
+        Assert.Equal(HotkeyEditStatus.Invalid, stillReserved.Status);
+        Assert.Equal(Key.D8, workflow.GetHotkeys().Single(item =>
+            item.ActionId == HotkeyActions.PlayPause && !item.IsGlobal).Key);
+    }
+
+    [Fact]
     public async Task Failed_native_replacement_restores_every_old_registration_and_old_state()
     {
         var native = new RecordingHotkeyAdapter();

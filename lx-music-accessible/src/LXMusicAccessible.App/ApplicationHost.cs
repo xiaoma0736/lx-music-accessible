@@ -115,6 +115,7 @@ public static class ApplicationHost
                     sp.GetRequiredService<IAccessibleAnnouncer>(),
                     sp.GetRequiredService<IPlaylistLoginWindowFactory>()));
                 services.AddSingleton<ApplicationWindowFactory>();
+                services.AddSingleton<ToolWindowCoordinator>();
                 services.AddSingleton<ApplicationShutdownRequest>();
                 services.AddSingleton<IApplicationShutdown>(sp =>
                     sp.GetRequiredService<ApplicationShutdownRequest>());

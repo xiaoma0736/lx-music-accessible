@@ -40,12 +40,18 @@ public sealed class ApplicationHostTests
 
         var windows = app.Services.GetRequiredService<ApplicationWindowFactory>();
         Assert.Same(windows, app.Services.GetRequiredService<ApplicationWindowFactory>());
+        Assert.Same(
+            app.Services.GetRequiredService<ToolWindowCoordinator>(),
+            app.Services.GetRequiredService<ToolWindowCoordinator>());
 
         await RunOnStaThreadAsync(() =>
         {
             var guide = windows.CreateUserGuide(owner: null);
             var sponsor = windows.CreateSponsor(owner: null);
             var lyrics = windows.CreateLyrics(_ => false);
+            var owner = new Window { ShowInTaskbar = false };
+            owner.Show();
+            var sourceManager = windows.CreateSourceManager(owner, _ => false);
             try
             {
                 Assert.Empty(AutomationProperties.GetName(guide));
@@ -58,6 +64,11 @@ public sealed class ApplicationHostTests
                 Assert.Empty(AutomationProperties.GetName(lyrics));
                 Assert.Equal("歌词", lyrics.Title);
                 Assert.Equal("歌词", AutomationProperties.GetName(lyrics.LyricsList));
+                Assert.Equal("音源管理", sourceManager.Title);
+                Assert.Equal("音源", AutomationProperties.GetName(sourceManager.SourceList));
+                Assert.Equal(WindowStartupLocation.CenterOwner, sourceManager.WindowStartupLocation);
+                Assert.Equal(ResizeMode.CanResize, sourceManager.ResizeMode);
+                Assert.False(sourceManager.ShowInTaskbar);
 
                 guide.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent, guide));
                 Assert.False(string.IsNullOrWhiteSpace(guide.GuideText.Text));
@@ -68,6 +79,8 @@ public sealed class ApplicationHostTests
             }
             finally
             {
+                sourceManager.Close();
+                owner.Close();
                 lyrics.PrepareForAppShutdown();
                 lyrics.Close();
                 sponsor.Close();

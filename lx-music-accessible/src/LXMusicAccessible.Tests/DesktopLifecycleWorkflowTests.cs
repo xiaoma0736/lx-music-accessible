@@ -144,6 +144,8 @@ public sealed class DesktopLifecycleWorkflowTests
         Assert.Contains("Header=\"退出(_X)\"", mainXaml, StringComparison.Ordinal);
         Assert.Contains("IDesktopIntegration", lifecycle, StringComparison.Ordinal);
         Assert.Contains("DesktopFocusTarget.PreviousControl", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("toolWindows.HideVisibleWindows()", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("toolWindows.RestoreVisibleWindows(_toolSnapshot)", lifecycle, StringComparison.Ordinal);
     }
 
     private static void AssertAnnouncement(AccessibleAnnouncement announcement, string text)

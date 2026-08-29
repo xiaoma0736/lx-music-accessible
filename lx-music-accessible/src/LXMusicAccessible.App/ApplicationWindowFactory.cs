@@ -7,7 +7,8 @@ namespace LXMusicAccessible.App;
 /// <summary>Creates runtime-dependent secondary windows from the Host-owned dependency graph.</summary>
 public sealed class ApplicationWindowFactory(
     IAccessibleAnnouncer announcer,
-    LyricsWorkflow lyrics)
+    LyricsWorkflow lyrics,
+    IMusicSourceService sources)
 {
     public UserGuideWindow CreateUserGuide(Window? owner) =>
         WithOwner(new UserGuideWindow(announcer), owner);
@@ -19,6 +20,15 @@ public sealed class ApplicationWindowFactory(
     {
         ArgumentNullException.ThrowIfNull(handleHotkey);
         return new LyricsWindow(lyrics, handleHotkey);
+    }
+
+    public SourceManagerWindow CreateSourceManager(
+        Window owner,
+        Func<KeyEventArgs, bool> handleHotkey)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(handleHotkey);
+        return WithOwner(new SourceManagerWindow(announcer, sources, handleHotkey), owner);
     }
 
     private static T WithOwner<T>(T window, Window? owner) where T : Window

@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private readonly SavedPlaylistWorkflow _savedPlaylists;
     private readonly PlaylistImportView _playlistImportPanel;
     private readonly ApplicationWindowFactory _windowFactory;
+    private readonly ToolWindowCoordinator _toolWindows;
     private readonly DesktopLifecycleWorkflow _desktopLifecycle;
     private readonly MusicBrowseWorkflow _browseWorkflow;
     private bool _shutdownBlocked;
@@ -82,7 +83,6 @@ public partial class MainWindow : Window
 
     private LyricsWindow? _lyricsWindow;
 
-    private ContextMenu _sourceContextMenu = null!;
     private readonly HashSet<ListBox> _externalSongLists = new();
 
     private readonly System.Windows.Threading.DispatcherTimer _positionTimer =
@@ -103,6 +103,7 @@ public partial class MainWindow : Window
         SavedPlaylistWorkflow savedPlaylists,
         PlaylistImportView playlistImportPanel,
         ApplicationWindowFactory windowFactory,
+        ToolWindowCoordinator toolWindows,
         DesktopLifecycleWorkflow desktopLifecycle,
         MusicBrowseWorkflow browseWorkflow)
     {
@@ -117,6 +118,7 @@ public partial class MainWindow : Window
         _savedPlaylists = savedPlaylists;
         _playlistImportPanel = playlistImportPanel;
         _windowFactory = windowFactory;
+        _toolWindows = toolWindows;
         _desktopLifecycle = desktopLifecycle;
         _browseWorkflow = browseWorkflow;
 
@@ -132,13 +134,10 @@ public partial class MainWindow : Window
         _positionTimer.Tick += PositionTimer_Tick;
         _clockTimer.Tick += ClockTimer_Tick;
         AssignSongContextMenus();
-        _sourceContextMenu = (ContextMenu)FindResource("SourceContextMenu");
-        _sourceContextMenu.PreviewKeyUp += ContextMenu_PreviewKeyUp;
         _playback.QueueCompleted += PlayerService_QueueCompleted;
         _settingsWorkflow.HotkeyPressed += HotkeyManager_HotkeyPressed;
         _settingsWorkflow.HotkeysRegistrationFailed += HotkeyManager_HotkeysRegistrationFailed;
         _settingsWorkflow.SettingsChanged += SettingsWorkflow_SettingsChanged;
-        _musicSourceService.SourcesChanged += MusicSourceService_SourcesChanged;
         _musicSourceService.ScriptUpdateAlert += MusicSourceService_ScriptUpdateAlert;
         DownloadTaskList.ItemsSource = _downloads.Tasks;
 
@@ -156,7 +155,6 @@ public partial class MainWindow : Window
         _browseWorkflow.SelectCategorySource(GetComboTag(CategorySourceCombo, "netease"));
         _browseWorkflow.SelectRankingSource(GetComboTag(RankingSourceCombo, "netease"));
         _ = _browseWorkflow.LoadSearchHistoryAsync();
-        RefreshSourceList();
     }
 
     private void InitializePlayMode()
@@ -174,16 +172,6 @@ public partial class MainWindow : Window
     private void SendWelcomeMessage()
     {
         Announce("欢迎使用落雪音乐无障碍版");
-    }
-
-    /// <summary>音源列表变化（订阅更新/默认/启停/增删）：在 UI 线程刷新音源管理列表</summary>
-    private void MusicSourceService_SourcesChanged(object? sender, EventArgs e)
-    {
-        Dispatcher.BeginInvoke(new Action(() =>
-        {
-            try { RefreshSourceList(); }
-            catch (Exception ex) { Log.Warning("Source list refresh failed: ErrorType={ErrorType}", ex.GetType().Name); }
-        }), System.Windows.Threading.DispatcherPriority.Background);
     }
 
     /// <summary>脚本音源 updateAlert 上抛：语音提示音源更新信息</summary>
@@ -260,7 +248,6 @@ public partial class MainWindow : Window
             case 4: FocusListContent(RankingList); break;
             case 5: FocusControl(AutoPlayCheckBox); break;
             case 6: FocusListContent(DownloadTaskList); break;
-            case 7: RefreshSourceList(); FocusListContent(SourceList); break;
         }
     }
 
@@ -279,7 +266,11 @@ public partial class MainWindow : Window
     private void MenuNavigateToLyrics(object sender, RoutedEventArgs e) => OpenLyricsWindow();
     private void MenuNavigateToSettings(object sender, RoutedEventArgs e) => NavigateToTab(5);
     private void MenuNavigateToDownload(object sender, RoutedEventArgs e) => NavigateToTab(6);
-    private void MenuNavigateToSources(object sender, RoutedEventArgs e) => NavigateToTab(7);
+    private void MenuOpenSourceManager(object sender, RoutedEventArgs e) =>
+        _toolWindows.ShowSourceManager(
+            this,
+            TryHandleToolWindowHotkey,
+            () => (sender as MenuItem)?.Focus());
 
     // ==================== 键盘导航 ====================
 
@@ -388,17 +379,9 @@ public partial class MainWindow : Window
 
         // 配置的全局快捷键（仅处理全局注册失败的组合，避免与 WM_HOTKEY 重复触发）
         var effectiveKey = e.Key == Key.System ? e.SystemKey : e.Key;
-        var fallbackHotkey = _settingsWorkflow.MatchFallback(effectiveKey, mods);
-        if (fallbackHotkey != null)
-        {
-            // 修复：NumLock 关闭时小键盘 4/6/2/8 会作为方向键上报，避免其误触发方向键热键
-            if (!IsNumpadOriginHotkey(fallbackHotkey.Key))
-                ExecuteHotkeyAction(fallbackHotkey.ActionId);
-            e.Handled = true;
-            return;
-        }
+        if (TryExecuteFallbackHotkey(effectiveKey, mods)) { e.Handled = true; return; }
 
-        // Alt+1~8 快速切换页面
+        // Alt+1~7 快速切换主窗口页面
         if (mods == ModifierKeys.Alt)
         {
             int? tab = e.SystemKey switch
@@ -410,8 +393,6 @@ public partial class MainWindow : Window
                 Key.D5 or Key.NumPad5 => 4,
                 Key.D6 or Key.NumPad6 => 5,
                 Key.D7 or Key.NumPad7 => 6,
-                Key.D8 or Key.NumPad8 => 7,
-
                 _ => null
             };
             if (tab.HasValue) { NavigateToTab(tab.Value); e.Handled = true; return; }
@@ -443,7 +424,7 @@ public partial class MainWindow : Window
 
         if (e.Key == Key.Apps || (e.Key == Key.F10 && Keyboard.Modifiers == ModifierKeys.Shift))
         {
-            if (TryOpenSongContextMenu() || TryOpenPlaylistContextMenu() || TryOpenSourceContextMenu())
+            if (TryOpenSongContextMenu() || TryOpenPlaylistContextMenu())
             {
                 e.Handled = true;
                 return;
@@ -451,15 +432,7 @@ public partial class MainWindow : Window
         }
 
         // 局部快捷键（IsGlobal=false，仅主窗口聚焦时生效；保留组合键优先）
-        var localHotkey = _settingsWorkflow.MatchLocalHotkey(effectiveKey, mods);
-        if (localHotkey != null)
-        {
-            // 修复：NumLock 关闭时小键盘 4/6/2/8 会作为方向键上报，避免其误触发方向键热键
-            if (!IsNumpadOriginHotkey(localHotkey.Key))
-                ExecuteHotkeyAction(localHotkey.ActionId);
-            e.Handled = true;
-            return;
-        }
+        if (TryExecuteLocalHotkey(effectiveKey, mods)) { e.Handled = true; return; }
 
         // Ctrl+R：刷新当前页面（原 F5 已改为局部快捷键“播放/暂停”）
         if (mods == ModifierKeys.Control && e.Key == Key.R)
@@ -504,6 +477,35 @@ public partial class MainWindow : Window
             _ = _desktopLifecycle.ExecuteAsync(DesktopCommand.Escape);
             e.Handled = true;
         }
+    }
+
+    internal bool TryHandleToolWindowHotkey(KeyEventArgs e)
+    {
+        ArgumentNullException.ThrowIfNull(e);
+        if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase or PasswordBox)
+            return false;
+        if (FindAncestor<ComboBox>(Keyboard.FocusedElement as DependencyObject) is { IsEditable: true })
+            return false;
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        var modifiers = Keyboard.Modifiers;
+        return TryExecuteFallbackHotkey(key, modifiers) || TryExecuteLocalHotkey(key, modifiers);
+    }
+
+    private bool TryExecuteFallbackHotkey(Key key, ModifierKeys modifiers)
+    {
+        var hotkey = _settingsWorkflow.MatchFallback(key, modifiers);
+        if (hotkey is null) return false;
+        if (!IsNumpadOriginHotkey(hotkey.Key)) ExecuteHotkeyAction(hotkey.ActionId);
+        return true;
+    }
+
+    private bool TryExecuteLocalHotkey(Key key, ModifierKeys modifiers)
+    {
+        var hotkey = _settingsWorkflow.MatchLocalHotkey(key, modifiers);
+        if (hotkey is null) return false;
+        if (!IsNumpadOriginHotkey(hotkey.Key)) ExecuteHotkeyAction(hotkey.ActionId);
+        return true;
     }
 
     /// <summary>清空搜索框全部内容并复位搜索结果（搜索框内按 Delete 触发）</summary>
@@ -639,10 +641,6 @@ public partial class MainWindow : Window
                 break;
             case 6:
                 Announce(DownloadTaskList.Items.Count > 0 ? $"当前有 {DownloadTaskList.Items.Count} 个下载任务" : "暂无下载任务");
-                break;
-            case 7:
-                RefreshSourceList();
-                Announce("音源列表已刷新");
                 break;
             default:
                 Announce("当前页面无需刷新");
@@ -1122,7 +1120,6 @@ public partial class MainWindow : Window
         _clockTimer.Stop();
         _settingsWorkflow.UnregisterAllGlobal();
         UninstallNumpadHook();
-        _musicSourceService.SourcesChanged -= MusicSourceService_SourcesChanged;
         _musicSourceService.ScriptUpdateAlert -= MusicSourceService_ScriptUpdateAlert;
         _playback.QueueCompleted -= PlayerService_QueueCompleted;
         _settingsWorkflow.SettingsChanged -= SettingsWorkflow_SettingsChanged;
@@ -2525,153 +2522,6 @@ public partial class MainWindow : Window
         Announce("已清空已完成的任务");
     }
 
-    // ==================== 音源管理 ====================
-
-    private void RefreshSourceList()
-    {
-        if (_musicSourceService == null || SourceList == null) return;
-        SourceList.ItemsSource = null;
-        SourceList.ItemsSource = _musicSourceService.GetAllSources();
-    }
-
-    private async void ImportLocalSourceBtn_Click(object sender, RoutedEventArgs e)
-    {
-        var openFileDialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Filter = "音源脚本|*.js|所有文件|*.*",
-            Title = "导入本地音源脚本",
-            Multiselect = false
-        };
-        if (openFileDialog.ShowDialog() != true) return;
-        try
-        {
-            Announce("正在导入本地音源...");
-            var src = await _musicSourceService!.ImportFromFileAsync(openFileDialog.FileName);
-            if (src == null) { Announce("导入失败：无法读取或解析脚本"); return; }
-            RefreshSourceList();
-            Announce($"已导入并启用本地音源：{src.Name} v{src.Version}");
-        }
-        catch (Exception ex) { Announce($"导入失败：{ex.Message}"); }
-    }
-
-    private async void ImportNetworkSourceBtn_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new TextInputDialog("从网络导入音源", "音源URL：", "", "音源名称（可留空）：", "");
-        if (dialog.ShowDialog() != true) return;
-        var url = dialog.Value?.Trim();
-        if (string.IsNullOrEmpty(url)) { Announce("导入已取消"); return; }
-        try
-        {
-            Announce("正在从网络导入音源...");
-            var src = await _musicSourceService!.ImportFromUrlAsync(url);
-            if (src == null) { Announce("导入失败：无法下载或解析脚本"); return; }
-            if (!string.IsNullOrWhiteSpace(dialog.Value2))
-            {
-                src.Name = dialog.Value2.Trim();
-                await _musicSourceService.UpdateSourceAsync(src);
-            }
-            RefreshSourceList();
-            Announce($"已导入并启用网络音源：{src.Name} v{src.Version}");
-        }
-        catch (Exception ex) { Announce($"导入失败：{ex.Message}"); }
-    }
-
-    private void RefreshSourcesBtn_Click(object sender, RoutedEventArgs e)
-    {
-        RefreshSourceList();
-        Announce("音源列表已刷新");
-    }
-
-    private void SourceList_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (SourceList.SelectedItem is not MusicSource src) return;
-        if (e.Key == Key.Enter)
-        {
-            Announce($"{src.Name}，版本{src.Version}，类型{src.TypeText}，{(src.IsDefault ? "默认音源，" : "")}{(src.IsEnabled ? "已启用" : "已禁用")}");
-            e.Handled = true;
-        }
-        else if (e.Key == Key.Delete)
-        {
-            SourceMenu_Delete_Click(this, new RoutedEventArgs());
-            e.Handled = true;
-        }
-    }
-
-    /// <summary>键盘（应用键/Shift+F10）在音源列表打开右键菜单</summary>
-    private bool TryOpenSourceContextMenu()
-    {
-        var fe = Keyboard.FocusedElement as DependencyObject;
-        var list = FindAncestor<ListBox>(fe);
-        if (list == null || !ReferenceEquals(list, SourceList)) return false;
-        if (SourceList.SelectedItem is not MusicSource) return false;
-        if (_sourceContextMenu == null) return false;
-        _sourceContextMenu.PlacementTarget = SourceList;
-        _sourceContextMenu.IsOpen = true;
-        return true;
-    }
-
-    private void SourceMenu_SetDefault_Click(object sender, RoutedEventArgs e)
-    {
-        if (SourceList.SelectedItem is not MusicSource src) return;
-        if (src.TrustState == ScriptTrustState.Untrusted)
-        {
-            Announce("暂存音源必须先验证并启用，才能设为默认");
-            return;
-        }
-        _musicSourceService?.SetDefaultSource(src.Id);
-        RefreshSourceList();
-        Announce($"已将 {src.Name} 设为默认音源");
-    }
-
-    private async void SourceMenu_Enable_Click(object sender, RoutedEventArgs e)
-    {
-        if (SourceList.SelectedItem is not MusicSource src) return;
-        var result = await _musicSourceService!.EnableSourceAsync(src);
-        RefreshSourceList();
-        Announce(result.Succeeded ? $"已启用音源：{src.Name}" : result.Message);
-    }
-
-    private void SourceMenu_Disable_Click(object sender, RoutedEventArgs e)
-    {
-        if (SourceList.SelectedItem is not MusicSource src) return;
-        _musicSourceService?.DisableSource(src);
-        RefreshSourceList();
-        Announce($"已禁用音源：{src.Name}");
-    }
-
-    private async void SourceMenu_Test_Click(object sender, RoutedEventArgs e)
-    {
-        if (SourceList.SelectedItem is not MusicSource src) return;
-        Announce($"正在检测 {src.Name} 有效性...");
-        var ok = await _musicSourceService!.TestSourceAsync(src);
-        RefreshSourceList();
-        Announce(ok ? $"{src.Name} 有效" : $"{src.Name} 无效");
-    }
-
-    private async void SourceMenu_Edit_Click(object sender, RoutedEventArgs e)
-    {
-        if (SourceList.SelectedItem is not MusicSource src) return;
-        var nameDlg = new TextInputDialog("编辑音源名称", "音源名称：", src.Name);
-        if (nameDlg.ShowDialog() != true) return;
-        var name = nameDlg.Value?.Trim();
-        if (string.IsNullOrEmpty(name)) { Announce("名称不能为空"); return; }
-        src.Name = name;
-        RefreshSourceList();
-        await _musicSourceService!.UpdateSourceAsync(src);
-        Announce($"音源名称已改为 {src.Name}");
-    }
-
-    private void SourceMenu_Delete_Click(object sender, RoutedEventArgs e)
-    {
-        if (SourceList.SelectedItem is not MusicSource src) return;
-        if (src.Type == SourceType.BuiltIn) { Announce("内置音源不可删除"); return; }
-        var result = MessageBox.Show($"确定删除音源 {src.Name} 吗？", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (result != MessageBoxResult.Yes) return;
-        _musicSourceService?.RemoveSource(src);
-        RefreshSourceList();
-        Announce($"已删除音源：{src.Name}");
-    }
-
     // ==================== 播放控制 ====================
 
     private void PlayPauseButton_Click(object sender, RoutedEventArgs e)
@@ -2836,7 +2686,7 @@ public partial class MainWindow : Window
     {
         MessageBox.Show(
             "落雪音乐 无障碍版\n\n当前版本：V2.0（全部功能免费）\n\n常用快捷键：\n" +
-            "Alt+1~8：切换页面\n" +
+            "Alt+1~7：切换主窗口页面\n" +
             "Ctrl+F：搜索\n" +
             "Ctrl+R：刷新当前页面\n" +
             "播放/暂停、停止、上下首、快进快退、播放模式、下载、音量等：设置→快捷键设置 中自定义\n" +
@@ -3402,7 +3252,6 @@ public partial class MainWindow : Window
             4 => RankingSongsList,
             5 => ResetHotkeysBtn,
             6 => DownloadTaskList,
-            7 => SourceList,
             _ => null
         };
     }
@@ -3419,7 +3268,6 @@ public partial class MainWindow : Window
             4 => RankingSourceCombo,
             5 => DefaultQualityCombo,
             6 => DownloadCancelBtn,
-            7 => ImportLocalSourceBtn,
             _ => null
         };
     }
@@ -3507,8 +3355,6 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        if (_musicSourceService != null)
-            _musicSourceService.SourcesChanged -= MusicSourceService_SourcesChanged;
         _settingsWorkflow.UnregisterAllGlobal();
         UninstallNumpadHook();
         if (_lyricsWindow != null)
@@ -3521,103 +3367,4 @@ public partial class MainWindow : Window
         _clockTimer.Stop();
     }
 
-}
-
-/// <summary>
-
-/// 无障碍专用滚动容器：方向键只负责滚动，绝不把焦点在控件之间跳来跳去。
-/// WPF 默认 ScrollViewer 在方向键按下时会调用 PredictFocus 把焦点移到“下一个控件”，
-/// 这正是盲人键盘导航中“在组合框/列表/按钮上按方向键焦点跳出”的根源；
-/// 本控件移除了该行为，方向键按键继续冒泡给键盘导航系统，
-/// 由外层 Window_KeyDown 决定是否拦截（普通控件）或放行（列表/组合框等容器）。
-/// </summary>
-public class SafeScrollViewer : System.Windows.Controls.ScrollViewer
-{
-    protected override void OnKeyDown(System.Windows.Input.KeyEventArgs e)
-    {
-        // 方向键：不做默认的“预测焦点并跳转”，也不标记处理，
-        // 让按键继续冒泡，交由容器控件（列表框/组合框/滑块/文本框）或 Window 兜底处理。
-        if (e.Key is System.Windows.Input.Key.Up or System.Windows.Input.Key.Down
-            or System.Windows.Input.Key.Left or System.Windows.Input.Key.Right)
-        {
-            return;
-        }
-        base.OnKeyDown(e);
-    }
-}
-/// <summary>对屏幕阅读器/自动化树隐藏但仍可见、可鼠标操作的按钮（用于冗余的翻页按钮）</summary>
-public class InvisibleToScreenReaderButton : System.Windows.Controls.Button
-{
-    protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer()
-    {
-        return new HiddenButtonAutomationPeer(this);
-    }
-
-    private sealed class HiddenButtonAutomationPeer : System.Windows.Automation.Peers.ButtonAutomationPeer
-    {
-        public HiddenButtonAutomationPeer(Button owner) : base(owner) { }
-        protected override bool IsControlElementCore() => false;
-        protected override bool IsContentElementCore() => false;
-    }
-}
-
-/// <summary>对屏幕阅读器/自动化树隐藏但仍可见的文本（用于仅作视觉提示的页码文本）</summary>
-public class InvisibleToScreenReaderTextBlock : System.Windows.Controls.TextBlock
-{
-    protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer()
-    {
-        return new HiddenTextBlockAutomationPeer(this);
-    }
-
-    private sealed class HiddenTextBlockAutomationPeer : System.Windows.Automation.Peers.TextBlockAutomationPeer
-    {
-        public HiddenTextBlockAutomationPeer(TextBlock owner) : base(owner) { }
-        protected override bool IsControlElementCore() => false;
-        protected override bool IsContentElementCore() => false;
-    }
-}
-/// <summary>
-/// 读屏单次朗读的列表：通过自定义自动化对等类把每个列表项设为“叶子节点”，
-/// 使读屏只按列表项名称朗读一次，不再把内部多个文本块重复朗读。
-/// </summary>
-public class SingleReadListBox : System.Windows.Controls.ListBox
-{
-    protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer()
-    {
-        return new SingleReadListBoxAutomationPeer(this);
-    }
-}
-
-internal sealed class SingleReadListBoxAutomationPeer : System.Windows.Automation.Peers.ListBoxAutomationPeer
-{
-    public SingleReadListBoxAutomationPeer(System.Windows.Controls.ListBox owner) : base(owner) { }
-
-    protected override System.Windows.Automation.Peers.ItemAutomationPeer CreateItemAutomationPeer(object item)
-    {
-        return new SingleReadListBoxItemAutomationPeer(item, this);
-    }
-}
-
-/// <summary>
-/// 列表项自动化对等类：不暴露内部子元素（GetChildrenCore 返回空），
-/// 名称取列表项名称（HotkeySettingItem.ToString()），读屏只朗读一次。
-/// </summary>
-internal sealed class SingleReadListBoxItemAutomationPeer : System.Windows.Automation.Peers.ListBoxItemAutomationPeer
-{
-    public SingleReadListBoxItemAutomationPeer(object item, System.Windows.Automation.Peers.ListBoxAutomationPeer listPeer)
-        : base(item, listPeer) { }
-
-    protected override string GetNameCore()
-    {
-        var name = base.GetNameCore();
-        if (string.IsNullOrWhiteSpace(name))
-            return Item?.ToString() ?? string.Empty;
-        return name;
-    }
-
-    protected override List<System.Windows.Automation.Peers.AutomationPeer> GetChildrenCore()
-    {
-        // 叶子节点：不暴露内部文本块，读屏只朗读名称一次
-        return new List<System.Windows.Automation.Peers.AutomationPeer>();
-    }
 }

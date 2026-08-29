@@ -16,6 +16,7 @@ using Xunit;
 
 namespace LXMusicAccessible.Tests;
 
+[Collection("WPF accessibility semantics")]
 public sealed class AccessibleAnnouncerTests
 {
     [Fact]

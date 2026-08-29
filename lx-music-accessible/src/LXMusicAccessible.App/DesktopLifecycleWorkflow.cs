@@ -286,13 +286,14 @@ public sealed class DesktopLifecycleWorkflow : IDisposable
     }
 }
 
-internal sealed class WpfDesktopIntegration : IDesktopIntegration
+internal sealed class WpfDesktopIntegration(ToolWindowCoordinator toolWindows) : IDesktopIntegration
 {
     private MainWindow? _window;
     private IInputElement? _lastFocusedElement;
     private System.Windows.Forms.NotifyIcon? _trayIcon;
     private System.Windows.Forms.ContextMenuStrip? _trayMenu;
     private System.Drawing.Icon? _appIcon;
+    private ToolWindowGroupSnapshot _toolSnapshot = ToolWindowGroupSnapshot.Empty;
     private bool _disposed;
 
     public event EventHandler<DesktopCommandRequestedEventArgs>? CommandRequested;
@@ -314,6 +315,7 @@ internal sealed class WpfDesktopIntegration : IDesktopIntegration
         if (!EnsureTrayIcon()) return false;
 
         _lastFocusedElement = Keyboard.FocusedElement;
+        _toolSnapshot = toolWindows.HideVisibleWindows();
         window.Hide();
         try
         {
@@ -338,6 +340,9 @@ internal sealed class WpfDesktopIntegration : IDesktopIntegration
         window.Activate();
         window.Topmost = true;
         window.Topmost = false;
+
+        if (toolWindows.RestoreVisibleWindows(_toolSnapshot))
+            return DesktopFocusTarget.PreviousControl;
 
         if (_lastFocusedElement is UIElement { IsVisible: true, IsEnabled: true, Focusable: true } previous
             && previous.Focus())
@@ -497,5 +502,6 @@ internal sealed class WpfDesktopIntegration : IDesktopIntegration
         _appIcon = null;
         CommandRequested = null;
         _lastFocusedElement = null;
+        _toolSnapshot = ToolWindowGroupSnapshot.Empty;
     }
 }

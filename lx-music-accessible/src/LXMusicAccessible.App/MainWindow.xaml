@@ -11,19 +11,6 @@
         KeyboardNavigation.DirectionalNavigation="None"
         PreviewKeyDown="Window_PreviewKeyDown" KeyDown="Window_KeyDown" KeyUp="Window_KeyUp">
 
-    <Window.Resources>
-        <!-- 音源列表右键菜单 -->
-        <ContextMenu x:Key="SourceContextMenu">
-            <MenuItem Header="设为默认" Click="SourceMenu_SetDefault_Click"/>
-            <MenuItem Header="启用" Click="SourceMenu_Enable_Click"/>
-            <MenuItem Header="禁用" Click="SourceMenu_Disable_Click"/>
-            <Separator/>
-            <MenuItem Header="检测有效性" Click="SourceMenu_Test_Click"/>
-            <MenuItem Header="编辑" Click="SourceMenu_Edit_Click"/>
-            <MenuItem Header="删除" Click="SourceMenu_Delete_Click"/>
-        </ContextMenu>
-    </Window.Resources>
-
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -68,9 +55,9 @@
                 <MenuItem Header="歌词(_G)" Click="MenuNavigateToLyrics"/>
                 <MenuItem Header="下载管理(_D)" Click="MenuNavigateToDownload"/>
             </MenuItem>
-            <MenuItem Header="设置(_T)">
+            <MenuItem Header="工具(_T)">
+                <MenuItem Header="音源管理(_M)" Click="MenuOpenSourceManager"/>
                 <MenuItem Header="设置(_S)" Click="MenuNavigateToSettings"/>
-                <MenuItem Header="音源管理(_I)" Click="MenuNavigateToSources"/>
             </MenuItem>
             <MenuItem Header="帮助(_H)">
                 <MenuItem Header="使用说明(_U)" Click="UserGuide_Click"/>
@@ -636,46 +623,6 @@
                     </local:SafeScrollViewer>
                 </TabItem>
 
-                <!-- ===== 标签7：音源管理 ===== -->
-                <TabItem Header="音源管理"
-                         KeyboardNavigation.TabNavigation="Cycle"
-                         KeyboardNavigation.DirectionalNavigation="None">
-                    <local:SafeScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False" IsTabStop="False">
-                        <StackPanel Margin="15">
-                            <TextBlock Text="音源接口管理" FontSize="22" FontWeight="Bold" Margin="0,0,0,15"/>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                                <Button x:Name="ImportLocalSourceBtn" Content="从本地导入" Width="100" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="76" Click="ImportLocalSourceBtn_Click" IsTabStop="True"/>
-                                <Button x:Name="ImportNetworkSourceBtn" Content="从网络导入" Width="100" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="77" Click="ImportNetworkSourceBtn_Click" IsTabStop="True"/>
-                                <Button x:Name="RefreshSourcesBtn" Content="刷新" Width="70" Height="28" KeyboardNavigation.TabIndex="78" Click="RefreshSourcesBtn_Click" IsTabStop="True"/>
-                            </StackPanel>
-
-                            <GroupBox Header="音源接口列表">
-                                <local:SingleReadListBox x:Name="SourceList" MinHeight="420" KeyboardNavigation.TabIndex="79"
-                                         AutomationProperties.Name="音源接口"
-                                         ContextMenu="{StaticResource SourceContextMenu}"
-                                         KeyDown="SourceList_KeyDown"
-                                         IsTabStop="False">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <StackPanel Orientation="Horizontal">
-                                                <TextBlock Text="{Binding Name}" Width="220" TextTrimming="CharacterEllipsis"/>
-                                                <TextBlock Text="{Binding Version}" Width="70" TextTrimming="CharacterEllipsis"/>
-                                                <TextBlock Text="{Binding TypeText}" Width="70"/>
-                                                <TextBlock Text="{Binding StatusText}" Width="90"/>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                    <ListBox.ItemContainerStyle>
-                                        <Style TargetType="ListBoxItem">
-                                            <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}"/>
-                                        </Style>
-                                    </ListBox.ItemContainerStyle>
-                                </local:SingleReadListBox>
-                            </GroupBox>
-                        </StackPanel>
-                    </local:SafeScrollViewer>
-                </TabItem>
             </TabControl>
 
             <!-- ===== 右侧信息面板 ===== -->
