@@ -37,10 +37,7 @@ public partial class SourceManagerWindow : Window
     private void Window_Loaded(object sender, RoutedEventArgs e) =>
         Dispatcher.BeginInvoke(FocusSelectedSource, DispatcherPriority.Input);
 
-    private bool FocusSelectedSource() =>
-        SourceList.ItemContainerGenerator.ContainerFromIndex(SourceList.SelectedIndex) is ListBoxItem item
-            ? item.Focus()
-            : SourceList.Focus();
+    private bool FocusSelectedSource() => SourceList.FocusItemOrList();
 
     private void Sources_SourcesChanged(object? sender, EventArgs e)
     {
@@ -150,7 +147,7 @@ public partial class SourceManagerWindow : Window
     private void RefreshSourcesBtn_Click(object sender, RoutedEventArgs e)
     {
         RefreshSources();
-        SourceList.Focus();
+        FocusSelectedSource();
         Announce(SourceList.Items.Count == 0 ? "暂无音源" : "音源列表已刷新");
     }
 
@@ -311,7 +308,7 @@ public partial class SourceManagerWindow : Window
 
         _sources.RemoveSource(source);
         RefreshIfOpen();
-        SourceList.Focus();
+        FocusSelectedSource();
         Announce($"已删除音源：{source.Name}", AnnouncementKind.Success);
     }
 

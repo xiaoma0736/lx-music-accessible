@@ -1,6 +1,7 @@
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 
 namespace LXMusicAccessible.App;
 
@@ -42,6 +43,28 @@ public class InvisibleToScreenReaderTextBlock : TextBlock
 public class SingleReadListBox : ListBox
 {
     protected override AutomationPeer OnCreateAutomationPeer() => new SingleReadListBoxAutomationPeer(this);
+}
+
+internal static class ListBoxFocus
+{
+    public static bool FocusItemOrList(this ListBox list)
+    {
+        if (list.Items.Count == 0) return list.Focus();
+        if (list.SelectedIndex < 0) list.SelectedIndex = 0;
+        list.ScrollIntoView(list.SelectedItem);
+        if (list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem) is ListBoxItem item)
+            return item.Focus();
+
+        var previousFocus = Keyboard.FocusedElement;
+        _ = list.Dispatcher.BeginInvoke(() =>
+        {
+            if (!ReferenceEquals(Keyboard.FocusedElement, previousFocus)
+                && !list.IsKeyboardFocusWithin) return;
+            if (list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem) is ListBoxItem generated)
+                generated.Focus();
+        }, DispatcherPriority.Input);
+        return true;
+    }
 }
 
 internal sealed class SingleReadListBoxAutomationPeer(ListBox owner) : ListBoxAutomationPeer(owner)

@@ -890,12 +890,15 @@ public partial class MainWindow : Window
         bool reset = false,
         bool applyFocus = true)
     {
+        var previousFocus = Keyboard.FocusedElement;
         var result = await _browseWorkflow.ActivateSearchAsync(reset);
         if (result.Succeeded && result.Value is not null
             && _browseWorkflow.IsCurrent(result.Revision))
         {
             RenderSearchResults(
-                applyFocus ? result.Value.PreviousCount : null,
+                applyFocus && ReferenceEquals(Keyboard.FocusedElement, previousFocus)
+                    ? result.Value.PreviousCount
+                    : null,
                 result.Value);
         }
         return result;
@@ -914,12 +917,10 @@ public partial class MainWindow : Window
         SearchResultsList.ItemsSource = items;
         SearchPageInfo.Text = $"已加载 {snapshot.Items.Count} 首" + (snapshot.HasMore ? "，还有更多" : "，已到底");
 
-        if (selectIndex.HasValue && selectIndex.Value >= 0 && selectIndex.Value < items.Count)
+        if (selectIndex.HasValue)
         {
-            SearchResultsList.SelectedIndex = selectIndex.Value;
-            // 先滚动到选中项，确保其容器已实例化并可见，焦点才会落在该项而非列表首项
-            if (SearchResultsList.SelectedItem is MusicInfo selectedMusic)
-                SearchResultsList.ScrollIntoView(selectedMusic);
+            if (selectIndex.Value >= 0 && selectIndex.Value < items.Count)
+                SearchResultsList.SelectedIndex = selectIndex.Value;
             FocusListContent(SearchResultsList);
         }
     }
@@ -1030,6 +1031,7 @@ public partial class MainWindow : Window
     private async Task OpenAlbumDetailAsync(MusicInfo album)
     {
         if (album == null) return;
+        var previousFocus = Keyboard.FocusedElement;
         // 记录打开专辑前搜索结果中的光标位置，返回时恢复
         _searchSelectedIndexBeforeAlbum = Math.Max(0, SearchResultsList.SelectedIndex);
         _searchShowingAlbumDetail = true;
@@ -1040,6 +1042,7 @@ public partial class MainWindow : Window
             _searchShowingAlbumDetail = false;
             return;
         }
+        var restoreFocus = ReferenceEquals(Keyboard.FocusedElement, previousFocus);
 
         var navList = new List<MusicInfo>
         {
@@ -1050,7 +1053,7 @@ public partial class MainWindow : Window
         if (result.Value.Count > 0)
         {
             SearchResultsList.SelectedIndex = 1;
-            ApplyBrowseFocus(result.FocusTarget);
+            if (restoreFocus) ApplyBrowseFocus(result.FocusTarget);
         }
         else
         {
@@ -1093,16 +1096,20 @@ public partial class MainWindow : Window
 
     private async Task LoadCategoriesAsync(string sourceId, bool applyFocus = true)
     {
+        var previousFocus = Keyboard.FocusedElement;
+        var selectedId = (CategoryList.SelectedItem as PlaylistCategory)?.Id;
         _browseWorkflow.SelectCategorySource(sourceId, GetComboDisplayText(CategorySourceCombo));
         var result = await _browseWorkflow.ActivateCategorySourceAsync();
         if (!result.Succeeded || result.Value is null
             || !_browseWorkflow.IsCurrent(result.Revision)) return;
+        var restoreFocus = applyFocus && ReferenceEquals(Keyboard.FocusedElement, previousFocus);
 
         CategoryPlaylistsListBox.ItemsSource = null;
         CategorySongsList.ItemsSource = null;
         CategoryList.ItemsSource = result.Value;
-        if (result.Value.Count > 0) CategoryList.SelectedIndex = 0;
-        if (applyFocus) ApplyBrowseFocus(result.FocusTarget);
+        CategoryList.SelectedItem = result.Value.FirstOrDefault(item => item.Id == selectedId)
+            ?? result.Value.FirstOrDefault();
+        if (restoreFocus) ApplyBrowseFocus(result.FocusTarget);
     }
 
     private void CategoryList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1115,16 +1122,20 @@ public partial class MainWindow : Window
         PlaylistCategory category,
         bool applyFocus = true)
     {
+        var previousFocus = Keyboard.FocusedElement;
+        var selectedId = (CategoryPlaylistsListBox.SelectedItem as Playlist)?.Id;
         _browseWorkflow.SelectCategory(category);
         var result = await _browseWorkflow.ActivateCategoryAsync();
         if (!result.Succeeded || result.Value is null
             || !_browseWorkflow.IsCurrent(result.Revision)) return;
+        var restoreFocus = applyFocus && ReferenceEquals(Keyboard.FocusedElement, previousFocus);
 
         CategorySongsList.ItemsSource = null;
         CategoryPageInfo.Text = "第 1 页";
         CategoryPlaylistsListBox.ItemsSource = result.Value.Items;
-        if (result.Value.Items.Count > 0) CategoryPlaylistsListBox.SelectedIndex = 0;
-        if (applyFocus) ApplyBrowseFocus(result.FocusTarget);
+        CategoryPlaylistsListBox.SelectedItem = result.Value.Items.FirstOrDefault(item => item.Id == selectedId)
+            ?? result.Value.Items.FirstOrDefault();
+        if (restoreFocus) ApplyBrowseFocus(result.FocusTarget);
     }
 
     private void CategoryPlaylistsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1138,15 +1149,17 @@ public partial class MainWindow : Window
         int page,
         bool applyFocus = true)
     {
+        var previousFocus = Keyboard.FocusedElement;
         _browseWorkflow.SelectPlaylist(playlist);
         var result = await _browseWorkflow.ActivatePlaylistAsync(page);
         if (!result.Succeeded || result.Value is null
             || !_browseWorkflow.IsCurrent(result.Revision)) return;
+        var restoreFocus = applyFocus && ReferenceEquals(Keyboard.FocusedElement, previousFocus);
 
         var totalPages = EstimateTotalPages(result.Value.TotalItems, 20, page, result.Value.Items.Count);
         CategorySongsList.ItemsSource = AppendPageNav(result.Value.Items, page, totalPages);
         CategoryPageInfo.Text = $"第 {page}/{totalPages} 页";
-        if (applyFocus) ApplyBrowseFocus(result.FocusTarget);
+        if (restoreFocus) ApplyBrowseFocus(result.FocusTarget);
     }
 
     private void CategorySourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1231,15 +1244,19 @@ public partial class MainWindow : Window
 
     private async Task LoadRankingsAsync(string sourceId, bool applyFocus = true)
     {
+        var previousFocus = Keyboard.FocusedElement;
+        var selectedId = (RankingList.SelectedItem as Ranking)?.Id;
         _browseWorkflow.SelectRankingSource(sourceId, GetComboDisplayText(RankingSourceCombo));
         var result = await _browseWorkflow.ActivateRankingSourceAsync();
         if (!result.Succeeded || result.Value is null
             || !_browseWorkflow.IsCurrent(result.Revision)) return;
+        var restoreFocus = applyFocus && ReferenceEquals(Keyboard.FocusedElement, previousFocus);
 
         RankingSongsList.ItemsSource = null;
         RankingList.ItemsSource = result.Value;
-        if (result.Value.Count > 0) RankingList.SelectedIndex = 0;
-        if (applyFocus) ApplyBrowseFocus(result.FocusTarget);
+        RankingList.SelectedItem = result.Value.FirstOrDefault(item => item.Id == selectedId)
+            ?? result.Value.FirstOrDefault();
+        if (restoreFocus) ApplyBrowseFocus(result.FocusTarget);
     }
 
     private void RankingList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1253,15 +1270,17 @@ public partial class MainWindow : Window
         int page,
         bool applyFocus = true)
     {
+        var previousFocus = Keyboard.FocusedElement;
         _browseWorkflow.SelectRanking(ranking);
         var result = await _browseWorkflow.ActivateRankingAsync(page);
         if (!result.Succeeded || result.Value is null
             || !_browseWorkflow.IsCurrent(result.Revision)) return;
+        var restoreFocus = applyFocus && ReferenceEquals(Keyboard.FocusedElement, previousFocus);
 
         var totalPages = EstimateTotalPages(result.Value.TotalItems, 20, page, result.Value.Items.Count);
         RankingSongsList.ItemsSource = AppendPageNav(result.Value.Items, page, totalPages);
         RankingPageInfo.Text = $"第 {page}/{totalPages} 页";
-        if (applyFocus) ApplyBrowseFocus(result.FocusTarget);
+        if (restoreFocus) ApplyBrowseFocus(result.FocusTarget);
     }
 
     private void RankingSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1502,30 +1521,37 @@ public partial class MainWindow : Window
         RenderSavedPlaylists(result.Snapshot);
     }
 
-    private async Task<BrowseFocusTarget> ActivateOnlinePlaylistAsync(Playlist playlist)
+    private async Task ActivateOnlinePlaylistAsync(Playlist playlist)
     {
+        var previousFocus = Keyboard.FocusedElement;
         _savedPlaylists.Select(playlist);
         var result = await _savedPlaylists.ActivateAsync();
+        var restoreFocus = ReferenceEquals(Keyboard.FocusedElement, previousFocus);
         RenderSavedPlaylists(result.Snapshot);
         if (!string.IsNullOrWhiteSpace(result.Message))
             Announce(result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
-        return result.FocusTarget;
+        if (restoreFocus) ApplyBrowseFocus(result.FocusTarget);
     }
 
     private void RenderSavedPlaylists(SavedPlaylistSnapshot snapshot)
     {
+        var selectedSong = FavoriteSongsList.SelectedItem as MusicInfo;
         OnlinePlaylistList.SelectionChanged -= OnlinePlaylistList_SelectionChanged;
         try
         {
             OnlinePlaylistList.ItemsSource = snapshot.Playlists;
             OnlinePlaylistList.SelectedItem = snapshot.Playlists.FirstOrDefault(item =>
-                item.Id == snapshot.Selected?.Id);
+                    item.Id == snapshot.Selected?.Id)
+                ?? snapshot.Playlists.FirstOrDefault();
         }
         finally
         {
             OnlinePlaylistList.SelectionChanged += OnlinePlaylistList_SelectionChanged;
         }
         FavoriteSongsList.ItemsSource = snapshot.Songs;
+        FavoriteSongsList.SelectedItem = snapshot.Songs.FirstOrDefault(item =>
+                item.Id == selectedSong?.Id && item.Source == selectedSong.Source)
+            ?? snapshot.Songs.FirstOrDefault();
         FavoriteCountText.Text = $"共 {snapshot.Songs.Count} 首";
     }
 
@@ -1541,7 +1567,7 @@ public partial class MainWindow : Window
     {
         if (e.Key == Key.Enter && OnlinePlaylistList.SelectedItem is Playlist playlist)
         {
-            ApplyBrowseFocus(await ActivateOnlinePlaylistAsync(playlist));
+            await ActivateOnlinePlaylistAsync(playlist);
             e.Handled = true;
         }
         else if (e.Key == Key.Delete && OnlinePlaylistList.SelectedItem is Playlist deletedPlaylist)
@@ -2802,15 +2828,10 @@ public partial class MainWindow : Window
         return false;
     }
 
-    /// <summary>聚焦列表：有选中项时聚焦选中条目（读屏进入焦点模式，方向键即可浏览），否则聚焦容器</summary>
+    /// <summary>聚焦列表：非空时聚焦当前或首个条目，空列表聚焦容器。</summary>
     private void FocusListContent(FrameworkElement element)
     {
-        if (element is ListBox list && list.SelectedItem != null
-            && list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem) is FrameworkElement item)
-        {
-            FocusControl(item);
-            return;
-        }
+        if (element is ListBox list && list.FocusItemOrList()) return;
         FocusControl(element);
     }
 

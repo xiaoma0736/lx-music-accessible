@@ -121,6 +121,78 @@ public sealed class PlaylistImportWindowTests
     }
 
     [Fact]
+    public async Task Empty_playlist_and_preview_results_focus_their_list_shells()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var background = new BackgroundWorkHost(NullLogger<BackgroundWorkHost>.Instance);
+            try
+            {
+                var emptyPlaylists = CreateWindow(
+                    new ControlledImportService { EmptyPlaylists = true }, background);
+                emptyPlaylists.Show();
+                Pump(emptyPlaylists.Dispatcher);
+                Assert.True(emptyPlaylists.LoadPlaylistsBtn.Focus());
+                emptyPlaylists.LoadPlaylistsBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Pump(emptyPlaylists.Dispatcher);
+                Assert.Same(emptyPlaylists.MyPlaylistsList, Keyboard.FocusedElement);
+                emptyPlaylists.Close();
+
+                var emptyPreview = CreateWindow(
+                    new ControlledImportService { EmptyPreview = true }, background);
+                emptyPreview.Show();
+                Pump(emptyPreview.Dispatcher);
+                Assert.True(emptyPreview.LoadPlaylistsBtn.Focus());
+                emptyPreview.LoadPlaylistsBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Pump(emptyPreview.Dispatcher);
+                var playlist = Assert.IsType<ListBoxItem>(
+                    emptyPreview.MyPlaylistsList.ItemContainerGenerator.ContainerFromIndex(0));
+                RaiseKey(playlist, Key.Enter, Keyboard.KeyDownEvent);
+                Pump(emptyPreview.Dispatcher);
+                Assert.Same(emptyPreview.PlaylistSongsList, Keyboard.FocusedElement);
+                emptyPreview.Close();
+            }
+            finally
+            {
+                background.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Playlist_loading_does_not_take_focus_back_after_the_user_leaves()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var service = new ControlledImportService { DelayPlaylists = true };
+            var background = new BackgroundWorkHost(NullLogger<BackgroundWorkHost>.Instance);
+            var window = CreateWindow(service, background);
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+                SynchronizationContext.SetSynchronizationContext(
+                    new DispatcherSynchronizationContext(window.Dispatcher));
+                Assert.True(window.LoadPlaylistsBtn.Focus());
+                window.LoadPlaylistsBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                PumpUntil(window.Dispatcher, () => service.PlaylistsStarted.Task.IsCompleted);
+                Assert.True(window.LogoutBtn.Focus());
+                service.ReleasePlaylists.SetResult();
+                PumpUntil(window.Dispatcher, () => window.MyPlaylistsList.Items.Count == 1);
+
+                Assert.Same(window.LogoutBtn, Keyboard.FocusedElement);
+                Assert.Equal(0, window.MyPlaylistsList.SelectedIndex);
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(null);
+                if (window.IsVisible) window.Close();
+                background.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+        });
+    }
+
+    [Fact]
     public async Task Active_import_close_can_continue_then_cancel_and_wait_for_the_delayed_fetch()
     {
         await RunOnStaThreadAsync(() =>
@@ -341,6 +413,9 @@ public sealed class PlaylistImportWindowTests
 
     private sealed class ControlledImportService : IPlaylistImportService
     {
+        public bool EmptyPlaylists { get; init; }
+        public bool EmptyPreview { get; init; }
+        public bool DelayPlaylists { get; init; }
         public bool DelayBatch { get; init; }
         public Exception? BatchFailure { get; init; }
         public int OperationCount { get; private set; }
@@ -348,6 +423,10 @@ public sealed class PlaylistImportWindowTests
         public TaskCompletionSource BatchStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseBatch { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource PlaylistsStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleasePlaylists { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public IReadOnlyList<IPlaylistImportProvider> Providers => [];
         public IPlaylistImportProvider? GetProvider(string platformId) => null;
@@ -360,17 +439,21 @@ public sealed class PlaylistImportWindowTests
         public Task<AccountInfo?> LoginWithBrowserResultAsync(string platformId, string cookieText, string? displayName, List<RemotePlaylist>? playlists) =>
             throw new NotSupportedException();
         public Task LogoutAsync(string platformId) => Task.CompletedTask;
-        public Task<List<RemotePlaylist>> GetMyPlaylistsAsync(string platformId)
+        public async Task<List<RemotePlaylist>> GetMyPlaylistsAsync(string platformId)
         {
             OperationCount++;
-            return Task.FromResult(new List<RemotePlaylist>
-            {
+            PlaylistsStarted.TrySetResult();
+            if (DelayPlaylists) await ReleasePlaylists.Task;
+            if (EmptyPlaylists) return [];
+            return
+            [
                 new() { Platform = platformId, RemoteId = "one", Name = "歌单一", TrackCount = 1 }
-            });
+            ];
         }
         public Task<List<MusicInfo>> GetPlaylistSongsPreviewAsync(string platformId, RemotePlaylist remote)
         {
             OperationCount++;
+            if (EmptyPreview) return Task.FromResult(new List<MusicInfo>());
             return Task.FromResult(new List<MusicInfo>
             {
                 new() { Id = "song", Title = "歌曲", Artist = "歌手", Source = platformId }

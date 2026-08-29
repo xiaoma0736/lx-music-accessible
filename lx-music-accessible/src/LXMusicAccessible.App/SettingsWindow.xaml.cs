@@ -85,7 +85,7 @@ public partial class SettingsWindow : Window
             }
             HotkeyListBox.SelectedItem = item;
             HotkeyListBox.ScrollIntoView(item);
-            HotkeyListBox.Focus();
+            HotkeyListBox.FocusItemOrList();
             StartHotkeyRecording(item);
         }, DispatcherPriority.Input);
     }
@@ -488,8 +488,7 @@ public partial class SettingsWindow : Window
 
     private void RefocusHotkeyList()
     {
-        HotkeyListBox.Focus();
-        if (HotkeyListBox.SelectedItem is not null) HotkeyListBox.ScrollIntoView(HotkeyListBox.SelectedItem);
+        HotkeyListBox.FocusItemOrList();
     }
 
     private void PresentHotkeyResult(HotkeyEditResult result, HotkeySettingItem? item, string successMessage)
@@ -582,16 +581,15 @@ public partial class SettingsWindow : Window
             _ => null
         };
         if (!reverse && CategoryList.IsKeyboardFocusWithin)
-            return firstContent?.Focus() == true;
+            return firstContent is ListBox list
+                ? list.FocusItemOrList()
+                : firstContent?.Focus() == true;
         if (reverse && firstContent?.IsKeyboardFocusWithin == true)
             return FocusSelectedCategory();
         return false;
     }
 
-    private bool FocusSelectedCategory() =>
-        CategoryList.ItemContainerGenerator.ContainerFromIndex(CategoryList.SelectedIndex) is ListBoxItem item
-            ? item.Focus()
-            : CategoryList.Focus();
+    private bool FocusSelectedCategory() => CategoryList.FocusItemOrList();
 
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {

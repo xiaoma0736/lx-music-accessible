@@ -104,6 +104,14 @@ public sealed class SettingsWindowTests
                     window.CategoryList.ItemContainerGenerator.ContainerFromIndex(2));
                 RaiseKey(lyrics, Key.Up, Keyboard.KeyDownEvent);
                 Assert.Equal(1, window.CategoryList.SelectedIndex);
+
+                window.CategoryList.SelectedIndex = 6;
+                Assert.True(window.MoveAcrossCategoryBoundary(reverse: false));
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                var firstHotkey = Assert.IsType<ListBoxItem>(
+                    window.HotkeyListBox.ItemContainerGenerator.ContainerFromIndex(0));
+                Assert.Equal(0, window.HotkeyListBox.SelectedIndex);
+                Assert.Same(firstHotkey, Keyboard.FocusedElement);
                 Assert.Equal(initialVersion, dependencies.Settings.Current.Version);
                 Assert.Equal(0, dependencies.Store.SaveCount);
             }

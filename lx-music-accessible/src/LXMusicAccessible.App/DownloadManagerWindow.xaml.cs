@@ -40,7 +40,7 @@ public partial class DownloadManagerWindow : Window
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e) =>
-        Dispatcher.BeginInvoke(DownloadTaskList.Focus, DispatcherPriority.Input);
+        Dispatcher.BeginInvoke(DownloadTaskList.FocusItemOrList, DispatcherPriority.Input);
 
     private void Tasks_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
         UpdateListState();
@@ -89,7 +89,7 @@ public partial class DownloadManagerWindow : Window
 
         if (_downloads.Tasks.Count > 0 && selectedIndex >= 0)
             DownloadTaskList.SelectedIndex = Math.Min(Math.Max(0, selectedIndex), _downloads.Tasks.Count - 1);
-        DownloadTaskList.Focus();
+        DownloadTaskList.FocusItemOrList();
         Announce("已清空终态下载任务");
     }
 

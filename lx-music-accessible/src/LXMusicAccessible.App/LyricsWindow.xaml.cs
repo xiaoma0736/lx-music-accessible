@@ -39,19 +39,9 @@ public partial class LyricsWindow : Window
 
     public void FocusLyricsList()
     {
-        Dispatcher.BeginInvoke(new Action(() =>
-        {
-            if (LyricsList.Items.Count == 0)
-            {
-                LyricsList.Focus();
-                return;
-            }
-            var target = LyricsList.SelectedItem ?? LyricsList.Items[0];
-            var item = LyricsList.ItemContainerGenerator.ContainerFromItem(target) as FrameworkElement
-                       ?? LyricsList.ItemContainerGenerator.ContainerFromIndex(0) as FrameworkElement;
-            if (item != null) item.Focus();
-            else LyricsList.Focus();
-        }), System.Windows.Threading.DispatcherPriority.Input);
+        Dispatcher.BeginInvoke(
+            LyricsList.FocusItemOrList,
+            System.Windows.Threading.DispatcherPriority.Input);
     }
 
     private void Workflow_StateChanged(object? sender, LyricsState state)

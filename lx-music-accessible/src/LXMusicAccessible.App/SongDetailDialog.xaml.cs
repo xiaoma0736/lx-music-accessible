@@ -19,8 +19,7 @@ public partial class SongDetailDialog : Window
             if (DetailsList.Items.Count > 0)
             {
                 DetailsList.SelectedIndex = 0;
-                DetailsList.ScrollIntoView(DetailsList.Items[0]);
-                DetailsList.Focus();
+                DetailsList.FocusItemOrList();
             }
             else
             {

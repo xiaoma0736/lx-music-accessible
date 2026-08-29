@@ -303,24 +303,31 @@ public partial class PlaylistImportWindow : Window
     private async void LoadPlaylistsBtn_Click(object sender, RoutedEventArgs e)
     {
         LoadPlaylistsBtn.IsEnabled = false;
+        var previousFocus = Keyboard.FocusedElement;
+        var selectedId = (MyPlaylistsList.SelectedItem as RemotePlaylist)?.RemoteId;
         try
         {
             Announce("正在获取我的歌单，请稍候。");
             _playlists = await _service.GetMyPlaylistsAsync(_platform);
             if (_closed) return;
+            var restoreFocus = ReferenceEquals(Keyboard.FocusedElement, previousFocus);
             MyPlaylistsList.ItemsSource = null;
             MyPlaylistsList.Items.Clear();
             foreach (var pl in _playlists)
                 MyPlaylistsList.Items.Add(pl);
+            if (_playlists.Count > 0)
+                MyPlaylistsList.SelectedIndex = Math.Max(0, _playlists.FindIndex(item =>
+                    string.Equals(item.RemoteId, selectedId, StringComparison.Ordinal)));
             SelectAllBtn.Visibility = Visibility.Visible;
             ImportSelectedBtn.Visibility = Visibility.Visible;
             if (_playlists.Count == 0)
             {
+                if (restoreFocus) FocusListItem(MyPlaylistsList, 0);
                 Announce("没有找到歌单。");
             }
             else
             {
-                FocusListItem(MyPlaylistsList, 0);
+                if (restoreFocus) FocusListItem(MyPlaylistsList, 0);
                 Announce($"共找到 {_playlists.Count} 个歌单。按上下方向键浏览，按回车打开该歌单的歌曲列表，按 Ctrl+空格 选中或取消。");
             }
         }
@@ -377,24 +384,28 @@ public partial class PlaylistImportWindow : Window
     private async Task ShowSongPreviewAsync(RemotePlaylist remote)
     {
         if (remote == null) return;
+        var previousFocus = Keyboard.FocusedElement;
         // 歌曲预览列表挂接主窗口的播放/右键菜单/收藏能力（仅一次）
         Announce($"正在获取歌单《{remote.Name}》的歌曲，请稍候。");
         try
         {
             var songs = await _service.GetPlaylistSongsPreviewAsync(_platform, remote);
             if (_closed) return;
+            var restoreFocus = ReferenceEquals(Keyboard.FocusedElement, previousFocus);
             PlaylistSongsList.ItemsSource = null;
             PlaylistSongsList.Items.Clear();
             foreach (var m in songs)
                 PlaylistSongsList.Items.Add(m);
+            if (songs.Count > 0) PlaylistSongsList.SelectedIndex = 0;
             SongPreviewHeaderText.Text = $"歌单《{remote.Name}》歌曲预览，共 {songs.Count} 首";
             ShowPreviewArea();
             if (songs.Count == 0)
             {
+                if (restoreFocus) FocusListItem(PlaylistSongsList, 0);
                 Announce($"歌单《{remote.Name}》暂无歌曲。");
                 return;
             }
-            FocusListItem(PlaylistSongsList, 0);
+            if (restoreFocus) FocusListItem(PlaylistSongsList, 0);
             Announce($"已加载《{remote.Name}》共 {songs.Count} 首歌曲。按上下方向键浏览，按回车或空格播放，按应用键打开操作菜单可加入本地收藏，按返回歌单列表可返回，按导入此歌单可导入。");
         }
         catch (Exception ex)
@@ -619,16 +630,15 @@ public partial class PlaylistImportWindow : Window
     /// <summary>聚焦列表中的指定条目（读屏进入焦点模式），延迟回退避免容器抢焦</summary>
     private void FocusListItem(ListBox list, int index)
     {
-        if (list == null || list.Items.Count == 0) return;
+        if (list == null) return;
+        if (list.Items.Count == 0)
+        {
+            list.FocusItemOrList();
+            return;
+        }
         if (index < 0) index = 0;
         if (index >= list.Items.Count) index = list.Items.Count - 1;
         list.SelectedIndex = index;
-        if (list.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement item && item.Focus())
-            return;
-        list.Dispatcher.BeginInvoke(new Action(() =>
-        {
-            if (!_closed && list.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement c)
-                c.Focus();
-        }), System.Windows.Threading.DispatcherPriority.Loaded);
+        list.FocusItemOrList();
     }
 }

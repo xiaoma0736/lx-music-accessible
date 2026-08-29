@@ -93,7 +93,9 @@ public sealed class DownloadManagerWindowTests
             var first = new DownloadManagerWindow(announcer, settings, downloads, _ => false);
             first.Show();
             first.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
-            Assert.Same(first.DownloadTaskList, Keyboard.FocusedElement);
+            var initialTask = Assert.IsType<ListBoxItem>(
+                first.DownloadTaskList.ItemContainerGenerator.ContainerFromIndex(0));
+            Assert.Same(initialTask, Keyboard.FocusedElement);
             RaisePreviewKey(first, Key.Escape);
             Assert.False(first.IsVisible);
             Assert.Equal(0, downloads.CancelCount);
@@ -127,7 +129,9 @@ public sealed class DownloadManagerWindowTests
                 second.DownloadClearBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                 Assert.Equal("active", Assert.Single(downloads.Tasks).Music.Id);
                 Assert.Equal(0, second.DownloadTaskList.SelectedIndex);
-                Assert.True(second.DownloadTaskList.IsKeyboardFocusWithin);
+                var remainingTask = Assert.IsType<ListBoxItem>(
+                    second.DownloadTaskList.ItemContainerGenerator.ContainerFromIndex(0));
+                Assert.Same(remainingTask, Keyboard.FocusedElement);
                 Assert.Contains(announcer.Messages, message => message.Contains("已清空", StringComparison.Ordinal));
             }
             finally

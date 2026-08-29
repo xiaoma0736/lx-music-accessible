@@ -139,6 +139,12 @@ public sealed class SourceManagerWindowTests
             {
                 window.Show();
                 Pump(window.Dispatcher);
+                Assert.True(window.RefreshSourcesBtn.Focus());
+                window.RefreshSourcesBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Pump(window.Dispatcher);
+                var refreshedFirst = Assert.IsType<ListBoxItem>(
+                    window.SourceList.ItemContainerGenerator.ContainerFromIndex(0));
+                Assert.Same(refreshedFirst, Keyboard.FocusedElement);
                 window.SourceList.SelectedIndex = 1;
                 var selected = Assert.IsType<ListBoxItem>(
                     window.SourceList.ItemContainerGenerator.ContainerFromIndex(1));
