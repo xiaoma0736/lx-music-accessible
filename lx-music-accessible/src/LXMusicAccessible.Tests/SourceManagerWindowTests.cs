@@ -35,7 +35,8 @@ public sealed class SourceManagerWindowTests
         Assert.Contains("Title=\"音源管理\"", sourceXaml, StringComparison.Ordinal);
         Assert.Contains("WindowStartupLocation=\"CenterOwner\"", sourceXaml, StringComparison.Ordinal);
         Assert.Contains("ResizeMode=\"CanResize\"", sourceXaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("Alt+8", guide, StringComparison.Ordinal);
+        Assert.Contains("Alt+5 到 Alt+8 没有内置", guide, StringComparison.Ordinal);
+        Assert.DoesNotContain("| Alt+8 | 音源管理", guide, StringComparison.Ordinal);
         Assert.Contains("工具→音源管理", guide, StringComparison.Ordinal);
     }
 

@@ -2370,6 +2370,8 @@ public partial class MainWindow : Window
         MessageBox.Show(
             "落雪音乐 无障碍版\n\n当前版本：V2.0（全部功能免费）\n\n常用快捷键：\n" +
             "Alt+1~4：搜索、播放列表、分类歌单、排行榜\n" +
+            "Alt+5~8：无内置行为，可由用户自行绑定\n" +
+            "Alt+T：打开工具菜单（下载管理、导入个人歌单、音源管理、设置）\n" +
             "Ctrl+F：搜索\n" +
             "Ctrl+R：刷新当前页面\n" +
             "播放/暂停、停止、上下首、快进快退、播放模式、下载、音量等：工具→设置→快捷键 中自定义\n" +
@@ -2382,7 +2384,7 @@ public partial class MainWindow : Window
             "Shift+回车：在歌曲列表查看歌词\n" +
             "应用键或Shift+F10：打开列表操作菜单\n" +
             "搜索框内 Delete：清空搜索\n" +
-            "删除键：从播放列表移除/删除音源",
+            "删除键：从播放列表移除",
             "关于", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
