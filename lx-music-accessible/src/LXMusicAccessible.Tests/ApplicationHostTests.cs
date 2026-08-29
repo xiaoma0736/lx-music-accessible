@@ -52,6 +52,7 @@ public sealed class ApplicationHostTests
             var owner = new Window { ShowInTaskbar = false };
             owner.Show();
             var sourceManager = windows.CreateSourceManager(owner, _ => false);
+            var downloadManager = windows.CreateDownloadManager(owner, _ => false);
             try
             {
                 Assert.Empty(AutomationProperties.GetName(guide));
@@ -69,6 +70,12 @@ public sealed class ApplicationHostTests
                 Assert.Equal(WindowStartupLocation.CenterOwner, sourceManager.WindowStartupLocation);
                 Assert.Equal(ResizeMode.CanResize, sourceManager.ResizeMode);
                 Assert.False(sourceManager.ShowInTaskbar);
+                Assert.Equal("下载管理", downloadManager.Title);
+                Assert.Equal("下载任务", AutomationProperties.GetName(downloadManager.DownloadTaskList));
+                Assert.Equal(WindowStartupLocation.CenterOwner, downloadManager.WindowStartupLocation);
+                Assert.Equal(ResizeMode.CanResize, downloadManager.ResizeMode);
+                Assert.False(downloadManager.ShowInTaskbar);
+                Assert.Same(owner, downloadManager.Owner);
 
                 guide.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent, guide));
                 Assert.False(string.IsNullOrWhiteSpace(guide.GuideText.Text));
@@ -79,6 +86,7 @@ public sealed class ApplicationHostTests
             }
             finally
             {
+                downloadManager.Close();
                 sourceManager.Close();
                 owner.Close();
                 lyrics.PrepareForAppShutdown();

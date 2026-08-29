@@ -71,6 +71,62 @@ public sealed class DownloadWorkflowTests
     }
 
     [Fact]
+    public async Task Clear_completed_removes_every_terminal_task_and_preserves_active_downloads()
+    {
+        await using var harness = new DownloadHarness();
+        var completedUrl = harness.Source.Register("completed");
+        harness.Http.Register(HttpMethod.Get, completedUrl, () => AudioResponse(64));
+        var completed = await harness.Workflow.DownloadAsync(new(
+            Song("completed"),
+            TargetDirectory: harness.Target));
+
+        harness.Source.Register("failed");
+        var failed = await harness.Workflow.DownloadAsync(new(
+            Song("failed"),
+            TargetDirectory: harness.Target));
+
+        var cancelledUrl = harness.Source.Register("cancelled");
+        var cancelledStream = new BlockingReadStream();
+        harness.Http.Register(HttpMethod.Get, cancelledUrl, () =>
+        {
+            var content = new StreamContent(cancelledStream);
+            content.Headers.ContentLength = 256;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        });
+        var cancelling = harness.Workflow.DownloadAsync(new(
+            Song("cancelled"),
+            TargetDirectory: harness.Target));
+        await cancelledStream.FirstRead.WaitAsync(TimeSpan.FromSeconds(5));
+        harness.Workflow.Cancel(harness.Workflow.Tasks.Single(task => task.Music.Id == "cancelled"));
+        var cancelled = await cancelling;
+
+        var activeUrl = harness.Source.Register("active");
+        var activeStream = new BlockingReadStream();
+        harness.Http.Register(HttpMethod.Get, activeUrl, () =>
+        {
+            var content = new StreamContent(activeStream);
+            content.Headers.ContentLength = 256;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        });
+        var activeDownload = harness.Workflow.DownloadAsync(new(
+            Song("active"),
+            TargetDirectory: harness.Target));
+        await activeStream.FirstRead.WaitAsync(TimeSpan.FromSeconds(5));
+        var active = harness.Workflow.Tasks.Single(task => task.Music.Id == "active");
+
+        Assert.Equal(DownloadTaskStatus.Completed, completed.Status);
+        Assert.Equal(DownloadTaskStatus.Failed, failed.Status);
+        Assert.Equal(DownloadTaskStatus.Cancelled, cancelled.Status);
+        Assert.Equal(DownloadTaskStatus.Downloading, active.Status);
+
+        harness.Workflow.ClearCompleted();
+
+        Assert.Same(active, Assert.Single(harness.Workflow.Tasks));
+        harness.Workflow.Cancel(active);
+        await activeDownload;
+    }
+
+    [Fact]
     public async Task Network_failure_removes_temporary_files_and_can_be_retried()
     {
         await using var harness = new DownloadHarness();

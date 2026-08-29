@@ -35,6 +35,19 @@ public sealed class ApplicationWindowFactory(
         return WithOwner(new SourceManagerWindow(announcer, sources, handleHotkey), owner);
     }
 
+    public DownloadManagerWindow CreateDownloadManager(
+        Window owner,
+        Func<KeyEventArgs, bool> handleHotkey)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(handleHotkey);
+        return WithOwner(new DownloadManagerWindow(
+            announcer,
+            settings,
+            downloads,
+            handleHotkey), owner);
+    }
+
     public SettingsWindow CreateSettings(
         Window owner,
         Func<KeyEventArgs, bool> handleHotkey,

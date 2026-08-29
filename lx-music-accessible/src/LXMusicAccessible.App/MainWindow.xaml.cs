@@ -136,8 +136,6 @@ public partial class MainWindow : Window
         _settingsWorkflow.HotkeysRegistrationFailed += HotkeyManager_HotkeysRegistrationFailed;
         _settingsWorkflow.SettingsChanged += SettingsWorkflow_SettingsChanged;
         _musicSourceService.ScriptUpdateAlert += MusicSourceService_ScriptUpdateAlert;
-        DownloadTaskList.ItemsSource = _downloads.Tasks;
-
         SetupEventHandlers();
         InstallNumpadHook();
 
@@ -243,7 +241,6 @@ public partial class MainWindow : Window
             case 2: FocusControl(_playlistImportPanel.FirstFocusable); break;
             case 3: FocusListContent(CategoryList); break;
             case 4: FocusListContent(RankingList); break;
-            case 5: FocusListContent(DownloadTaskList); break;
         }
     }
 
@@ -260,7 +257,8 @@ public partial class MainWindow : Window
     private void MenuNavigateToCategory(object sender, RoutedEventArgs e) => NavigateToTab(3);
     private void MenuNavigateToRanking(object sender, RoutedEventArgs e) => NavigateToTab(4);
     private void MenuNavigateToLyrics(object sender, RoutedEventArgs e) => OpenLyricsWindow();
-    private void MenuNavigateToDownload(object sender, RoutedEventArgs e) => NavigateToTab(5);
+    private void MenuOpenDownloadManager(object sender, RoutedEventArgs e) =>
+        _toolWindows.ShowDownloadManager(this, TryHandleToolWindowHotkey);
     private void MenuOpenSourceManager(object sender, RoutedEventArgs e) =>
         _toolWindows.ShowSourceManager(
             this,
@@ -632,9 +630,6 @@ public partial class MainWindow : Window
                 break;
             case 4:
                 _ = LoadRankingsAsync(GetComboTag(RankingSourceCombo, "netease"));
-                break;
-            case 5:
-                Announce(DownloadTaskList.Items.Count > 0 ? $"当前有 {DownloadTaskList.Items.Count} 个下载任务" : "暂无下载任务");
                 break;
             default:
                 Announce("当前页面无需刷新");
@@ -2213,39 +2208,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>供外部窗口（如导入个人歌单窗口）键盘打开指定歌曲列表的右键菜单</summary>
-    // ==================== 下载管理 ====================
-
-    private void DownloadCancelBtn_Click(object sender, RoutedEventArgs e)
-    {
-        if (DownloadTaskList.SelectedItem is DownloadTask t)
-        {
-            _downloads.Cancel(t);
-        }
-        else Announce("请先选择要取消的下载任务");
-    }
-
-    private async void DownloadRetryBtn_Click(object sender, RoutedEventArgs e)
-    {
-        if (DownloadTaskList.SelectedItem is DownloadTask t &&
-            t.Status is DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled)
-        {
-            await _downloads.RetryAsync(t, GetEffectiveDownloadDir());
-        }
-        else Announce("请选择失败的下载任务进行重试");
-    }
-
-    private void DownloadOpenFolderBtn_Click(object sender, RoutedEventArgs e)
-    {
-        var result = _downloads.OpenDownloadDirectory(_settingsWorkflow.Current.Settings.DownloadPath);
-        Announce(result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
-    }
-
-    private void DownloadClearDoneBtn_Click(object sender, RoutedEventArgs e)
-    {
-        _downloads.ClearCompleted();
-        Announce("已清空已完成的任务");
-    }
-
     // ==================== 播放控制 ====================
 
     private void PlayPauseButton_Click(object sender, RoutedEventArgs e)
@@ -2811,7 +2773,6 @@ public partial class MainWindow : Window
             2 => _playlistImportPanel.LastFocusable,
             3 => CategorySongsList,
             4 => RankingSongsList,
-            5 => DownloadTaskList,
             _ => null
         };
     }
@@ -2826,7 +2787,6 @@ public partial class MainWindow : Window
             2 => _playlistImportPanel.FirstFocusable,
             3 => CategorySourceCombo,
             4 => RankingSourceCombo,
-            5 => DownloadCancelBtn,
             _ => null
         };
     }

@@ -31,7 +31,7 @@ public sealed class ToolWindowCoordinatorTests
             Assert.Equal(
                 ToolWindowOpenResult.Created,
                 coordinator.ShowSettings(owner, _ => false, _ => { }, () => { }, target));
-            Assert.Equal(1, created[0].Window.ShowModalCount);
+            Assert.Equal(1, created[0].Window.ShowCount);
             Assert.Same(target, created[0].Target);
 
             Assert.Equal(
@@ -64,7 +64,7 @@ public sealed class ToolWindowCoordinatorTests
             Assert.Equal(
                 ToolWindowOpenResult.Created,
                 coordinator.ShowSourceManager(owner, _ => false, () => { }));
-            Assert.Equal(1, created[0].ShowModalCount);
+            Assert.Equal(1, created[0].ShowCount);
             Assert.True(coordinator.IsOpen(ToolWindowKind.SourceManager));
 
             Assert.Equal(
@@ -77,6 +77,84 @@ public sealed class ToolWindowCoordinatorTests
             Assert.False(coordinator.IsOpen(ToolWindowKind.SourceManager));
             coordinator.ShowSourceManager(owner, _ => false, () => { });
             Assert.Equal(2, created.Count);
+        });
+    }
+
+    [Fact]
+    public async Task Download_manager_is_non_modal_single_instance_and_recreated_after_close()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var created = new List<RecordingToolWindow>();
+            var coordinator = new ToolWindowCoordinator(
+                null,
+                (_, _) => new RecordingToolWindow(ToolWindowKind.SourceManager),
+                (_, _) =>
+                {
+                    var window = new RecordingToolWindow(ToolWindowKind.DownloadManager);
+                    created.Add(window);
+                    return window;
+                });
+            var owner = new Window();
+
+            Assert.Equal(
+                ToolWindowOpenResult.Created,
+                coordinator.ShowDownloadManager(owner, _ => false));
+            Assert.Equal(1, created[0].ShowCount);
+            Assert.True(coordinator.IsOpen(ToolWindowKind.DownloadManager));
+
+            Assert.Equal(
+                ToolWindowOpenResult.Activated,
+                coordinator.ShowDownloadManager(owner, _ => false));
+            Assert.Single(created);
+            Assert.Equal(1, created[0].ActivateCount);
+
+            created[0].Close();
+            Assert.False(coordinator.IsOpen(ToolWindowKind.DownloadManager));
+            coordinator.ShowDownloadManager(owner, _ => false);
+            Assert.Equal(2, created.Count);
+        });
+    }
+
+    [Fact]
+    public async Task Download_manager_participates_in_window_group_focus_restore()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = new RecordingToolWindow(ToolWindowKind.DownloadManager)
+            {
+                Visible = true,
+                Active = true,
+                Focus = new object()
+            };
+            var coordinator = new ToolWindowCoordinator(
+                null,
+                (_, _) => new RecordingToolWindow(ToolWindowKind.SourceManager),
+                (_, _) => window);
+            coordinator.ShowDownloadManager(new Window(), _ => false);
+
+            var snapshot = coordinator.HideVisibleWindows();
+            Assert.False(window.Visible);
+            Assert.Same(window, snapshot.ActiveWindow);
+
+            Assert.True(coordinator.RestoreVisibleWindows(snapshot));
+            Assert.True(window.Visible);
+            Assert.Same(window.Focus, window.RestoredFocus);
+        });
+    }
+
+    [Fact]
+    public async Task Non_modal_wpf_handle_shows_without_waiting_for_close()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = new Window();
+            var handle = new WpfToolWindowHandle(ToolWindowKind.DownloadManager, window, modal: false);
+
+            handle.Show();
+
+            Assert.True(window.IsVisible);
+            window.Close();
         });
     }
 
@@ -198,15 +276,15 @@ public sealed class ToolWindowCoordinatorTests
         public bool CloseWhenShown { get; set; }
         public object? Focus { get; set; }
         public object? RestoredFocus { get; private set; }
-        public int ShowModalCount { get; private set; }
+        public int ShowCount { get; private set; }
         public int ActivateCount { get; private set; }
         public int RestoreCount { get; private set; }
         public int RestoreFocusCount { get; private set; }
         public event EventHandler? Closed;
 
-        public void ShowModal()
+        public void Show()
         {
-            ShowModalCount++;
+            ShowCount++;
             Visible = true;
             if (CloseWhenShown) Close();
         }

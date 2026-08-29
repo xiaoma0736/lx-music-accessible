@@ -25,7 +25,7 @@ internal interface IToolWindowHandle
     bool IsActive { get; }
     bool IsClosed { get; }
     event EventHandler? Closed;
-    void ShowModal();
+    void Show();
     void Hide();
     void Restore();
     bool Activate();
@@ -47,6 +47,7 @@ public sealed class ToolWindowCoordinator
 {
     private readonly Func<Window, Func<KeyEventArgs, bool>, Action<bool>, Hotkey?, IToolWindowHandle>? _createSettings;
     private readonly Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle> _createSourceManager;
+    private readonly Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle>? _createDownloadManager;
     private readonly Dictionary<ToolWindowKind, IToolWindowHandle> _windows = [];
 
     public ToolWindowCoordinator(ApplicationWindowFactory windows)
@@ -58,23 +59,29 @@ public sealed class ToolWindowCoordinator
             (owner, handleHotkey) => new WpfToolWindowHandle(
                 ToolWindowKind.SourceManager,
                 windows.CreateSourceManager(owner, handleHotkey),
-                modal: true))
+                modal: true),
+            (owner, handleHotkey) => new WpfToolWindowHandle(
+                ToolWindowKind.DownloadManager,
+                windows.CreateDownloadManager(owner, handleHotkey),
+                modal: false))
     {
     }
 
     internal ToolWindowCoordinator(
         Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle> createSourceManager)
-        : this(null, createSourceManager)
+        : this(null, createSourceManager, null)
     {
     }
 
     internal ToolWindowCoordinator(
         Func<Window, Func<KeyEventArgs, bool>, Action<bool>, Hotkey?, IToolWindowHandle>? createSettings,
-        Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle> createSourceManager)
+        Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle> createSourceManager,
+        Func<Window, Func<KeyEventArgs, bool>, IToolWindowHandle>? createDownloadManager = null)
     {
         ArgumentNullException.ThrowIfNull(createSourceManager);
         _createSettings = createSettings;
         _createSourceManager = createSourceManager;
+        _createDownloadManager = createDownloadManager;
     }
 
     internal ToolWindowOpenResult ShowSettings(
@@ -108,6 +115,19 @@ public sealed class ToolWindowCoordinator
             () => _createSourceManager(owner, handleHotkey));
     }
 
+    internal ToolWindowOpenResult ShowDownloadManager(
+        Window owner,
+        Func<KeyEventArgs, bool> handleHotkey)
+    {
+        if (_createDownloadManager is null)
+            throw new InvalidOperationException("The download-manager factory is unavailable.");
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(handleHotkey);
+        return Show(
+            ToolWindowKind.DownloadManager,
+            () => _createDownloadManager(owner, handleHotkey));
+    }
+
     private ToolWindowOpenResult ShowModal(
         ToolWindowKind kind,
         Window owner,
@@ -119,6 +139,19 @@ public sealed class ToolWindowCoordinator
         ArgumentNullException.ThrowIfNull(handleHotkey);
         ArgumentNullException.ThrowIfNull(restoreOwnerFocus);
 
+        try
+        {
+            return Show(kind, create);
+        }
+        finally
+        {
+            if (!_windows.ContainsKey(kind) && owner.IsVisible)
+                restoreOwnerFocus();
+        }
+    }
+
+    private ToolWindowOpenResult Show(ToolWindowKind kind, Func<IToolWindowHandle> create)
+    {
         if (_windows.TryGetValue(kind, out var existing))
         {
             existing.Activate();
@@ -130,15 +163,7 @@ public sealed class ToolWindowCoordinator
             throw new InvalidOperationException("The tool-window factory returned the wrong kind.");
         _windows.Add(window.Kind, window);
         window.Closed += Window_Closed;
-        try
-        {
-            window.ShowModal();
-        }
-        finally
-        {
-            if (!_windows.ContainsKey(window.Kind) && owner.IsVisible)
-                restoreOwnerFocus();
-        }
+        window.Show();
         return ToolWindowOpenResult.Created;
     }
 
@@ -204,7 +229,11 @@ internal sealed class WpfToolWindowHandle : IToolWindowHandle
     public bool IsClosed => _closed;
     public event EventHandler? Closed;
 
-    public void ShowModal() => _window.ShowDialog();
+    public void Show()
+    {
+        if (_modal) _window.ShowDialog();
+        else _window.Show();
+    }
     public void Hide()
     {
         if (_window.IsVisible) _window.Hide();

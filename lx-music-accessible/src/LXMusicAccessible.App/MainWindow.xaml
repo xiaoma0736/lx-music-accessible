@@ -53,9 +53,9 @@
                 <MenuItem Header="分类歌单(_C)" Click="MenuNavigateToCategory"/>
                 <MenuItem Header="排行榜(_R)" Click="MenuNavigateToRanking"/>
                 <MenuItem Header="歌词(_G)" Click="MenuNavigateToLyrics"/>
-                <MenuItem Header="下载管理(_D)" Click="MenuNavigateToDownload"/>
             </MenuItem>
             <MenuItem Header="工具(_T)">
+                <MenuItem Header="下载管理(_D)" Click="MenuOpenDownloadManager"/>
                 <MenuItem Header="音源管理(_M)" Click="MenuOpenSourceManager"/>
                 <MenuItem x:Name="SettingsMenuItem" Header="设置(_S)" Click="MenuOpenSettings"/>
             </MenuItem>
@@ -399,45 +399,6 @@
                                     </Grid>
                                 </GroupBox>
                             </Grid>
-                        </StackPanel>
-                    </local:SafeScrollViewer>
-                </TabItem>
-
-                <!-- ===== 下载管理（后续工单迁入工具窗体） ===== -->
-                <TabItem Header="下载管理"
-                         KeyboardNavigation.TabNavigation="Cycle"
-                         KeyboardNavigation.DirectionalNavigation="None">
-                    <local:SafeScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False" IsTabStop="False">
-                        <StackPanel Margin="15">
-                            <TextBlock Text="下载管理" FontSize="22" FontWeight="Bold" Margin="0,0,0,15"/>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                                <Button x:Name="DownloadCancelBtn" Content="取消选中" Width="90" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="70" Click="DownloadCancelBtn_Click" IsTabStop="True"/>
-                                <Button x:Name="DownloadRetryBtn" Content="重试" Width="70" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="72" Click="DownloadRetryBtn_Click" IsTabStop="True"/>
-                                <Button x:Name="DownloadOpenFolderBtn" Content="打开下载文件夹" Width="120" Height="28" Margin="0,0,5,0" KeyboardNavigation.TabIndex="73" Click="DownloadOpenFolderBtn_Click" IsTabStop="True"/>
-                                <Button x:Name="DownloadClearDoneBtn" Content="清空已完成" Width="100" Height="28" KeyboardNavigation.TabIndex="74" Click="DownloadClearDoneBtn_Click" IsTabStop="True"/>
-                            </StackPanel>
-
-                            <GroupBox Header="下载任务">
-                                <local:SingleReadListBox x:Name="DownloadTaskList" MinHeight="420" KeyboardNavigation.TabIndex="75"
-                                         AutomationProperties.Name="下载任务"
-                                         IsTabStop="False">
-                                    <ListBox.ItemContainerStyle>
-                                        <Style TargetType="ListBoxItem">
-                                            <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}"/>
-                                        </Style>
-                                    </ListBox.ItemContainerStyle>
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <StackPanel Orientation="Horizontal">
-                                                <TextBlock Text="{Binding DisplayName}" Width="380" TextTrimming="CharacterEllipsis"/>
-                                                <TextBlock Text="{Binding ProgressText}" Width="70"/>
-                                                <TextBlock Text="{Binding StatusText}" Width="70"/>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </local:SingleReadListBox>
-                            </GroupBox>
                         </StackPanel>
                     </local:SafeScrollViewer>
                 </TabItem>
