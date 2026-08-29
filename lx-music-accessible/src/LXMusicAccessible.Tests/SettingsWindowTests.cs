@@ -55,6 +55,15 @@ public sealed class SettingsWindowTests
                     window.CategoryList.ItemContainerGenerator.ContainerFromIndex(0));
                 var categoryPeer = UIElementAutomationPeer.CreatePeerForElement(category);
                 Assert.NotNull(categoryPeer);
+                Assert.Same(category, Keyboard.FocusedElement);
+
+                RaiseKey(category, Key.Down, Keyboard.KeyDownEvent);
+                Assert.Equal(1, window.CategoryList.SelectedIndex);
+                var playback = Assert.IsType<ListBoxItem>(
+                    window.CategoryList.ItemContainerGenerator.ContainerFromIndex(1));
+                RaiseKey(playback, Key.Up, Keyboard.KeyDownEvent);
+                Assert.Equal(0, window.CategoryList.SelectedIndex);
+                Assert.Equal(initialVersion, workflow.Current.Version);
                 Assert.Equal("常规", categoryPeer.GetName());
 
             }
@@ -63,6 +72,45 @@ public sealed class SettingsWindowTests
                 window.Close();
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
                 owner.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Settings_category_keyboard_navigation_survives_tab_away_and_back()
+    {
+        var dependencies = await CreateDependenciesAsync();
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(dependencies);
+            try
+            {
+                var initialVersion = dependencies.Settings.Current.Version;
+                window.Show();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+                window.CategoryList.SelectedIndex = 1;
+                var playback = Assert.IsType<ListBoxItem>(
+                    window.CategoryList.ItemContainerGenerator.ContainerFromIndex(1));
+                Assert.True(playback.Focus());
+                Assert.True(window.MoveAcrossCategoryBoundary(reverse: false));
+                Assert.True(window.MoveAcrossCategoryBoundary(reverse: true));
+                Assert.Same(playback, Keyboard.FocusedElement);
+
+                RaiseKey(playback, Key.Down, Keyboard.KeyDownEvent);
+
+                Assert.Equal(2, window.CategoryList.SelectedIndex);
+                var lyrics = Assert.IsType<ListBoxItem>(
+                    window.CategoryList.ItemContainerGenerator.ContainerFromIndex(2));
+                RaiseKey(lyrics, Key.Up, Keyboard.KeyDownEvent);
+                Assert.Equal(1, window.CategoryList.SelectedIndex);
+                Assert.Equal(initialVersion, dependencies.Settings.Current.Version);
+                Assert.Equal(0, dependencies.Store.SaveCount);
+            }
+            finally
+            {
+                window.Close();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
             }
         });
     }

@@ -71,7 +71,7 @@ public partial class SettingsWindow : Window
         {
             if (_reconfigure is null)
             {
-                CategoryList.Focus();
+                FocusSelectedCategory();
                 return;
             }
 
@@ -80,7 +80,7 @@ public partial class SettingsWindow : Window
                 && candidate.IsGlobal == _reconfigure.IsGlobal);
             if (item is null)
             {
-                CategoryList.Focus();
+                FocusSelectedCategory();
                 return;
             }
             HotkeyListBox.SelectedItem = item;
@@ -584,9 +584,14 @@ public partial class SettingsWindow : Window
         if (!reverse && CategoryList.IsKeyboardFocusWithin)
             return firstContent?.Focus() == true;
         if (reverse && firstContent?.IsKeyboardFocusWithin == true)
-            return CategoryList.Focus();
+            return FocusSelectedCategory();
         return false;
     }
+
+    private bool FocusSelectedCategory() =>
+        CategoryList.ItemContainerGenerator.ContainerFromIndex(CategoryList.SelectedIndex) is ListBoxItem item
+            ? item.Focus()
+            : CategoryList.Focus();
 
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
