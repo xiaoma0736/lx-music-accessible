@@ -20,7 +20,8 @@ public class LxScriptEngine
     private static readonly TimeSpan ExecutionTimeout = TimeSpan.FromSeconds(10);
     // Supported obfuscated sources expand lookup tables during initialization; keep this bounded compatibility budget.
     private const int MaxStatements = 1_000_000;
-    private const long MaxHeapBytes = 96L * 1024 * 1024;
+    private const long MaxHeapBytes = MaxHeapMiB * 1024 * 1024;
+    private const int MaxHeapMiB = 96;
     private const int MaxNativeBufferBytes = ScriptNetworkClient.MaxResponseBytes;
     private const int MaxRandomBytes = 64 * 1024;
     private const int MaxUrlCharacters = 8 * 1024;
@@ -182,11 +183,13 @@ public class LxScriptEngine
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            if (LastFailure is null)
+            if (execution.IsCancellationRequested)
             {
-                SetFailure(execution.IsCancellationRequested
-                    ? "script_timeout"
-                    : ClassifyExecutionFailure(ex));
+                SetFailure("script_timeout");
+            }
+            else if (LastFailure is null)
+            {
+                SetFailure(ClassifyExecutionFailure(ex));
             }
             _logger.LogDebug("脚本 [{Name}] 执行失败 ({Action}): {Code}",
                 script.Name, action, LastError);
@@ -221,6 +224,7 @@ public class LxScriptEngine
     {
         var rawScript = script.RawScript;
         using var engine = CreateV8Engine(cancellationToken);
+        using var watchdog = cancellationToken.Register(engine.Interrupt);
         var lxSource = action == null ? string.Empty : ToLxSource(source);
         ConfigureV8Inputs(engine, script, action, music, lxSource, quality);
         engine.Execute(ShimJs);
@@ -241,9 +245,17 @@ public class LxScriptEngine
         try
         {
             var engine = new V8ScriptEngine(
+                new V8RuntimeConstraints
+                {
+                    MaxOldSpaceSize = MaxHeapMiB,
+                    MaxNewSpaceSize = 16,
+                },
                 V8ScriptEngineFlags.EnableDateTimeConversion | V8ScriptEngineFlags.UseCaseInsensitiveMemberBinding);
-        engine.Script.__lxNativeRequest = new Func<string, string, string, string, string, string>(
-            (url, method, headers, body, options) => NativeRequest(url, method, headers, body, options, cancellationToken));
+            engine.EnableRuntimeInterruptPropagation = true;
+            engine.MaxRuntimeHeapSize = (nuint)(MaxHeapBytes - (16L * 1024 * 1024));
+            engine.RuntimeHeapSizeViolationPolicy = V8RuntimeViolationPolicy.Interrupt;
+            engine.Script.__lxNativeRequest = new Func<string, string, string, string, string, string>(
+                (url, method, headers, body, options) => NativeRequest(url, method, headers, body, options, cancellationToken));
             engine.Script.__lxNativeCrypto = new Func<string, string, string>(NativeCrypto);
             engine.Script.__lxNativeZlib = new Func<string, string, string>(NativeZlib);
             engine.Script.__lxNativeUpdateAlert = new Func<string, string>(NativeUpdateAlert);
@@ -652,11 +664,15 @@ public class LxScriptEngine
 
     private static string ClassifyExecutionFailure(Exception exception)
     {
-        if (exception is OperationCanceledException or TimeoutException) return "script_timeout";
+        if (exception is OperationCanceledException or TimeoutException
+            or Microsoft.ClearScript.ScriptInterruptedException) return "script_timeout";
         for (var current = exception; current is not null; current = current.InnerException)
         {
             var name = current.GetType().Name;
-            if (name.Contains("MemoryLimit", StringComparison.OrdinalIgnoreCase))
+            if (name.Contains("MemoryLimit", StringComparison.OrdinalIgnoreCase)
+                || current.Message.Contains("heap out of memory", StringComparison.OrdinalIgnoreCase)
+                || current.Message.Contains("exceeded its memory limit", StringComparison.OrdinalIgnoreCase)
+                || current.Message.Contains("Runtime heap size violation", StringComparison.OrdinalIgnoreCase))
                 return "script_memory_limit_exceeded";
             if (name.Contains("Statements", StringComparison.OrdinalIgnoreCase))
                 return "script_statement_limit_exceeded";
