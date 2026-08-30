@@ -2,6 +2,7 @@
 using System.Text;
 using System.Text.Json;
 using Jint;
+using Microsoft.ClearScript.V8;
 using Microsoft.Extensions.Logging;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Models;
@@ -9,7 +10,7 @@ using LXMusicAccessible.Models;
 namespace LXMusicAccessible.Services;
 
 /// <summary>
-/// LX Music 自定义源脚本执行引擎（Jint）——忠实运行脚本本体（含混淆脚本）。
+/// LX Music 自定义源脚本执行引擎（ClearScript V8 优先，Jint 兜底）——忠实运行脚本本体。
 /// 支持原版 lx-music-desktop 的第三方音源接口类型：musicUrl / lyric / pic，
 /// 以及完整 lx 运行时：request（form/formData/timeout/取消）、utils.crypto
 /// （真实 AES/RSA/randomBytes）、utils.buffer、utils.zlib、updateAlert 上抛。
@@ -52,74 +53,191 @@ public class LxScriptEngine
     /// <summary>加载校验：脚本可执行且已注册音乐请求处理器</summary>
     public async Task<bool> TestLoadAsync(LxScriptInfo script)
     {
-        if (script == null || string.IsNullOrEmpty(script.RawScript)) return false;
+        if (script == null || string.IsNullOrEmpty(script.RawScript))
+        {
+            LastError = "脚本内容为空";
+            return false;
+        }
+
+        LastError = null;
         try
         {
             return await Task.Run(() =>
             {
-                var engine = CreateEngine();
-                engine.Execute(ShimJs);
-                engine.Execute(script.RawScript);
-                return engine.Evaluate("globalThis.lx.__probe()").AsBoolean();
+                try
+                {
+                    ExecuteV8Core(script, action: null, music: null!, source: "", quality: null);
+                    return true;
+                }
+                catch (ScriptEngineUnavailableException ex)
+                {
+                    _logger.LogDebug(ex, "V8 unavailable; loading with Jint");
+                    return ExecuteJintLoad(script);
+                }
             });
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "脚本 [{Name}] 加载校验失败", script?.Name ?? "?");
+            LastError = DescribeScriptError(ex);
+            _logger.LogDebug(ex, "Script load failed");
             return false;
         }
     }
 
-    // ================================================================
-    //  执行
-    // ================================================================
-
-    /// <summary>执行一次动作分派：解析结果 JSON 序列化到 __r，随后读取并解析</summary>
+    /// <summary>执行一次动作分派：V8 优先，仅 V8 运行时不可用时回退 Jint。</summary>
     private async Task<T?> ExecuteActionAsync<T>(
         LxScriptInfo script, string action, MusicInfo music, string source, string? quality,
         Func<JsonElement, T?> parse)
     {
-        if (script == null || string.IsNullOrEmpty(script.RawScript)) return default;
+        if (script == null || string.IsNullOrEmpty(script.RawScript))
+        {
+            LastError = "脚本内容为空";
+            return default;
+        }
+
+        LastError = null;
         try
         {
             return await Task.Run(() =>
             {
-                var lxSource = ToLxSource(source);
-                var engine = CreateEngine();
-                engine.SetValue("__scriptInfo", BuildScriptInfoJson(script));
-                engine.SetValue("__mi", BuildMusicInfoJson(music, lxSource));
-                engine.SetValue("__src", lxSource);
-                engine.SetValue("__act", action);
-                engine.SetValue("__q", quality ?? "");
-                engine.Execute(ShimJs);
-                engine.Execute(script.RawScript);
-                engine.Execute(InvokeSnippet);
-
-                var json = engine.Evaluate("JSON.stringify(globalThis.__r)").AsString();
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-                if (root.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True &&
-                    root.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.String)
+                try
                 {
-                    var valueJson = value.GetString();
-                    if (string.IsNullOrWhiteSpace(valueJson) || valueJson == "null") return default;
-                    using var vdoc = JsonDocument.Parse(valueJson);
-                    return parse(vdoc.RootElement);
+                    return ParseActionResult(action, ExecuteV8Core(script, action, music, source, quality), parse);
                 }
-                if (root.TryGetProperty("err", out var err) && err.ValueKind == JsonValueKind.String)
+                catch (ScriptEngineUnavailableException ex)
                 {
-                    LastError = err.GetString();
-                    _logger.LogDebug("脚本执行返回错误 [{Action}]: {Err}", action, err.GetString());
+                    _logger.LogDebug(ex, "V8 unavailable; action {Action} with Jint", action);
+                    return ParseActionResult(action, ExecuteJintAction(script, action, music, source, quality), parse);
                 }
-                return default;
             });
         }
         catch (Exception ex)
         {
-            LastError = ex.Message;
-            _logger.LogDebug(ex, "脚本 [{Name}] Jint 执行失败 ({Action})", script?.Name ?? "?", action);
+            LastError = DescribeScriptError(ex);
+            _logger.LogDebug(ex, "Script action failed");
             return default;
         }
+    }
+
+    private T? ParseActionResult<T>(string action, string? resultJson, Func<JsonElement, T?> parse)
+    {
+        if (string.IsNullOrWhiteSpace(resultJson)) return default;
+        using var doc = JsonDocument.Parse(resultJson);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True &&
+            root.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.String)
+        {
+            var valueJson = value.GetString();
+            if (string.IsNullOrWhiteSpace(valueJson) || valueJson == "null") return default;
+            using var valueDoc = JsonDocument.Parse(valueJson);
+            return parse(valueDoc.RootElement);
+        }
+
+        if (root.TryGetProperty("err", out var err) && err.ValueKind == JsonValueKind.String)
+        {
+            LastError = err.GetString();
+            throw new LxScriptActionException($"{action}: {err.GetString()}");
+        }
+        return default;
+    }
+
+    /// <summary>每次动作使用独立 V8 引擎，避免脚本间全局状态污染。</summary>
+    private string? ExecuteV8Core(LxScriptInfo script, string? action, MusicInfo music, string source, string? quality)
+    {
+        var rawScript = script.RawScript;
+        using var engine = CreateV8Engine();
+        var lxSource = action == null ? string.Empty : ToLxSource(source);
+        ConfigureV8Inputs(engine, script, action, music, lxSource, quality);
+        engine.Execute(ShimJs);
+        engine.Execute(rawScript);
+        if (action == null)
+        {
+            if (!(bool)engine.Evaluate("globalThis.lx.__probe()"))
+                throw new LxScriptActionException("脚本未注册 request 处理器");
+            return null;
+        }
+
+        engine.Execute(InvokeSnippet);
+        return (string)engine.Evaluate("JSON.stringify(globalThis.__r)");
+    }
+
+    private V8ScriptEngine CreateV8Engine()
+    {
+        try
+        {
+            var engine = new V8ScriptEngine(
+                V8ScriptEngineFlags.EnableDateTimeConversion | V8ScriptEngineFlags.UseCaseInsensitiveMemberBinding);
+            engine.Script.__lxNativeRequest = new Func<string, string, string, string, string, string>(NativeRequest);
+            engine.Script.__lxNativeCrypto = new Func<string, string, string>(NativeCrypto);
+            engine.Script.__lxNativeZlib = new Func<string, string, string>(NativeZlib);
+            engine.Script.__lxNativeUpdateAlert = new Func<string, string>(NativeUpdateAlert);
+            return engine;
+        }
+        catch (Exception ex)
+        {
+            throw new ScriptEngineUnavailableException("ClearScript V8 runtime is unavailable.", ex);
+        }
+    }
+
+    private static void ConfigureV8Inputs(
+        V8ScriptEngine engine, LxScriptInfo script, string? action, MusicInfo music, string lxSource, string? quality)
+    {
+        engine.Script.__scriptInfo = BuildScriptInfoJson(script);
+        engine.Script.__mi = action == null ? "{}" : BuildMusicInfoJson(music, lxSource);
+        engine.Script.__src = lxSource;
+        engine.Script.__act = action ?? "";
+        engine.Script.__q = quality ?? "";
+    }
+
+    private bool ExecuteJintLoad(LxScriptInfo script)
+    {
+        var rawScript = script.RawScript;
+        if (string.IsNullOrEmpty(rawScript)) throw new LxScriptActionException("脚本内容为空");
+        using var engine = CreateEngine();
+        engine.Execute(ShimJs);
+        engine.Execute(rawScript);
+        if (!engine.Evaluate("globalThis.lx.__probe()").AsBoolean())
+            throw new LxScriptActionException("脚本未注册 request 处理器");
+        return true;
+    }
+
+    private string ExecuteJintAction(LxScriptInfo script, string action, MusicInfo music, string source, string? quality)
+    {
+        var lxSource = ToLxSource(source);
+        using var engine = CreateEngine();
+        engine.SetValue("__scriptInfo", BuildScriptInfoJson(script));
+        engine.SetValue("__mi", BuildMusicInfoJson(music, lxSource));
+        engine.SetValue("__src", lxSource);
+        engine.SetValue("__act", action);
+        engine.SetValue("__q", quality ?? "");
+        var rawScript = script.RawScript;
+        if (string.IsNullOrEmpty(rawScript)) throw new LxScriptActionException("脚本内容为空");
+        engine.Execute(ShimJs);
+        engine.Execute(rawScript);
+        engine.Execute(InvokeSnippet);
+        return engine.Evaluate("JSON.stringify(globalThis.__r)").AsString();
+    }
+
+    private static string DescribeScriptError(Exception ex)
+    {
+        if (ex is LxScriptActionException actionEx) return actionEx.Message;
+        if (ex is Microsoft.ClearScript.ScriptEngineException scriptEx)
+        {
+            var msg = scriptEx.Message;
+            var pos = msg.IndexOf(": ", StringComparison.Ordinal);
+            return pos >= 0 ? msg[(pos + 2)..] : msg;
+        }
+        return ex.Message;
+    }
+
+    private sealed class ScriptEngineUnavailableException : Exception
+    {
+        public ScriptEngineUnavailableException(string message, Exception inner) : base(message, inner) { }
+    }
+
+    private sealed class LxScriptActionException : Exception
+    {
+        public LxScriptActionException(string message) : base(message) { }
     }
 
     private static LxLyricRaw? ParseLyricResult(JsonElement v)
@@ -195,7 +313,7 @@ public class LxScriptEngine
         var engine = new Engine(o =>
         {
             o.TimeoutInterval(TimeSpan.FromSeconds(25));
-            o.MaxStatements(2_000_000);
+            o.MaxStatements(20_000_000);
         });
         engine.SetValue("__lxNativeRequest", new Func<string, string, string, string, string, string>(NativeRequest));
         engine.SetValue("__lxNativeCrypto", new Func<string, string, string>(NativeCrypto));

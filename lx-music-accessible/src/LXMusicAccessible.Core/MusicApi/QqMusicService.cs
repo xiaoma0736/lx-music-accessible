@@ -152,21 +152,55 @@ public class QqMusicService : IMusicApi
 
     // ========== 专辑搜索 / 专辑详情 ==========
 
-    /// <summary>QQ 专辑搜索：musicu.fcg DoSearchForQQMusicDesktop search_type=3 → data.body.album.list</summary>
+    /// <summary>QQ 专辑搜索：musicu.fcg DoSearchForQQMusicMobile search_type=2，comm 需带 QIMEI 设备标识 → body.item_album[]</summary>
     private async Task<PagedResult<MusicInfo>> SearchAlbumsAsync(string keyword, int page, int pageSize)
     {
         try
         {
             var url = $"{UUrl}/cgi-bin/musicu.fcg";
-            var payload = new
+            var guid = Guid.NewGuid().ToString("N");
+            var (q16, q36) = GenerateQimei();
+            var payload = new Dictionary<string, object?>
             {
-                req_0 = new
+                ["comm"] = new Dictionary<string, object?>
                 {
-                    module = "music.search.SearchCgiService",
-                    method = "DoSearchForQQMusicDesktop",
-                    param = new { query = keyword, num_per_page = pageSize, page_num = page, search_type = 3 }
+                    ["ct"] = 11,
+                    ["cv"] = 14090008,
+                    ["v"] = 14090008,
+                    ["chid"] = "10003505",
+                    ["tmeAppID"] = "qqmusic",
+                    ["phonetype"] = "EBG-AN10",
+                    ["deviceScore"] = "553.47",
+                    ["devicelevel"] = "32",
+                    ["newdevicelevel"] = "32",
+                    ["rom"] = "HuaWei/EMOTION/EmotionUI_14.2.0",
+                    ["os_ver"] = "12",
+                    ["OpenUDID"] = guid,
+                    ["OpenUDID2"] = guid,
+                    ["udid"] = guid,
+                    ["uid"] = "",
+                    ["sid"] = "",
+                    ["aid"] = guid.Substring(0, 16),
+                    ["QIMEI"] = q16,
+                    ["QIMEI36"] = q36
                 },
-                comm = new { uin = 0, format = "json", ct = 24, cv = 0 }
+                ["req_0"] = new Dictionary<string, object?>
+                {
+                    ["module"] = "music.search.SearchCgiService",
+                    ["method"] = "DoSearchForQQMusicMobile",
+                    ["param"] = new Dictionary<string, object?>
+                    {
+                        ["searchid"] = GetSearchId(),
+                        ["query"] = keyword,
+                        ["search_type"] = 2,
+                        ["num_per_page"] = pageSize,
+                        ["page_num"] = page,
+                        ["highlight"] = 1,
+                        ["grp"] = 1,
+                        ["selectors"] = new Dictionary<string, object?>(),
+                        ["vec_selectors"] = Array.Empty<object?>()
+                    }
+                }
             };
 
             var response = await _httpClient.PostAsync<JsonElement>(url, payload);
@@ -174,30 +208,37 @@ public class QqMusicService : IMusicApi
             int total = 0;
 
             if (response.TryGetProperty("req_0", out var req0) &&
-                req0.TryGetProperty("data", out var data) &&
-                data.TryGetProperty("body", out var body) &&
-                body.TryGetProperty("album", out var album) &&
-                album.TryGetProperty("list", out var albumList))
+                req0.TryGetProperty("data", out var data))
             {
-                if (album.TryGetProperty("total", out var t)) total = t.GetInt32();
-                foreach (var item in albumList.EnumerateArray())
+                if (data.TryGetProperty("meta", out var meta) &&
+                    meta.TryGetProperty("estimate_sum", out var est) &&
+                    est.ValueKind == JsonValueKind.Number)
+                    total = est.GetInt32();
+
+                if (data.TryGetProperty("body", out var body) &&
+                    body.TryGetProperty("item_album", out var albumList) &&
+                    albumList.ValueKind == JsonValueKind.Array)
                 {
-                    var mid = JsonHelpers.GetString(item, "albumMID") ?? JsonHelpers.GetString(item, "albumMid") ?? JsonHelpers.GetString(item, "mid");
-                    if (string.IsNullOrEmpty(mid)) continue;
-                    var name = JsonHelpers.GetString(item, "albumName") ?? "未知专辑";
-                    var artist = "";
-                    if (item.TryGetProperty("singer", out var singers) && singers.ValueKind == JsonValueKind.Array)
-                        artist = string.Join("、", singers.EnumerateArray().Select(a => JsonHelpers.GetString(a, "name") ?? "").Where(n => n.Length > 0));
-                    if (string.IsNullOrEmpty(artist) && item.TryGetProperty("singername", out var sn))
-                        artist = sn.GetString() ?? "";
-                    list.Add(JsonHelpers.BuildAlbumRow(mid!, name, artist, "qq",
-                        JsonHelpers.GetString(item, "pic") ?? ""));
+                    foreach (var item in albumList.EnumerateArray())
+                    {
+                        var mid = JsonHelpers.GetString(item, "albummid") ?? JsonHelpers.GetString(item, "albumMid") ?? JsonHelpers.GetString(item, "mid");
+                        if (string.IsNullOrEmpty(mid)) continue;
+                        var name = StripHtml(JsonHelpers.GetString(item, "name") ?? "未知专辑");
+                        var artist = "";
+                        if (item.TryGetProperty("singer_list", out var sl) && sl.ValueKind == JsonValueKind.Array)
+                            artist = string.Join("/", sl.EnumerateArray().Select(a => JsonHelpers.GetString(a, "name") ?? "").Where(n => n.Length > 0));
+                        if (string.IsNullOrEmpty(artist))
+                            artist = StripHtml(JsonHelpers.GetString(item, "singer") ?? "");
+                        list.Add(JsonHelpers.BuildAlbumRow(mid!, name, artist, "qq",
+                            JsonHelpers.GetString(item, "pic") ?? ""));
+                    }
                 }
             }
             return new PagedResult<MusicInfo>
             {
                 CurrentPage = page, PageSize = pageSize,
                 TotalItems = total > 0 ? total : list.Count,
+                HasMore = total > page * pageSize,
                 Items = list
             };
         }
@@ -208,7 +249,7 @@ public class QqMusicService : IMusicApi
         }
     }
 
-    /// <summary>QQ 专辑详情：musicu.fcg GetAlbumDetail → data.songlist</summary>
+    /// <summary>QQ 专辑详情：musicu.fcg GetAlbumSongList → data.songList[].songInfo（老 GetAlbumDetail 已不再返回歌曲列表）</summary>
     public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(MusicInfo album, int page = 1, int pageSize = 50)
     {
         try
@@ -221,50 +262,57 @@ public class QqMusicService : IMusicApi
             {
                 req_0 = new
                 {
-                    module = "music.musichallAlbum.AlbumInfoServer",
-                    method = "GetAlbumDetail",
-                    param = new { albumMid = album.Id, albumId = 0 }
+                    module = "music.musichallAlbum.AlbumSongList",
+                    method = "GetAlbumSongList",
+                    param = new { albumMid = album.Id, begin = (page - 1) * pageSize, num = pageSize }
                 },
                 comm = new { uin = 0, format = "json", ct = 24, cv = 0 }
             };
 
             var response = await _httpClient.PostAsync<JsonElement>(url, payload);
             var list = new List<MusicInfo>();
+            int total = 0;
 
             if (response.TryGetProperty("req_0", out var req0) &&
-                req0.TryGetProperty("data", out var data) &&
-                data.TryGetProperty("songlist", out var songlist) &&
-                songlist.ValueKind == JsonValueKind.Array)
+                req0.TryGetProperty("data", out var data))
             {
-                foreach (var item in songlist.EnumerateArray())
+                if (data.TryGetProperty("totalNum", out var tn) && tn.ValueKind == JsonValueKind.Number)
+                    total = tn.GetInt32();
+
+                if (data.TryGetProperty("songList", out var songList) && songList.ValueKind == JsonValueKind.Array)
                 {
-                    var songMid = JsonHelpers.GetString(item, "mid") ?? JsonHelpers.GetString(item, "songmid");
-                    if (string.IsNullOrEmpty(songMid)) continue;
-                    var title = JsonHelpers.GetString(item, "name") ?? "未知歌曲";
-                    var artist = "";
-                    if (item.TryGetProperty("singer", out var singers) && singers.ValueKind == JsonValueKind.Array)
-                        artist = string.Join("、", singers.EnumerateArray().Select(a => JsonHelpers.GetString(a, "name") ?? "").Where(n => n.Length > 0));
-                    if (string.IsNullOrEmpty(artist) && item.TryGetProperty("singerName", out var sn))
-                        artist = sn.GetString() ?? "";
-                    var albumName = "";
-                    if (item.TryGetProperty("album", out var al) && al.ValueKind == JsonValueKind.Object)
-                        albumName = JsonHelpers.GetString(al, "name") ?? "";
-                    var interval = 0;
-                    if (item.TryGetProperty("interval", out var iv) && iv.ValueKind == JsonValueKind.Number)
-                        interval = iv.GetInt32();
-                    list.Add(new MusicInfo
+                    foreach (var wrapper in songList.EnumerateArray())
                     {
-                        Id = songMid!, Songmid = songMid!,
-                        Title = title, Artist = artist, Album = albumName,
-                        Duration = interval > 0 ? FormatDuration(interval) : "",
-                        Source = "qq"
-                    });
+                        if (!wrapper.TryGetProperty("songInfo", out var item) || item.ValueKind != JsonValueKind.Object)
+                            continue;
+                        var songMid = JsonHelpers.GetString(item, "mid") ?? JsonHelpers.GetString(item, "songmid");
+                        if (string.IsNullOrEmpty(songMid)) continue;
+                        var title = JsonHelpers.GetString(item, "name") ?? "未知歌曲";
+                        var artist = "";
+                        if (item.TryGetProperty("singer", out var singers) && singers.ValueKind == JsonValueKind.Array)
+                            artist = string.Join("/", singers.EnumerateArray().Select(a => JsonHelpers.GetString(a, "name") ?? "").Where(n => n.Length > 0));
+                        var albumName = "";
+                        if (item.TryGetProperty("album", out var al) && al.ValueKind == JsonValueKind.Object)
+                            albumName = JsonHelpers.GetString(al, "name") ?? "";
+                        var interval = 0;
+                        if (item.TryGetProperty("interval", out var iv) && iv.ValueKind == JsonValueKind.Number)
+                            interval = iv.GetInt32();
+                        list.Add(new MusicInfo
+                        {
+                            Id = songMid!, Songmid = songMid!,
+                            Title = title, Artist = artist, Album = albumName,
+                            Duration = interval > 0 ? FormatDuration(interval) : "",
+                            Source = "qq"
+                        });
+                    }
                 }
             }
             return new PagedResult<MusicInfo>
             {
                 CurrentPage = page, PageSize = pageSize,
-                TotalItems = list.Count, Items = list
+                TotalItems = total > 0 ? total : list.Count,
+                HasMore = total > page * pageSize,
+                Items = list
             };
         }
         catch (Exception ex)
@@ -689,21 +737,31 @@ public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128
 
             if (response.TryGetProperty("req_0", out var req0) &&
                 req0.TryGetProperty("data", out var resData) &&
-                resData.TryGetProperty("toplist", out var toplist))
+                resData.TryGetProperty("group", out var group))
             {
-                foreach (var item in toplist.EnumerateArray())
+                // QQ 的 GetAll 把榜单按“巅峰榜/地区榜/特色榜/全球榜”分组返回在 group[].toplist 中
+                foreach (var grp in group.EnumerateArray())
                 {
-                    rankings.Add(new Ranking
+                    if (!grp.TryGetProperty("toplist", out var toplist) || toplist.ValueKind != JsonValueKind.Array)
+                        continue;
+                    foreach (var item in toplist.EnumerateArray())
                     {
-                        Id = "qq_" + (item.TryGetProperty("topId", out var tid) ? tid.GetInt64().ToString() : ""),
-                        Name = item.TryGetProperty("title", out var ttl) ? ttl.GetString() ?? "" : "",
-                        Description = item.TryGetProperty("intro", out var intro) ? intro.GetString() ?? "" : "",
-                        Source = "qq",
-                        Type = MapQqRankingType(
-                            item.TryGetProperty("title", out var titleEl) ? titleEl.GetString() ?? "" : ""),
-                        UpdateDate = item.TryGetProperty("update_time", out var ut)
-                            ? DateTimeOffset.FromUnixTimeSeconds(ut.GetInt64()).DateTime : DateTime.Now
-                    });
+                        var topId = item.TryGetProperty("topId", out var tid) ? ReadTopId(tid) : 0;
+                        if (topId == 201) continue; // 排除 MV 榜（视频榜，非歌曲榜）
+                        var title = item.TryGetProperty("title", out var ttl) ? ttl.GetString() ?? "" : "";
+                        if (title.StartsWith("巅峰榜·")) title = title[4..];
+                        if (!title.EndsWith("榜")) title += "榜";
+                        rankings.Add(new Ranking
+                        {
+                            Id = "qq_" + topId,
+                            Name = title,
+                            Description = item.TryGetProperty("intro", out var intro) ? intro.GetString() ?? "" : "",
+                            Source = "qq",
+                            Type = MapQqRankingType(title),
+                            UpdateDate = item.TryGetProperty("updateTime", out var ut)
+                                ? ParseQqDate(ut) : DateTime.Now
+                        });
+                    }
                 }
             }
 
@@ -717,18 +775,31 @@ public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128
 
         return new List<Ranking>
         {
-            new Ranking { Id = "qq_26", Name = "QQ音乐热歌榜", Description = "QQ音乐热歌榜", Source = "qq", Type = RankingType.Hot, UpdateDate = DateTime.Now },
-            new Ranking { Id = "qq_27", Name = "QQ音乐新歌榜", Description = "QQ音乐新歌榜", Source = "qq", Type = RankingType.New, UpdateDate = DateTime.Now },
-            new Ranking { Id = "qq_62", Name = "QQ音乐飙升榜", Description = "QQ音乐飙升榜", Source = "qq", Type = RankingType.Rising, UpdateDate = DateTime.Now },
-            new Ranking { Id = "qq_4", Name = "QQ音乐流行榜", Description = "QQ音乐流行榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
-            new Ranking { Id = "qq_3", Name = "QQ音乐欧美榜", Description = "QQ音乐欧美榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
-            new Ranking { Id = "qq_28", Name = "QQ音乐网络榜", Description = "QQ音乐网络榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
-            new Ranking { Id = "qq_5", Name = "QQ音乐内地榜", Description = "QQ音乐内地榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
-            new Ranking { Id = "qq_16", Name = "QQ音乐韩语榜", Description = "QQ音乐韩语榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
-            new Ranking { Id = "qq_17", Name = "QQ音乐日语榜", Description = "QQ音乐日语榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
-            new Ranking { Id = "qq_6", Name = "QQ音乐粤语榜", Description = "QQ音乐粤语榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_4", Name = "流行指数榜", Description = "流行指数榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_26", Name = "热歌榜", Description = "QQ音乐热歌榜", Source = "qq", Type = RankingType.Hot, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_27", Name = "新歌榜", Description = "QQ音乐新歌榜", Source = "qq", Type = RankingType.New, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_62", Name = "飙升榜", Description = "QQ音乐飙升榜", Source = "qq", Type = RankingType.Rising, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_58", Name = "说唱榜", Description = "说唱榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_57", Name = "喜力电音榜", Description = "喜力电音榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_28", Name = "网络歌曲榜", Description = "网络歌曲榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_5", Name = "内地榜", Description = "内地榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_3", Name = "欧美榜", Description = "欧美榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_59", Name = "香港地区榜", Description = "香港地区榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_16", Name = "韩国榜", Description = "韩国榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_60", Name = "抖快榜", Description = "抖快榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_29", Name = "影视金曲榜", Description = "影视金曲榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_17", Name = "日本榜", Description = "日本榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
             new Ranking { Id = "qq_52", Name = "腾讯音乐人原创榜", Description = "腾讯音乐人原创榜", Source = "qq", Type = RankingType.Original, UpdateDate = DateTime.Now },
-            new Ranking { Id = "qq_36", Name = "QQ音乐K歌金曲榜", Description = "K歌热门歌曲", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now }
+            new Ranking { Id = "qq_36", Name = "K歌金曲榜", Description = "K歌热门歌曲", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_61", Name = "台湾地区榜", Description = "台湾地区榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_63", Name = "DJ舞曲榜", Description = "DJ舞曲榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_64", Name = "综艺新歌榜", Description = "综艺新歌榜", Source = "qq", Type = RankingType.New, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_65", Name = "国风热歌榜", Description = "国风热歌榜", Source = "qq", Type = RankingType.Hot, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_67", Name = "听歌识曲榜", Description = "听歌识曲榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_72", Name = "动漫音乐榜", Description = "动漫音乐榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_73", Name = "游戏音乐榜", Description = "游戏音乐榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_75", Name = "有声榜", Description = "有声榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now },
+            new Ranking { Id = "qq_131", Name = "校园音乐人排行榜", Description = "校园音乐人排行榜", Source = "qq", Type = RankingType.Other, UpdateDate = DateTime.Now }
         };
     }
 
@@ -751,23 +822,19 @@ public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128
                     param = new
                     {
                         topId = long.TryParse(rankingId, out var tid) ? tid : 26,
-                        offset = (page - 1) * pageSize,
-                        num = pageSize
+                        // QQ GetDetail 不返回榜单总数，无法按 offset 服务端分页；
+                        // 一次拉取整榜（QQ 榜单最多 300 首）后在本地切片，保证能获取完整榜单而不是只有前 20 首。
+                        num = 300
                     }
                 }
             };
 
             var response = await _httpClient.PostAsync<JsonElement>(url, payload);
-            var musicList = new List<MusicInfo>();
-            int total = 0;
+            var allSongs = new List<MusicInfo>();
 
             if (response.TryGetProperty("req_0", out var req0) &&
-                req0.TryGetProperty("data", out var resData))
-            {
-                if (resData.TryGetProperty("totalNum", out var tn) && tn.ValueKind == JsonValueKind.Number)
-                    total = tn.GetInt32();
-
-                if (resData.TryGetProperty("songInfoList", out var songInfoList))
+                req0.TryGetProperty("data", out var resData) &&
+                resData.TryGetProperty("songInfoList", out var songInfoList))
                 {
                     foreach (var item in songInfoList.EnumerateArray())
                     {
@@ -800,7 +867,7 @@ public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128
                             album.TryGetProperty("mid", out var amid))
                             albumMid = amid.GetString() ?? "";
 
-                        musicList.Add(new MusicInfo
+                        allSongs.Add(new MusicInfo
                         {
                             Id = songMid,
                             Title = item.TryGetProperty("title", out var ttl) ? ttl.GetString() ?? "" : "",
@@ -819,17 +886,18 @@ public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128
                     }
                 }
 
-                // QQ 接口未返回总数时按已取数量估算，保证分页可用
-                if (total <= 0 && musicList.Count > 0)
-                    total = (page - 1) * pageSize + musicList.Count;
-            }
+            // 整榜已一次取出：总数为实际歌曲数，本地按页切片，分页完整可用
+            var total = allSongs.Count;
+            var items = total == 0
+                ? new List<MusicInfo>()
+                : allSongs.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 
             return new PagedResult<MusicInfo>
             {
                 CurrentPage = page,
                 PageSize = pageSize,
                 TotalItems = total,
-                Items = musicList
+                Items = items
             };
         }
         catch (Exception ex)
@@ -837,6 +905,33 @@ public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128
             _logger.LogError(ex, "获取QQ排行榜详情失败: {RankingId}", rankingId);
             return PagedResult<MusicInfo>.Empty(page, pageSize);
         }
+    }
+
+    /// <summary>生成 QQ 移动端搜索会话 ID（模仿官方客户端 searchID 生成算法，仅为随机大数）</summary>
+    private static string GetSearchId()
+    {
+        var e = Random.Shared.Next(1, 21);
+        var t = e * 18014398509481984L;
+        var n = Random.Shared.Next(0, 4194305) * 4294967296L;
+        var r = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % (24L * 60 * 60 * 1000);
+        return (t + n + r).ToString();
+    }
+
+    /// <summary>生成随机 QIMEI 设备标识（搜索接口要求非空，否则不返回结果列表）</summary>
+    private static (string Q16, string Q36) GenerateQimei()
+    {
+        const string hex = "0123456789abcdef";
+        const string q36Chars = "0123456789abcdefghijklmnopqrstuvwxyz";
+        var q16 = new string(Enumerable.Range(0, 16).Select(_ => hex[Random.Shared.Next(hex.Length)]).ToArray());
+        var q36 = new string(Enumerable.Range(0, 36).Select(_ => q36Chars[Random.Shared.Next(q36Chars.Length)]).ToArray());
+        return (q16, q36);
+    }
+
+    /// <summary>去除搜索结果里的 HTML 高亮标签（如 &lt;em&gt;周杰伦&lt;/em&gt;）</summary>
+    private static string StripHtml(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return System.Text.RegularExpressions.Regex.Replace(s, "<.*?>", "");
     }
 
     // ========== 辅助方法 ==========
@@ -848,6 +943,25 @@ public async Task<string?> GetPlayUrlAsync(string musicId, string quality = "128
         if (title.Contains("飙升")) return RankingType.Rising;
         if (title.Contains("原创")) return RankingType.Original;
         return RankingType.Other;
+    }
+
+    /// <summary>读取 toplist 的 topId（QQ 接口可能返回数字或字符串）</summary>
+    private static long ReadTopId(JsonElement el) =>
+        el.ValueKind switch
+        {
+            JsonValueKind.Number => el.GetInt64(),
+            JsonValueKind.String => long.TryParse(el.GetString(), out var v) ? v : 0,
+            _ => 0
+        };
+
+    /// <summary>解析 QQ 榜单更新日期（updateTime 可能是 "yyyy-MM-dd" 字符串或 Unix 秒数）</summary>
+    private static DateTime ParseQqDate(JsonElement el)
+    {
+        if (el.ValueKind == JsonValueKind.Number)
+            return DateTimeOffset.FromUnixTimeSeconds(el.GetInt64()).DateTime;
+        if (el.ValueKind == JsonValueKind.String && DateTime.TryParse(el.GetString(), out var dt))
+            return dt;
+        return DateTime.Now;
     }
 
     private static string FormatDuration(int seconds)

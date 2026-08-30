@@ -108,12 +108,12 @@ public class KuwoMusicService : IMusicApi
 
     // ========== 专辑搜索 / 专辑详情 ==========
 
-    /// <summary>酷我专辑搜索：r.s?ft=album → albumlist[]</summary>
+    /// <summary>酷我专辑搜索：search.kuwo.cn/r.s?ft=album&itemset=web_2013 → albumlist[]（需 https + itemset，去掉 vermerge）</summary>
     private async Task<PagedResult<MusicInfo>> SearchAlbumsAsync(string keyword, int page, int pageSize)
     {
         try
         {
-            var url = $"{SearchUrl}/r.s";
+            var url = "https://search.kuwo.cn/r.s";
             var parameters = new Dictionary<string, string>
             {
                 ["client"] = "kt",
@@ -126,7 +126,7 @@ public class KuwoMusicService : IMusicApi
                 ["ft"] = "album",
                 ["encoding"] = "utf8",
                 ["rformat"] = "json",
-                ["vermerge"] = "1",
+                ["itemset"] = "web_2013",
                 ["mobi"] = "1"
             };
             var response = await _httpClient.GetAsync(url, parameters);
@@ -134,18 +134,26 @@ public class KuwoMusicService : IMusicApi
             var list = new List<MusicInfo>();
             int total = 0;
 
-            if (result.TryGetProperty("TOTAL", out var totalEl) && totalEl.ValueKind == JsonValueKind.String)
-                int.TryParse(totalEl.GetString(), out total);
+            if (result.TryGetProperty("total", out var totalEl))
+            {
+                if (totalEl.ValueKind == JsonValueKind.Number) total = totalEl.GetInt32();
+                else if (totalEl.ValueKind == JsonValueKind.String) int.TryParse(totalEl.GetString(), out total);
+            }
+            if (total <= 0 && result.TryGetProperty("TOTAL", out var totalEl2))
+            {
+                if (totalEl2.ValueKind == JsonValueKind.Number) total = totalEl2.GetInt32();
+                else if (totalEl2.ValueKind == JsonValueKind.String) int.TryParse(totalEl2.GetString(), out total);
+            }
 
             if (result.TryGetProperty("albumlist", out var albumlist) && albumlist.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in albumlist.EnumerateArray())
                 {
-                    var id = JsonHelpers.GetString(item, "albumid");
+                    var id = JsonHelpers.GetString(item, "albumid") ?? JsonHelpers.GetString(item, "id");
                     if (string.IsNullOrEmpty(id)) continue;
                     var name = JsonHelpers.GetString(item, "name") ?? JsonHelpers.GetString(item, "albumname") ?? "未知专辑";
                     var artist = JsonHelpers.GetString(item, "artist") ?? "";
-                    var pic = JsonHelpers.GetString(item, "pic") ?? "";
+                    var pic = JsonHelpers.GetString(item, "pic") ?? JsonHelpers.GetString(item, "img") ?? JsonHelpers.GetString(item, "hts_img") ?? "";
                     if (!string.IsNullOrEmpty(pic) && !pic.StartsWith("http", StringComparison.OrdinalIgnoreCase))
                         pic = "http://img1.sycdn.kuwo.cn/star/albumcover/" + pic.TrimStart('/');
                     list.Add(JsonHelpers.BuildAlbumRow(id!, name, artist, "kw", pic));
@@ -155,6 +163,7 @@ public class KuwoMusicService : IMusicApi
             {
                 CurrentPage = page, PageSize = pageSize,
                 TotalItems = total > 0 ? total : list.Count,
+                HasMore = total > page * pageSize,
                 Items = list
             };
         }

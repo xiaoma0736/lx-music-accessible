@@ -1,4 +1,4 @@
-﻿// Compiled: 2026-08-01 - 全链路打通 + 无障碍键盘导航 + 简体中文界面
+// Compiled: 2026-08-01 - 全链路打通 + 无障碍键盘导航 + 简体中文界面
 using System.Collections.Generic;
 using Microsoft.Extensions.DependencyInjection;
 using System;
@@ -141,7 +141,7 @@ public partial class MainWindow : Window
     // 歌词状态
     private Lyric? _currentLyric;
     private int _currentLyricIndex = -1;
-    private List<LyricLineItem> _lyricLines = new();
+    private List<string> _lyricLines = new();
     private long _lyricAnnounceBlockUntilTick; // monotonic deadline (Environment.TickCount64, ms); 0 = none
     private bool _lyricAnnounceQueued;
     private int _lyricOffsetMs; // user lyric-time offset; positive delays selection (fixes reading ahead)
@@ -154,6 +154,7 @@ public partial class MainWindow : Window
     private readonly System.Windows.Threading.DispatcherTimer _announceTimer =
         new() { Interval = TimeSpan.FromMilliseconds(350) };
     private string _pendingAnnounce = string.Empty;
+    private string? _lastAnnouncedSongKey; // 最近一次语音播报过歌名的歌曲键（Source|Id），避免重复播报
     private readonly System.Windows.Threading.DispatcherTimer _positionTimer =
         new() { Interval = TimeSpan.FromMilliseconds(500) };
     private readonly System.Windows.Threading.DispatcherTimer _clockTimer =
@@ -235,7 +236,7 @@ public partial class MainWindow : Window
 
     private void SendWelcomeMessage()
     {
-        Announce("欢迎使用落雪音乐无障碍版");
+        AnnounceToScreenReader("欢迎使用落雪音乐无障碍版");
     }
 
     /// <summary>音源列表变化（订阅更新/默认/启停/增删）：在 UI 线程刷新音源管理列表</summary>
@@ -254,12 +255,13 @@ public partial class MainWindow : Window
         var msg = "音源更新提示：" + e.Log;
         Dispatcher.BeginInvoke(new Action(() =>
         {
-            try { Announce(msg); } catch { }
+            try { AnnounceToScreenReader(msg); } catch { }
         }), System.Windows.Threading.DispatcherPriority.Background);
     }
     /// <summary>
     /// 无障碍播报（Prism 优先）：语音朗读可用时只走 Prism 朗读（避免读屏双读）；
     /// 语音不可用/未开启时才写 UIA 实时区域交给读屏接管。
+    /// 仅关键提示（播放歌名/设备切换/播放模式/下载/错误类）使用本方法朗读。
     /// </summary>
     private void Announce(string message)
     {
@@ -268,16 +270,7 @@ public partial class MainWindow : Window
         try
         {
             bool handledByVoice = _voiceAnnouncementEnabled && _ttsService != null && _ttsService.IsAvailable;
-            _ = Dispatcher.BeginInvoke(new Action(() =>
-            {
-                StatusText.Text = message;
-                if (!handledByVoice)
-                {
-                    LiveRegion.Text = message;
-                    _lyricsWindow?.SetLiveRegion(message);
-                }
-            }), System.Windows.Threading.DispatcherPriority.Input);
-
+            UpdateStatusAndLiveRegion(message, handledByVoice);
             if (handledByVoice)
             {
                 Dispatcher.BeginInvoke(new Action(async () =>
@@ -289,6 +282,34 @@ public partial class MainWindow : Window
         catch { }
     }
 
+    /// <summary>
+    /// 精简后的非关键状态提示：只更新状态栏并写 UIA 实时区域交给读屏朗读，
+    /// 应用语音（Prism/SAPI）不再发声，避免与读屏重复播报。
+    /// </summary>
+    private void AnnounceToScreenReader(string message)
+    {
+        if (string.IsNullOrEmpty(message)) return;
+        try
+        {
+            UpdateStatusAndLiveRegion(message, voiceHandled: false);
+        }
+        catch { }
+    }
+
+    /// <summary>更新状态栏文本；voiceHandled=false 时同时写入主窗口与歌词窗口的 UIA 实时区域</summary>
+    private void UpdateStatusAndLiveRegion(string message, bool voiceHandled)
+    {
+        _ = Dispatcher.BeginInvoke(new Action(() =>
+        {
+            StatusText.Text = message;
+            if (!voiceHandled)
+            {
+                LiveRegion.Text = message;
+                _lyricsWindow?.SetLiveRegion(message);
+            }
+        }), System.Windows.Threading.DispatcherPriority.Input);
+    }
+
     private void AnnounceTimer_Tick(object? sender, EventArgs e)
     {
         _announceTimer.Stop();
@@ -296,7 +317,7 @@ public partial class MainWindow : Window
         {
             var msg = _pendingAnnounce;
             _pendingAnnounce = string.Empty;
-            Announce(msg);
+            AnnounceToScreenReader(msg);
         }
     }
 
@@ -384,7 +405,7 @@ public partial class MainWindow : Window
         SyncLyricsDisplay(_playerService?.Position ?? TimeSpan.Zero);
         var dir = deltaMs > 0 ? "\u5ef6\u540e" : "\u63d0\u524d"; // delay / advance
         var offsetSec = _lyricOffsetMs / 1000.0;
-        Announce($"\u6b4c\u8bcd\u5df2{dir}\uff0c\u5f53\u524d\u504f\u79fb {offsetSec:+#.##;-#.##;0} \u79d2");
+        AnnounceToScreenReader($"\u6b4c\u8bcd\u5df2{dir}\uff0c\u5f53\u524d\u504f\u79fb {offsetSec:+#.##;-#.##;0} \u79d2");
     }
 
     /// <summary>Persist the per-song lyric offsets to settings immediately.</summary>
@@ -403,12 +424,10 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>将歌词视图同步到指定行：高亮+放大当前行并滚动到可见（不移动选中项，不影响读屏逐行浏览）</summary>
+    /// <summary>将歌词视图同步到指定行：歌词窗口文本查看器滚动并高亮当前句</summary>
     private void SyncLyricsLine(int idx)
     {
         if (idx < 0 || idx >= _lyricLines.Count) return;
-        for (var i = 0; i < _lyricLines.Count; i++)
-            _lyricLines[i].IsCurrent = i == idx;
         _lyricsWindow?.ScrollToLine(idx);
     }
 
@@ -439,8 +458,8 @@ public partial class MainWindow : Window
     private void SetLyricsText(string text)
     {
         var lines = string.IsNullOrEmpty(text) ? new[] { "暂无歌词" } : text.Split('\n');
-        _lyricLines = lines.Select(l => new LyricLineItem { Text = l }).ToList();
-        _lyricsWindow?.SetLyrics(_lyricLines);
+        _lyricLines = lines.ToList();
+        _lyricsWindow?.SetLyrics(string.Join("\n", _lyricLines));
     }
 
     private void ClockTimer_Tick(object? sender, EventArgs e)
@@ -739,7 +758,7 @@ public partial class MainWindow : Window
         SearchResultsList.ItemsSource = null;
         _searchShowingAlbumDetail = false;
         SearchPageInfo.Text = "请输入关键词开始搜索";
-        Announce("搜索已清空");
+        AnnounceToScreenReader("搜索已清空");
     }
 
     /// <summary>主菜单栏是否处于激活状态（键盘焦点在菜单内，或任一子菜单弹出中）</summary>
@@ -851,10 +870,10 @@ public partial class MainWindow : Window
                 break;
             case 1:
                 _ = LoadOnlinePlaylistsAsync();
-                Announce("在线收藏已刷新");
+                AnnounceToScreenReader("在线收藏已刷新");
                 break;
             case 2:
-                Announce("导入个人歌单页面无需刷新");
+                AnnounceToScreenReader("导入个人歌单页面无需刷新");
                 break;
             case 3:
                 _ = LoadCategoriesAsync(GetComboTag(CategorySourceCombo, "netease"));
@@ -867,10 +886,10 @@ public partial class MainWindow : Window
                 break;
             case 7:
                 RefreshSourceList();
-                Announce("音源列表已刷新");
+                AnnounceToScreenReader("音源列表已刷新");
                 break;
             default:
-                Announce("当前页面无需刷新");
+                AnnounceToScreenReader("当前页面无需刷新");
                 break;
         }
     }
@@ -901,8 +920,25 @@ public partial class MainWindow : Window
                     _ => "就绪"
                 };
                 StatusText.Text = text;
-                if (e.NewState is Models.PlayerState.Playing or Models.PlayerState.Paused or Models.PlayerState.Stopped)
-                    Announce(text);
+                if (e.NewState == Models.PlayerState.Playing && e.CurrentMusic != null)
+                {
+                    // 播放新歌时语音朗读歌名（直接点播已在 PlayMusicAsync 播报并记录，避免重复；
+                    // 上一首/下一首/自动连播/换源等在此补报；恢复播放同一首不重复朗读）
+                    var key = $"{e.CurrentMusic.Source}|{e.CurrentMusic.Id}";
+                    if (!string.Equals(key, _lastAnnouncedSongKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _lastAnnouncedSongKey = key;
+                        Announce($"正在播放：{e.CurrentMusic.Title}，{e.CurrentMusic.Artist}");
+                    }
+                }
+                else if (e.NewState == Models.PlayerState.Error)
+                {
+                    Announce(text); // 播放错误保留语音
+                }
+                else if (e.NewState is Models.PlayerState.Paused or Models.PlayerState.Stopped)
+                {
+                    AnnounceToScreenReader(text); // 暂停/停止等状态交读屏，应用语音不再朗读
+                }
                 // 任意进入播放状态（直接播放/上一首/下一首/恢复）都刷新歌词
                 if (e.NewState == Models.PlayerState.Playing && e.CurrentMusic != null)
                     _ = LoadLyricsAsync(e.CurrentMusic);
@@ -1062,21 +1098,21 @@ public partial class MainWindow : Window
     {
         if (!_settingsLoaded) return;
         _voiceAnnouncementEnabled = EnableVoiceAnnouncementCheckBox.IsChecked == true;
-        Announce(_voiceAnnouncementEnabled ? "已开启语音朗读提示" : "已关闭语音朗读提示");
+        AnnounceToScreenReader(_voiceAnnouncementEnabled ? "已开启语音朗读提示" : "已关闭语音朗读提示");
     }
 
     private void LyricAnnounceCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         if (!_settingsLoaded) return;
         _lyricAnnounce = LyricAnnounceCheckBox.IsChecked == true;
-        Announce(_lyricAnnounce ? "已开启歌词自动朗读" : "已关闭歌词自动朗读");
+        AnnounceToScreenReader(_lyricAnnounce ? "已开启歌词自动朗读" : "已关闭歌词自动朗读");
     }
 
     private void LyricScrollCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         if (!_settingsLoaded) return;
         _lyricAutoScroll = LyricScrollCheckBox.IsChecked == true;
-        Announce(_lyricAutoScroll ? "已开启歌词自动滚动" : "已关闭歌词自动滚动");
+        AnnounceToScreenReader(_lyricAutoScroll ? "已开启歌词自动滚动" : "已关闭歌词自动滚动");
     }
 
     /// <summary>清理歌曲缓存等临时文件（%TEMP% 下的 lxmusic_*.tmp 与 lxmusic_ext_*），跳过正在占用的文件</summary>
@@ -1127,7 +1163,7 @@ public partial class MainWindow : Window
         {
             DownloadPathBox.Text = folderDialog.SelectedPath;
             try { Directory.CreateDirectory(folderDialog.SelectedPath); } catch { }
-            Announce($"下载目录已设置为 {folderDialog.SelectedPath}");
+            AnnounceToScreenReader($"下载目录已设置为 {folderDialog.SelectedPath}");
         }
     }
 
@@ -1142,7 +1178,7 @@ public partial class MainWindow : Window
         };
         if (openFileDialog.ShowDialog() != true) return;
         ThirdPartyPlayerPathBox.Text = openFileDialog.FileName;
-        Announce($"第三方播放器已设置为 {openFileDialog.FileName}");
+        AnnounceToScreenReader($"第三方播放器已设置为 {openFileDialog.FileName}");
     }
 
     /// <summary>Browse and apply a custom data directory (database + logs).</summary>
@@ -1161,7 +1197,7 @@ public partial class MainWindow : Window
             var current = AppDataPaths.ResolveDataDir();
             if (string.Equals(Path.GetFullPath(target), Path.GetFullPath(current), StringComparison.OrdinalIgnoreCase))
             {
-                Announce("已选择当前数据目录");
+                AnnounceToScreenReader("已选择当前数据目录");
                 return;
             }
             Directory.CreateDirectory(target);
@@ -1170,7 +1206,7 @@ public partial class MainWindow : Window
             MigrateDataDir(current, target);
             AppDataPaths.WriteDataDirPointer(target);
             DataDirBox.Text = target;
-            Announce("数据目录已设置，请重启应用后完全生效");
+            AnnounceToScreenReader("数据目录已设置，请重启应用后完全生效");
         }
         catch (Exception ex)
         {
@@ -1363,7 +1399,7 @@ public partial class MainWindow : Window
         _currentSearchSource = GetComboTag(SearchSourceCombo, "all");
         _currentSearchType = GetComboTag(SearchTypeComboBox, "song");
         if (_currentSearchType == "artist")
-            Announce("提示：当前暂不支持歌手搜索，已按歌曲搜索");
+            AnnounceToScreenReader("提示：当前暂不支持歌手搜索，已按歌曲搜索");
 
         if (resetPage)
         {
@@ -1374,7 +1410,7 @@ public partial class MainWindow : Window
             _searchLoaded.Clear();
             await AddSearchHistoryAsync(query);
             var isAlbumSearch = string.Equals(_currentSearchType, "album", StringComparison.OrdinalIgnoreCase);
-            Announce(isAlbumSearch ? $"正在搜索专辑：{query}" : $"正在搜索：{query}");
+            AnnounceToScreenReader(isAlbumSearch ? $"正在搜索专辑：{query}" : $"正在搜索：{query}");
             await LoadSearchMoreAsync();
         }
         else
@@ -1409,16 +1445,16 @@ public partial class MainWindow : Window
             {
                 // 简洁播报：首屏报“找到 N 首(还有更多)”，追加只报总数与是否到底，不重复提示“加载更多”
                 if (beforeCount == 0)
-                    Announce(_searchHasMore
+                    AnnounceToScreenReader(_searchHasMore
                         ? $"找到 {_searchLoaded.Count} 首，还有更多"
                         : $"找到 {_searchLoaded.Count} 首");
                 else
-                    Announce(_searchHasMore
+                    AnnounceToScreenReader(_searchHasMore
                         ? $"已加载 {_searchLoaded.Count} 首，还有更多"
                         : $"已加载全部结果，共 {_searchLoaded.Count} 首");
             }
             else if (_searchLoaded.Count > 0)
-                Announce($"已加载全部结果，共 {_searchLoaded.Count} 首");
+                AnnounceToScreenReader($"已加载全部结果，共 {_searchLoaded.Count} 首");
             else
                 Announce($"未找到与 {_lastSearchQuery} 相关的结果");
         }
@@ -1568,7 +1604,7 @@ public partial class MainWindow : Window
         _searchHistoryIndex = -1;
         _searchHistoryDraft = "";
         _ = PersistSearchHistoryAsync();
-        Announce($"已删除搜索记录：{target}");
+        AnnounceToScreenReader($"已删除搜索记录：{target}");
         return true;
     }
 
@@ -1580,7 +1616,7 @@ public partial class MainWindow : Window
         _searchHistoryIndex = -1;
         _searchHistoryDraft = "";
         _ = _dataStorageService.ClearSearchHistoryAsync();
-        Announce("已清空全部搜索记录");
+        AnnounceToScreenReader("已清空全部搜索记录");
         return true;
     }
 
@@ -1608,12 +1644,12 @@ public partial class MainWindow : Window
         SearchResultsList.ItemsSource = null;
         _searchShowingAlbumDetail = false;
         SearchPageInfo.Text = "请输入关键词开始搜索";
-        Announce("搜索已清空");
+        AnnounceToScreenReader("搜索已清空");
     }
 
     private void SearchPrevPageBtn_Click(object sender, RoutedEventArgs e)
     {
-        Announce("结果已累积显示，请用向上方向键或 Home 回到前面。");
+        AnnounceToScreenReader("结果已累积显示，请用向上方向键或 Home 回到前面。");
     }
 
     private async void SearchNextPageBtn_Click(object sender, RoutedEventArgs e)
@@ -1626,7 +1662,7 @@ public partial class MainWindow : Window
     {
         if (music.Id == PagePrevId)
         {
-            if (list == SearchResultsList) { Announce("结果已累积显示，请用向上方向键或 Home 回到前面。"); }
+            if (list == SearchResultsList) { AnnounceToScreenReader("结果已累积显示，请用向上方向键或 Home 回到前面。"); }
             else if (list == CategorySongsList && _categorySelectedPlaylist != null) await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist, _categoryCurrentPage - 1);
             else if (list == RankingSongsList && _rankingSelected != null) await LoadRankingDetailAsync(_rankingSelected, _rankingCurrentPage - 1);
             return;
@@ -1666,7 +1702,7 @@ public partial class MainWindow : Window
         // 记录打开专辑前搜索结果中的光标位置，返回时恢复
         _searchSelectedIndexBeforeAlbum = Math.Max(0, SearchResultsList.SelectedIndex);
         _searchShowingAlbumDetail = true;
-        Announce($"正在打开专辑《{album.Title}》的歌曲列表，请稍候。");
+        AnnounceToScreenReader($"正在打开专辑《{album.Title}》的歌曲列表，请稍候。");
         try
         {
             // 分页拉取全部歌曲：网易/QQ 一次返回全量（第二页无新增即停）；酷狗/酷我/咪咕服务端分页
@@ -1695,7 +1731,7 @@ public partial class MainWindow : Window
             {
                 SearchResultsList.SelectedIndex = 1;
                 FocusListContent(SearchResultsList);
-                Announce($"专辑《{album.Title}》共 {collected.Count} 首歌曲。按上下方向键浏览，回车播放；第一项“返回专辑列表”或退格键可返回。");
+                AnnounceToScreenReader($"专辑《{album.Title}》共 {collected.Count} 首歌曲。按上下方向键浏览，回车播放；第一项“返回专辑列表”或退格键可返回。");
             }
             else
             {
@@ -2003,6 +2039,7 @@ public partial class MainWindow : Window
         if (music == null || _playerService == null) return;
         var q = string.IsNullOrEmpty(quality) ? _defaultQuality : quality;
         _currentPlayingQuality = q; // 记录本次播放音质，供"查看歌曲详情"展示
+        _lastAnnouncedSongKey = $"{music.Source}|{music.Id}"; // 直接点播已播报歌名，StateChanged 不再重复
         Announce($"正在播放：{music.Title}，{music.Artist}");
         try
         {
@@ -2134,7 +2171,7 @@ public partial class MainWindow : Window
         try
         {
             var next = _categoryCurrentPage + 1;
-            Announce($"已自动翻页到第 {next} 页，继续播放");
+            AnnounceToScreenReader($"已自动翻页到第 {next} 页，继续播放");
             var beforeId = GetListSongs(CategorySongsList).FirstOrDefault()?.Id;
             await LoadCategoryPlaylistDetailAsync(_categorySelectedPlaylist!, next);
             var afterId = GetListSongs(CategorySongsList).FirstOrDefault()?.Id;
@@ -2154,7 +2191,7 @@ public partial class MainWindow : Window
         try
         {
             var next = _rankingCurrentPage + 1;
-            Announce($"已自动翻页到第 {next} 页，继续播放");
+            AnnounceToScreenReader($"已自动翻页到第 {next} 页，继续播放");
             var beforeId = GetListSongs(RankingSongsList).FirstOrDefault()?.Id;
             await LoadRankingDetailAsync(_rankingSelected!, next);
             var afterId = GetListSongs(RankingSongsList).FirstOrDefault()?.Id;
@@ -2520,13 +2557,13 @@ public partial class MainWindow : Window
         return _lyricsWindow;
     }
 
-    /// <summary>打开（或显示）独立歌词窗口：推送当前歌词、滚动到当前行并聚焦列表（焦点修复点）</summary>
+    /// <summary>打开（或显示）独立歌词窗口：推送当前歌词、滚动到当前句并聚焦文本查看器（焦点修复点）</summary>
     private void OpenLyricsWindow(string? title = null)
     {
         var w = EnsureLyricsWindow();
         if (!w.IsVisible)
             w.Show();
-        w.SetLyrics(_lyricLines);
+        w.SetLyrics(string.Join("\n", _lyricLines));
         w.SetTitle(title ?? _playerService?.CurrentMusic?.Title ?? "");
         var idx = _currentLyricIndex >= 0 ? _currentLyricIndex : FindLyricIndex(_playerService?.Position ?? TimeSpan.Zero);
         if (idx >= 0)
@@ -2540,7 +2577,7 @@ public partial class MainWindow : Window
     private async void ShowLyricsForSong(MusicInfo music)
     {
         await LoadLyricsAsync(music);
-        Announce($"正在查看歌词：{music.Title}");
+        AnnounceToScreenReader($"正在查看歌词：{music.Title}");
         OpenLyricsWindow(music.Title);
     }
 
@@ -2607,7 +2644,7 @@ public partial class MainWindow : Window
                 FavoriteSongsList.ItemsSource = null;
                 FavoriteSongsList.ItemsSource = songs;
                 FavoriteCountText.Text = $"共 {songs.Count} 首";
-                Announce($"正在加载远程歌单：{playlist.Name}");
+                AnnounceToScreenReader($"正在加载远程歌单：{playlist.Name}");
                 return;
             }
 
@@ -2651,7 +2688,7 @@ public partial class MainWindow : Window
         if (result != MessageBoxResult.Yes) return;
         await _dataService.DeletePlaylistAsync(playlist.Id);
         await LoadOnlinePlaylistsAsync();
-        Announce($"已删除在线歌单：{playlist.Name}");
+        AnnounceToScreenReader($"已删除在线歌单：{playlist.Name}");
     }
 
     private async void NewOnlinePlaylistBtn_Click(object sender, RoutedEventArgs e)
@@ -2672,7 +2709,7 @@ public partial class MainWindow : Window
         await _dataService.SavePlaylistAsync(playlist);
         await LoadOnlinePlaylistsAsync();
         OnlinePlaylistList.SelectedItem = _onlinePlaylists.FirstOrDefault(p => p.Id == playlist.Id);
-        Announce($"已创建在线歌单：{name}");
+        AnnounceToScreenReader($"已创建在线歌单：{name}");
     }
 
     private async void RenameOnlinePlaylistBtn_Click(object sender, RoutedEventArgs e)
@@ -2686,7 +2723,7 @@ public partial class MainWindow : Window
         _selectedOnlinePlaylist.Name = name;
         OnlinePlaylistList.ItemsSource = null;
         OnlinePlaylistList.ItemsSource = _onlinePlaylists;
-        Announce($"在线歌单已重命名为：{name}");
+        AnnounceToScreenReader($"在线歌单已重命名为：{name}");
     }
 
     private void DeleteOnlinePlaylistBtn_Click(object sender, RoutedEventArgs e)
@@ -2711,7 +2748,7 @@ public partial class MainWindow : Window
         await LoadOnlinePlaylistsAsync();
         if (_selectedOnlinePlaylist != null)
             OnlinePlaylistList.SelectedItem = _onlinePlaylists.FirstOrDefault(p => p.Id == _selectedOnlinePlaylist.Id);
-        Announce($"已添加 {list.Count} 首歌曲到在线收藏：{_selectedOnlinePlaylist!.Name}");
+        AnnounceToScreenReader($"已添加 {list.Count} 首歌曲到在线收藏：{_selectedOnlinePlaylist!.Name}");
     }
 
     private async Task RemoveFavoriteSongAsync(MusicInfo music)
@@ -2719,7 +2756,7 @@ public partial class MainWindow : Window
         if (_dataService == null || music == null || _selectedOnlinePlaylist == null) return;
         await _dataService.RemoveSongFromPlaylistAsync(_selectedOnlinePlaylist.Id, music);
         await SelectOnlinePlaylistAsync(_selectedOnlinePlaylist);
-        Announce($"已从{_selectedOnlinePlaylist.Name}移除：{music.Title}");
+        AnnounceToScreenReader($"已从{_selectedOnlinePlaylist.Name}移除：{music.Title}");
     }
 
     private async void FavoriteSongsList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -2751,7 +2788,7 @@ public partial class MainWindow : Window
     private void FavRefreshBtn_Click(object sender, RoutedEventArgs e)
     {
         _ = LoadOnlinePlaylistsAsync();
-        Announce("在线收藏已刷新");
+        AnnounceToScreenReader("在线收藏已刷新");
     }
 
     private async void FavRemoveBtn_Click(object sender, RoutedEventArgs e)
@@ -2771,7 +2808,7 @@ public partial class MainWindow : Window
         if (result != MessageBoxResult.Yes) return;
         await _dataService.ClearPlaylistItemsAsync(_selectedOnlinePlaylist.Id);
         await SelectOnlinePlaylistAsync(_selectedOnlinePlaylist);
-        Announce($"在线歌单已清空：{_selectedOnlinePlaylist.Name}");
+        AnnounceToScreenReader($"在线歌单已清空：{_selectedOnlinePlaylist.Name}");
     }
 
     /// <summary>收藏整个远程歌单（分类歌单/排行榜）到在线收藏，仅保存元数据，打开时按需联网加载</summary>
@@ -2785,7 +2822,7 @@ public partial class MainWindow : Window
             string.Equals(p.Source, source, StringComparison.OrdinalIgnoreCase));
         if (existing != null)
         {
-            Announce($"歌单“{name}”已在在线收藏中");
+            AnnounceToScreenReader($"歌单“{name}”已在在线收藏中");
             return;
         }
         var playlist = new Playlist
@@ -2799,7 +2836,7 @@ public partial class MainWindow : Window
             RemoteId = remoteId
         };
         await _dataService.SavePlaylistAsync(playlist);
-        Announce($"已将歌单“{name}”收藏到在线收藏");
+        AnnounceToScreenReader($"已将歌单“{name}”收藏到在线收藏");
     }
     // ==================== 歌曲列表右键菜单 ====================
 
@@ -3096,7 +3133,7 @@ public partial class MainWindow : Window
         _defaultQuality = q;
         if (_playerService != null) _playerService.DefaultQuality = q;
         SelectComboByTag(DefaultQualityCombo, q);
-        Announce($"已将默认播放音质设为 {TranslateQuality(q)}");
+        AnnounceToScreenReader($"已将默认播放音质设为 {TranslateQuality(q)}");
     }
 
     /// <summary>从当前歌曲开始顺序播放整个列表</summary>
@@ -3107,7 +3144,7 @@ public partial class MainWindow : Window
         if (music == null) return;
         var count = GetListSongs(list).Count;
         await PlayMusicAsync(music, null, list);
-        Announce(count > 1 ? $"已从当前歌曲开始顺序播放整个列表，共 {count} 首" : "已开始播放当前歌曲");
+        AnnounceToScreenReader(count > 1 ? $"已从当前歌曲开始顺序播放整个列表，共 {count} 首" : "已开始播放当前歌曲");
     }
 
     /// <summary>将当前歌曲添加到本地收藏</summary>
@@ -3327,7 +3364,7 @@ public partial class MainWindow : Window
             }
             else
             {
-                Announce($"正在解析播放链接：{music.Title}");
+                AnnounceToScreenReader($"正在解析播放链接：{music.Title}");
                 var url = await _musicSourceService!.GetPlayUrlAsync(music, music.Source, _defaultQuality);
                 if (string.IsNullOrEmpty(url))
                 {
@@ -3347,7 +3384,7 @@ public partial class MainWindow : Window
                 WorkingDirectory = System.IO.Path.GetDirectoryName(playerPath) ?? string.Empty
             };
             System.Diagnostics.Process.Start(psi);
-            Announce($"已调用第三方播放器播放：{music.Title}，{music.Artist}");
+            AnnounceToScreenReader($"已调用第三方播放器播放：{music.Title}，{music.Artist}");
         }
         catch (Exception ex)
         {
@@ -3581,11 +3618,11 @@ public partial class MainWindow : Window
         if (openFileDialog.ShowDialog() != true) return;
         try
         {
-            Announce("正在导入本地音源...");
+            AnnounceToScreenReader("正在导入本地音源...");
             var src = await _musicSourceService!.ImportFromFileAsync(openFileDialog.FileName);
             if (src == null) { Announce("导入失败：脚本格式无效或缺少API地址"); return; }
             RefreshSourceList();
-            Announce($"已导入本地音源：{src.Name} v{src.Version}");
+            AnnounceToScreenReader($"已导入本地音源：{src.Name} v{src.Version}");
         }
         catch (Exception ex) { Announce($"导入失败：{ex.Message}"); }
     }
@@ -3595,15 +3632,15 @@ public partial class MainWindow : Window
         var dialog = new TextInputDialog("从网络导入音源", "音源URL：", "", "音源名称（可留空）：", "");
         if (dialog.ShowDialog() != true) return;
         var url = dialog.Value?.Trim();
-        if (string.IsNullOrEmpty(url)) { Announce("导入已取消"); return; }
+        if (string.IsNullOrEmpty(url)) { AnnounceToScreenReader("导入已取消"); return; }
         try
         {
-            Announce("正在从网络导入音源...");
+            AnnounceToScreenReader("正在从网络导入音源...");
             var src = await _musicSourceService!.ImportFromUrlAsync(url);
             if (src == null) { Announce("导入失败：无法下载或解析脚本"); return; }
             if (!string.IsNullOrWhiteSpace(dialog.Value2)) src.Name = dialog.Value2.Trim();
             RefreshSourceList();
-            Announce($"已导入网络音源：{src.Name} v{src.Version}");
+            AnnounceToScreenReader($"已导入网络音源：{src.Name} v{src.Version}");
         }
         catch (Exception ex) { Announce($"导入失败：{ex.Message}"); }
     }
@@ -3611,7 +3648,7 @@ public partial class MainWindow : Window
     private void RefreshSourcesBtn_Click(object sender, RoutedEventArgs e)
     {
         RefreshSourceList();
-        Announce("音源列表已刷新");
+        AnnounceToScreenReader("音源列表已刷新");
     }
 
     private void SourceList_KeyDown(object sender, KeyEventArgs e)
@@ -3619,7 +3656,7 @@ public partial class MainWindow : Window
         if (SourceList.SelectedItem is not MusicSource src) return;
         if (e.Key == Key.Enter)
         {
-            Announce($"{src.Name}，版本{src.Version}，类型{src.TypeText}，{(src.IsDefault ? "默认音源，" : "")}{(src.IsEnabled ? "已启用" : "已禁用")}");
+            AnnounceToScreenReader($"{src.Name}，版本{src.Version}，类型{src.TypeText}，{(src.IsDefault ? "默认音源，" : "")}{(src.IsEnabled ? "已启用" : "已禁用")}");
             e.Handled = true;
         }
         else if (e.Key == Key.Delete)
@@ -3647,7 +3684,7 @@ public partial class MainWindow : Window
         if (SourceList.SelectedItem is not MusicSource src) return;
         _musicSourceService?.SetDefaultSource(src.Id);
         RefreshSourceList();
-        Announce($"已将 {src.Name} 设为默认音源");
+        AnnounceToScreenReader($"已将 {src.Name} 设为默认音源");
     }
 
     private void SourceMenu_Enable_Click(object sender, RoutedEventArgs e)
@@ -3655,7 +3692,7 @@ public partial class MainWindow : Window
         if (SourceList.SelectedItem is not MusicSource src) return;
         _musicSourceService?.EnableSource(src);
         RefreshSourceList();
-        Announce($"已启用音源：{src.Name}");
+        AnnounceToScreenReader($"已启用音源：{src.Name}");
     }
 
     private void SourceMenu_Disable_Click(object sender, RoutedEventArgs e)
@@ -3663,13 +3700,13 @@ public partial class MainWindow : Window
         if (SourceList.SelectedItem is not MusicSource src) return;
         _musicSourceService?.DisableSource(src);
         RefreshSourceList();
-        Announce($"已禁用音源：{src.Name}");
+        AnnounceToScreenReader($"已禁用音源：{src.Name}");
     }
 
     private async void SourceMenu_Test_Click(object sender, RoutedEventArgs e)
     {
         if (SourceList.SelectedItem is not MusicSource src) return;
-        Announce($"正在检测 {src.Name} 有效性...");
+        AnnounceToScreenReader($"正在检测 {src.Name} 有效性...");
         var ok = await _musicSourceService!.TestSourceAsync(src);
         RefreshSourceList();
         Announce(ok ? $"{src.Name} 有效" : $"{src.Name} 无效");
@@ -3687,7 +3724,7 @@ public partial class MainWindow : Window
             src.Name = newName;
             RefreshSourceList();
             await _musicSourceService!.UpdateSourceAsync(src);
-            Announce($"音源名称已改为 {src.Name}");
+            AnnounceToScreenReader($"音源名称已改为 {src.Name}");
             return;
         }
         var dlg = new TextInputDialog("编辑音源", "音源名称：", src.Name, "音源URL/路径：", src.ScriptUrl);
@@ -3711,7 +3748,7 @@ public partial class MainWindow : Window
         if (result != MessageBoxResult.Yes) return;
         _musicSourceService?.RemoveSource(src);
         RefreshSourceList();
-        Announce($"已删除音源：{src.Name}");
+        AnnounceToScreenReader($"已删除音源：{src.Name}");
     }
 
     // ==================== 播放控制 ====================
@@ -3723,14 +3760,14 @@ public partial class MainWindow : Window
         {
             _playerService.Pause();
             UpdatePlayPauseMenuHeader("播放");
-            Announce("已暂停");
+            AnnounceToScreenReader("已暂停");
         }
         else if (_playerService.IsPaused && _playerService.CurrentMusic != null)
         {
             // 恢复播放：不重新加载，直接从暂停位置继续
             _ = _playerService.ResumeAsync();
             UpdatePlayPauseMenuHeader("暂停");
-            Announce("继续播放");
+            AnnounceToScreenReader("继续播放");
         }
         else
         {
@@ -3738,7 +3775,7 @@ public partial class MainWindow : Window
             {
                 _ = _playerService.PlayAsync(_playerService.CurrentMusic.PlayUrl ?? "", _playerService.CurrentMusic);
                 UpdatePlayPauseMenuHeader("暂停");
-                Announce("继续播放");
+                AnnounceToScreenReader("继续播放");
             }
             else
             {
@@ -3757,20 +3794,20 @@ public partial class MainWindow : Window
     private void NextButton_Click(object sender, RoutedEventArgs e)
     {
         _playerService?.Next();
-        Announce("下一首");
+        AnnounceToScreenReader("下一首");
     }
 
     private void PreviousButton_Click(object sender, RoutedEventArgs e)
     {
         _playerService?.Previous();
-        Announce("上一首");
+        AnnounceToScreenReader("上一首");
     }
 
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
         _playerService?.Stop();
         UpdatePlayPauseMenuHeader("播放");
-        Announce("已停止");
+        AnnounceToScreenReader("已停止");
     }
 
     private void PlayModeButton_Click(object sender, RoutedEventArgs e)
@@ -3827,14 +3864,14 @@ public partial class MainWindow : Window
             Title = "选择音频文件"
         };
         if (openFileDialog.ShowDialog() == true)
-            Announce($"已选择：{Path.GetFileName(openFileDialog.FileName)}");
+            AnnounceToScreenReader($"已选择：{Path.GetFileName(openFileDialog.FileName)}");
     }
 
     private void OpenFolder_Click(object sender, RoutedEventArgs e)
     {
         var folderDialog = new System.Windows.Forms.FolderBrowserDialog();
         if (folderDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-            Announce($"已选择文件夹：{Path.GetFileName(folderDialog.SelectedPath)}");
+            AnnounceToScreenReader($"已选择文件夹：{Path.GetFileName(folderDialog.SelectedPath)}");
     }
 
     private void Exit_Click(object sender, RoutedEventArgs e) => Close();
@@ -3988,7 +4025,7 @@ public partial class MainWindow : Window
                 System.Windows.Forms.ToolTipIcon.Info);
         }
         catch { }
-        Announce("已隐藏到系统托盘，音乐继续播放");
+        AnnounceToScreenReader("已隐藏到系统托盘，音乐继续播放");
     }
 
     /// <summary>从托盘恢复显示主窗口</summary>
@@ -4015,7 +4052,7 @@ public partial class MainWindow : Window
         Topmost = true;
         Topmost = false;
         Focus();
-        Announce("\u5df2\u6062\u590d\u4e3b\u7a97\u53e3");
+        AnnounceToScreenReader("\u5df2\u6062\u590d\u4e3b\u7a97\u53e3");
     }
 
     /// <summary>从托盘退出应用：释放托盘图标后关闭窗口</summary>
@@ -4281,7 +4318,7 @@ public partial class MainWindow : Window
     private void StartHotkeyRecording(HotkeySettingItem item)
     {
         _recordingHotkeyItem = item;
-        Announce($"请按下{item.ActionName}的快捷键，Esc取消，Delete清除");
+        AnnounceToScreenReader($"请按下{item.ActionName}的快捷键，Esc取消，Delete清除");
     }
 
     private void ClearHotkey(HotkeySettingItem item)
@@ -4296,7 +4333,7 @@ public partial class MainWindow : Window
         _hotkeyManager.RefreshGlobalHotkeys();
         RefreshHotkeyConflictMarkers();
         SaveHotkeys();
-        Announce($"{item.ActionName}快捷键已清除");
+        AnnounceToScreenReader($"{item.ActionName}快捷键已清除");
     }
 
     private void ResetHotkeysBtn_Click(object sender, RoutedEventArgs e)
@@ -4307,7 +4344,7 @@ public partial class MainWindow : Window
         _hotkeyManager.RefreshGlobalHotkeys();
         RefreshHotkeyConflictMarkers();
         SaveHotkeys();
-        Announce("快捷键已恢复默认");
+        AnnounceToScreenReader("快捷键已恢复默认");
     }
 
     private void HandleHotkeyRecording(KeyEventArgs e)
@@ -4316,7 +4353,7 @@ public partial class MainWindow : Window
         if (e.Key == Key.Escape)
         {
             _recordingHotkeyItem = null;
-            Announce("已取消，快捷键未更改");
+            AnnounceToScreenReader("已取消，快捷键未更改");
             RefocusHotkeyList();
             return;
         }
@@ -4337,7 +4374,7 @@ public partial class MainWindow : Window
         if (isModifierOnly) return;
         if (mods == ModifierKeys.None && !isFunctionKey && !isMediaKey)
         {
-            Announce("请按下带 Ctrl、Alt 或 Shift 的组合键，或功能键、媒体键");
+            AnnounceToScreenReader("请按下带 Ctrl、Alt 或 Shift 的组合键，或功能键、媒体键");
             return;
         }
         if (IsReservedCombo(key, mods))
@@ -4371,7 +4408,7 @@ public partial class MainWindow : Window
         _recordingHotkeyItem = null;
         RefreshHotkeyConflictMarkers();
         var message = $"{item.ActionName}功能，{FormatHotkey(target)}热键设置完成";
-        Announce(message);
+        AnnounceToScreenReader(message);
         new HotkeyConfirmDialog(message).ShowDialog();
         RefocusHotkeyList();
     }
@@ -4558,7 +4595,7 @@ public partial class MainWindow : Window
         // After a seek, immediately sync the display; the spoken line is deferred to
         // the timer once the audio settles, so the voice never runs ahead of playback.
         ApplySeek(target);
-        Announce($"{(seconds > 0 ? "快进" : "快退")}十秒，当前 {FormatTime(target)}");
+        AnnounceToScreenReader($"{(seconds > 0 ? "快进" : "快退")}十秒，当前 {FormatTime(target)}");
     }
 
     private void ChangeVolume(double delta)
@@ -4730,29 +4767,6 @@ public partial class MainWindow : Window
         SaveSettingsOnExit();
     }
 
-    /// <summary>歌词列表项：文本 + 是否为当前播放句（用于高亮/放大）</summary>
-    private sealed class LyricLineItem : System.ComponentModel.INotifyPropertyChanged
-    {
-        private string _text = string.Empty;
-        private bool _isCurrent;
-
-        public string Text
-        {
-            get => _text;
-            set { _text = value; OnPropertyChanged(nameof(Text)); }
-        }
-
-        public bool IsCurrent
-        {
-            get => _isCurrent;
-            set { _isCurrent = value; OnPropertyChanged(nameof(IsCurrent)); }
-        }
-
-        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
-
-        private void OnPropertyChanged(string propertyName) =>
-            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(propertyName));
-    }
 }
 
 /// <summary>

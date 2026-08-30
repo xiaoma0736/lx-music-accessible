@@ -1,4 +1,3 @@
-﻿using System.Collections;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
@@ -6,7 +5,8 @@ using System.Windows.Input;
 namespace LXMusicAccessible.App;
 
 /// <summary>
-/// 独立歌词窗口：显示当前歌曲歌词并支持逐句浏览；播放局部热键（F1~F12、Shift+F7/F8）
+/// 独立歌词窗口：以只读文本查看器显示当前歌曲完整歌词，播放时自动滚动并高亮当前句；
+/// 支持“复制歌词”按钮或 Ctrl+Shift+C 一键复制到剪贴板；播放局部热键（F1~F12、Shift+F7/F8）
 /// 在本窗口内仍然生效（由主窗口执行动作）。ESC/Alt+F4/关闭按钮 = 隐藏窗口，重开时复用。
 /// </summary>
 public partial class LyricsWindow : Window
@@ -20,17 +20,35 @@ public partial class LyricsWindow : Window
         _owner = owner;
     }
 
-    /// <summary>设置歌词列表内容（共享主窗口的歌词行集合，IsCurrent 高亮通过绑定自动跟随）</summary>
-    public void SetLyrics(IEnumerable lines)
+    /// <summary>设置歌词全文文本；占位内容（暂无歌词/加载中）时禁用复制按钮</summary>
+    public void SetLyrics(string text)
     {
-        LyricsList.ItemsSource = lines;
+        var trimmed = (text ?? string.Empty).Trim();
+        LyricsText.Text = text ?? string.Empty;
+        CopyLyricsButton.IsEnabled = trimmed.Length > 0
+            && trimmed != "暂无歌词"
+            && trimmed != "歌词加载中...";
     }
 
-    /// <summary>滚动并高亮到指定行（不移动选中项，不影响读屏逐行浏览）</summary>
+    /// <summary>滚动并高亮到指定行：按换行定位第 idx 行，选中该行文本并滚动到可见（不打断读屏全文阅读）</summary>
     public void ScrollToLine(int idx)
     {
-        if (idx < 0 || idx >= LyricsList.Items.Count) return;
-        LyricsList.ScrollIntoView(LyricsList.Items[idx]);
+        if (idx < 0 || string.IsNullOrEmpty(LyricsText.Text)) return;
+        var text = LyricsText.Text;
+        var start = 0;
+        var lineIdx = 0;
+        while (lineIdx < idx && start < text.Length)
+        {
+            var nl = text.IndexOf('\n', start);
+            if (nl < 0) { start = text.Length; break; }
+            start = nl + 1;
+            lineIdx++;
+        }
+        var end = text.IndexOf('\n', start);
+        var len = (end < 0 ? text.Length : end) - start;
+        if (len < 0) len = 0;
+        LyricsText.Select(start, len);
+        LyricsText.ScrollToLine(idx);
     }
 
     /// <summary>更新歌词窗口的实时区域（读屏在窗口聚焦时播报）</summary>
@@ -46,25 +64,29 @@ public partial class LyricsWindow : Window
         TitleText.Text = string.IsNullOrEmpty(title) ? "歌词" : $"歌词：{title}";
     }
 
-    /// <summary>把焦点放进歌词列表（有选中/当前行时聚焦该行容器，否则聚焦列表本身）；
-    /// 延迟到布局完成后执行，确保打开窗口后焦点可靠落入列表（修复“查看歌词后焦点不落列表”）。</summary>
+    /// <summary>把焦点放进歌词文本查看器（当前句已在 ScrollToLine 中选中，聚焦后读屏会朗读当前句）；
+    /// 延迟到布局完成后执行，确保打开窗口后焦点可靠落入文本查看器。</summary>
     public void FocusLyricsList()
     {
-        Dispatcher.BeginInvoke(new Action(() =>
+        Dispatcher.BeginInvoke(new Action(() => LyricsText.Focus()),
+            System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    private void CopyLyricsButton_Click(object sender, RoutedEventArgs e)
+    {
+        CopyLyricsToClipboard();
+    }
+
+    /// <summary>一键复制整首歌词到剪贴板，并通过实时区域给读屏反馈</summary>
+    private void CopyLyricsToClipboard()
+    {
+        if (string.IsNullOrEmpty(LyricsText.Text) || !CopyLyricsButton.IsEnabled) return;
+        try
         {
-            if (LyricsList.Items.Count == 0)
-            {
-                LyricsList.Focus();
-                return;
-            }
-            var target = LyricsList.SelectedItem ?? LyricsList.Items[0];
-            var item = LyricsList.ItemContainerGenerator.ContainerFromItem(target) as FrameworkElement
-                       ?? LyricsList.ItemContainerGenerator.ContainerFromIndex(0) as FrameworkElement;
-            if (item != null)
-                item.Focus();
-            else
-                LyricsList.Focus();
-        }), System.Windows.Threading.DispatcherPriority.Input);
+            System.Windows.Clipboard.SetText(LyricsText.Text);
+            SetLiveRegion("歌词已复制");
+        }
+        catch { /* 剪贴板被占用等异常：静默处理，不影响歌词查看 */ }
     }
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -73,6 +95,13 @@ public partial class LyricsWindow : Window
         if (e.Key == Key.Escape)
         {
             Hide();
+            e.Handled = true;
+            return;
+        }
+        // Ctrl+Shift+C：一键复制整首歌词到剪贴板
+        if (e.Key == Key.C && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            CopyLyricsToClipboard();
             e.Handled = true;
             return;
         }
