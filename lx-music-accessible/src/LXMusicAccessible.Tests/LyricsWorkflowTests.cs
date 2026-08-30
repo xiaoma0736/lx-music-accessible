@@ -150,7 +150,7 @@ public sealed class LyricsWorkflowTests
     }
 
     [Fact]
-    public void Lyrics_window_keeps_deterministic_accessible_semantics_with_full_text_viewer_and_copy()
+    public void Lyrics_window_keeps_deterministic_accessible_semantics_with_copy_and_live_updates()
     {
         var root = FindRepositoryRoot();
         var xaml = File.ReadAllText(Path.Combine(
@@ -165,14 +165,13 @@ public sealed class LyricsWorkflowTests
             "LyricsWindow.xaml.cs"));
 
         Assert.Contains("Title=\"歌词\"", xaml);
-        Assert.Contains("x:Name=\"LyricsText\"", xaml);
-        Assert.Contains("IsReadOnly=\"True\"", xaml);
-        Assert.Contains("AutomationProperties.Name=\"歌词文本\"", xaml);
+        Assert.Contains("x:Name=\"LyricsList\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"歌词\"", xaml);
+        Assert.Contains("AutomationProperties.Name\" Value=\"{Binding AccessibleText}\"", xaml);
+        Assert.Contains("Text=\"{Binding DisplayText}\"", xaml);
         Assert.Contains("x:Name=\"CopyLyricsButton\"", xaml);
-        Assert.Contains("AutomationProperties.Name=\"复制歌词\"", xaml);
         Assert.Contains("AutomationProperties.LiveSetting=\"Polite\"", xaml);
         Assert.DoesNotContain("AutomationProperties.HelpText=", xaml);
-        Assert.DoesNotContain("ListBox", xaml, StringComparison.Ordinal);
         Assert.Contains("_workflow.StateChanged += Workflow_StateChanged", code);
         Assert.Contains("_workflow.AnnounceCurrentLine()", code);
         Assert.Contains("Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift)", code);
