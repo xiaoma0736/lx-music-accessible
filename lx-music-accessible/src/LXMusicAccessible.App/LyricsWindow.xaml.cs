@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
@@ -7,14 +6,14 @@ using LXMusicAccessible.Services;
 namespace LXMusicAccessible.App;
 
 /// <summary>
-/// Presents lyric workflow state and owns only focus, browsing, and window-local keys.
-/// ESC/Alt+F4/close hides the reusable window until application shutdown.
+/// Presents lyric workflow state in a full-text read-only viewer and owns only focus,
+/// copying, and window-local keys. ESC/Alt+F4/close hides the reusable window until
+/// application shutdown.
 /// </summary>
 public partial class LyricsWindow : Window
 {
     private readonly Func<KeyEventArgs, bool> _handleHotkey;
     private readonly LyricsWorkflow _workflow;
-    private readonly ObservableCollection<LyricsLineItem> _lines = [];
     private IReadOnlyList<LyricsLineState>? _presentedLines;
     private string? _contentKey;
     private bool _allowClose;
@@ -26,21 +25,41 @@ public partial class LyricsWindow : Window
         InitializeComponent();
         _workflow = workflow;
         _handleHotkey = handleHotkey;
-        LyricsList.ItemsSource = _lines;
         _workflow.StateChanged += Workflow_StateChanged;
         Present(_workflow.Current);
     }
 
+    /// <summary>Scrolls to and highlights the given zero-based line index without moving keyboard focus.</summary>
     public void ScrollToLine(int index)
     {
-        if (index < 0 || index >= LyricsList.Items.Count) return;
-        LyricsList.ScrollIntoView(LyricsList.Items[index]);
+        if (index < 0 || string.IsNullOrEmpty(LyricsText.Text)) return;
+        var text = LyricsText.Text;
+        var start = 0;
+        var lineIndex = 0;
+        while (lineIndex < index && start < text.Length)
+        {
+            var newline = text.IndexOf('\n', start);
+            if (newline < 0)
+            {
+                start = text.Length;
+                break;
+            }
+            start = newline + 1;
+            lineIndex++;
+        }
+
+        var end = text.IndexOf('\n', start);
+        var length = (end < 0 ? text.Length : end) - start;
+        if (length < 0) length = 0;
+        LyricsText.Select(start, length);
+        LyricsText.ScrollToLine(index);
     }
 
+    /// <summary>Moves keyboard focus into the lyrics viewer after layout completes.</summary>
     public void FocusLyricsList()
     {
         Dispatcher.BeginInvoke(
-            LyricsList.FocusItemOrList,
+            LyricsText.Focus,
             System.Windows.Threading.DispatcherPriority.Input);
     }
 
@@ -74,23 +93,42 @@ public partial class LyricsWindow : Window
         {
             _contentKey = key;
             _presentedLines = state.Lines;
-            _lines.Clear();
-            if (state.Lines.Count == 0)
-            {
-                _lines.Add(new LyricsLineItem(state.Message, state.Message));
-            }
-            else
-            {
-                foreach (var line in state.Lines)
-                    _lines.Add(new LyricsLineItem(line.DisplayText, line.AccessibleText));
-            }
+            LyricsText.Text = state.Lines.Count == 0
+                ? state.Message
+                : string.Join(Environment.NewLine, state.Lines.Select(line => line.DisplayText));
+            CopyLyricsButton.IsEnabled = state.Status == LyricsLoadStatus.Ready && state.Lines.Count > 0;
         }
 
-        for (var index = 0; index < _lines.Count; index++)
-            _lines[index].IsCurrent = index == state.CurrentIndex;
         if (state.AutoScroll && state.CurrentIndex >= 0)
             ScrollToLine(state.CurrentIndex);
         return contentChanged;
+    }
+
+    private void CopyLyricsButton_Click(object sender, RoutedEventArgs e)
+    {
+        CopyLyricsToClipboard();
+    }
+
+    /// <summary>Copies the full lyrics to the clipboard and reports the result through the live region.</summary>
+    private void CopyLyricsToClipboard()
+    {
+        if (!CopyLyricsButton.IsEnabled || LyricsText.Text.Length == 0) return;
+        try
+        {
+            System.Windows.Clipboard.SetText(LyricsText.Text);
+            SetLiveRegion("歌词已复制");
+        }
+        catch (Exception)
+        {
+            SetLiveRegion("歌词复制失败，剪贴板被占用，请稍后重试");
+        }
+    }
+
+    /// <summary>Updates the live region text so screen readers announce it while the window is focused.</summary>
+    private void SetLiveRegion(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        LiveRegion.Text = text;
     }
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -101,6 +139,14 @@ public partial class LyricsWindow : Window
             e.Handled = true;
             return;
         }
+
+        if (e.Key == Key.C && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            CopyLyricsToClipboard();
+            e.Handled = true;
+            return;
+        }
+
         if (_handleHotkey(e)) e.Handled = true;
     }
 
@@ -115,26 +161,5 @@ public partial class LyricsWindow : Window
     {
         _allowClose = true;
         _workflow.StateChanged -= Workflow_StateChanged;
-    }
-
-    private sealed class LyricsLineItem(string displayText, string accessibleText) : INotifyPropertyChanged
-    {
-        private bool _isCurrent;
-
-        public string DisplayText { get; } = displayText;
-        public string AccessibleText { get; } = accessibleText;
-
-        public bool IsCurrent
-        {
-            get => _isCurrent;
-            set
-            {
-                if (_isCurrent == value) return;
-                _isCurrent = value;
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsCurrent)));
-            }
-        }
-
-        public event PropertyChangedEventHandler? PropertyChanged;
     }
 }

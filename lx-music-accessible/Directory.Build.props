@@ -6,4 +6,10 @@
     <WarningsAsErrors>$(WarningsAsErrors);NU1903;NU1904</WarningsAsErrors>
     <TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- 安全固定：传递依赖 System.Text.Json 8.0.4 存在高危漏洞 GHSA-8g4q-xg66-9fp4，升级到已修复的补丁版本 -->
+    <PackageReference Include="System.Text.Json" Version="8.0.6" />
+    <!-- 安全固定：传递依赖 System.Private.Uri 4.3.0 存在高危漏洞 GHSA-5f2m-466j-3848 / GHSA-xhfc-gr8f-ffwc -->
+    <PackageReference Include="System.Private.Uri" Version="4.3.2" />
+  </ItemGroup>
 </Project>

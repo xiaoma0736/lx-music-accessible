@@ -61,8 +61,8 @@ public class KugouMusicService : IMusicApi
                     Album = song.AlbumName ?? "",
                     Duration = song.GetDurationString(),
                     Source = "kg",
-                    CoverUrl = song.AlbumId != null
-                        ? $"https://imgcache.qq.com/music/photo/album_300/{int.Parse(song.AlbumId) % 100}/{int.Parse(song.AlbumId)}.jpg"
+                    CoverUrl = int.TryParse(song.AlbumId, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var albumId)
+                        ? $"https://imgcache.qq.com/music/photo/album_300/{albumId % 100}/{albumId}.jpg"
                         : "",
                     Quality = 128
                 }).ToList();

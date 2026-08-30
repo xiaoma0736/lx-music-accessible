@@ -1,4 +1,4 @@
-﻿// Compiled: 2026-08-01 - 全链路打通 + 无障碍键盘导航 + 简体中文界面
+// Compiled: 2026-08-01 - 全链路打通 + 无障碍键盘导航 + 简体中文界面
 using System.Collections.Generic;
 using System;
 using System.ComponentModel;
@@ -78,6 +78,7 @@ public partial class MainWindow : Window
     private int _searchSelectedIndexBeforeAlbum = 0; // 打开专辑前搜索结果的光标位置（返回时恢复）
 
     private LyricsWindow? _lyricsWindow;
+    private string? _lastAnnouncedSongKey; // 最近一次语音播报过歌名的歌曲键（Source|Id），避免重复播报
 
     private readonly HashSet<ListBox> _externalSongLists = new();
 
@@ -650,8 +651,29 @@ public partial class MainWindow : Window
                     _ => "就绪"
                 };
                 StatusText.Text = text;
-                if (e.NewState is Models.PlayerState.Playing or Models.PlayerState.Paused or Models.PlayerState.Stopped)
-                    Announce(text);
+                if (e.NewState == Models.PlayerState.Playing && e.CurrentMusic != null)
+                {
+                    // 播放新歌时语音朗读歌名（直接点播已在 PlayMusicAsync 播报并记录，避免重复；
+                    // 上一首/下一首/自动连播/换源等在此补报；恢复播放同一首不重复朗读）
+                    var key = $"{e.CurrentMusic.Source}|{e.CurrentMusic.Id}";
+                    if (!string.Equals(key, _lastAnnouncedSongKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _lastAnnouncedSongKey = key;
+                        Announce($"正在播放：{e.CurrentMusic.Title}，{e.CurrentMusic.Artist}");
+                    }
+                    else
+                    {
+                        Announce(text, AnnouncementKind.Status, speech: AnnouncementSpeech.None);
+                    }
+                }
+                else if (e.NewState == Models.PlayerState.Error)
+                {
+                    Announce(text); // 播放错误保留语音
+                }
+                else if (e.NewState is Models.PlayerState.Paused or Models.PlayerState.Stopped)
+                {
+                    Announce(text, AnnouncementKind.Status, speech: AnnouncementSpeech.None); // 暂停/停止等状态交读屏，应用语音不再朗读
+                }
             });
         };
     }
@@ -1358,6 +1380,7 @@ public partial class MainWindow : Window
     {
         if (music == null) return;
         var q = string.IsNullOrEmpty(quality) ? _playback.DefaultQuality : quality;
+        _lastAnnouncedSongKey = $"{music.Source}|{music.Id}"; // 直接点播已播报歌名，StateChanged 不再重复
         Announce($"正在播放：{music.Title}，{music.Artist}");
         var queue = sourceList is null ? new List<MusicInfo> { music } : GetListSongs(sourceList);
         var result = await _playback.PlayAsync(new PlaybackRequest(
