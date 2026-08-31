@@ -10,6 +10,8 @@ public sealed class SpeechWhitelistTests
     [InlineData("play-mode")]
     [InlineData("audio-device")]
     [InlineData("playback-song")]
+    [InlineData("lyrics")]
+    [InlineData("lyrics-offset")]
     [InlineData("download:42")]
     [InlineData("download-list:abc")]
     public void Allowed_activity_categories_enable_speech(string activityId)
@@ -22,7 +24,6 @@ public sealed class SpeechWhitelistTests
     [InlineData(null)]
     [InlineData("welcome")]
     [InlineData("search")]
-    [InlineData("lyrics")]
     [InlineData("download")] // 裸 download 不匹配，仅 download:/download-list: 前缀生效
     public void Other_activity_categories_do_not_enable_speech(string? activityId)
     {

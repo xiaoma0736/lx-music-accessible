@@ -702,7 +702,7 @@ public partial class MainWindow : Window
                     if (!string.Equals(key, _lastAnnouncedSongKey, StringComparison.OrdinalIgnoreCase))
                     {
                         _lastAnnouncedSongKey = key;
-                        Announce($"正在播放：{e.CurrentMusic.Title}，{e.CurrentMusic.Artist}");
+                        Announce($"正在播放：{e.CurrentMusic.Title}，{e.CurrentMusic.Artist}", activityId: "playback-song");
                     }
                     else
                     {
@@ -1424,7 +1424,7 @@ public partial class MainWindow : Window
         if (music == null) return;
         var q = string.IsNullOrEmpty(quality) ? _playback.DefaultQuality : quality;
         _lastAnnouncedSongKey = $"{music.Source}|{music.Id}"; // 直接点播已播报歌名，StateChanged 不再重复
-        Announce($"正在播放：{music.Title}，{music.Artist}");
+        Announce($"正在播放：{music.Title}，{music.Artist}", activityId: "playback-song");
         var queue = sourceList is null ? new List<MusicInfo> { music } : GetListSongs(sourceList);
         var result = await _playback.PlayAsync(new PlaybackRequest(
             queue,
@@ -2365,7 +2365,7 @@ public partial class MainWindow : Window
             _ => PlayMode.Sequential
         };
         EditSettings(settings => settings.DefaultPlayMode = mode);
-        Announce($"播放模式：{GetPlayModeName(mode)}");
+        Announce($"播放模式：{GetPlayModeName(mode)}", activityId: "play-mode");
     }
 
     /// <summary>同步“播放控制”菜单与信息面板中的播放模式显示（原右侧按钮已移除）</summary>
