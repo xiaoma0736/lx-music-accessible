@@ -35,7 +35,7 @@ public sealed class SourceManagerWindowTests
         Assert.Contains("Title=\"音源管理\"", sourceXaml, StringComparison.Ordinal);
         Assert.Contains("WindowStartupLocation=\"CenterOwner\"", sourceXaml, StringComparison.Ordinal);
         Assert.Contains("ResizeMode=\"CanResize\"", sourceXaml, StringComparison.Ordinal);
-        Assert.Contains("Alt+5 到 Alt+8 没有内置", guide, StringComparison.Ordinal);
+        Assert.Contains("Ctrl+5", guide, StringComparison.Ordinal);
         Assert.DoesNotContain("| Alt+8 | 音源管理", guide, StringComparison.Ordinal);
         Assert.Contains("工具→音源管理", guide, StringComparison.Ordinal);
     }
@@ -223,13 +223,13 @@ public sealed class SourceManagerWindowTests
             window.SourceList.SelectedIndex = 0;
 
             var menu = Assert.IsType<ContextMenu>(window.FindResource("SourceContextMenu"));
-            var update = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "??????"));
+            var update = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "更新音源接口"));
             update.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Pump(window.Dispatcher);
 
             Assert.Equal(1, sources.RefreshCount);
-            Assert.Contains("?????????Remote source", announcer.Messages);
-            Assert.Contains("Remote source ???? 2.0", announcer.Messages);
+            Assert.Contains("正在更新音源接口：Remote source", announcer.Messages);
+            Assert.Contains("Remote source 已更新至 2.0", announcer.Messages);
             window.Close();
         });
     }

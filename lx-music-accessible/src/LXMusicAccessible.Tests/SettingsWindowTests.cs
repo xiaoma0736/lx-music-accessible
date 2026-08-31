@@ -341,6 +341,8 @@ public sealed class SettingsWindowTests
 
     private sealed class RecordingHotkeyAdapter : IGlobalHotkeyAdapter
     {
+        public int LastRegisterError { get; private set; }
+
         public bool Register(IntPtr windowHandle, int id, Key key, ModifierKeys modifiers) => true;
         public bool Unregister(IntPtr windowHandle, int id) => true;
     }

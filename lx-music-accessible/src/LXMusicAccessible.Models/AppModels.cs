@@ -297,6 +297,9 @@ public class UserSettings
     /// </summary>
     public string FavoritePlaylistName { get; set; } = "网络歌曲收藏";
 
+    /// <summary>Version of the hotkey default schema; data below 2 migrates once to the new global defaults.</summary>
+    public int HotkeySchemaVersion { get; set; }
+
     /// <summary>
     /// 按 Alt+F4 时是关闭应用（false）还是隐藏到系统托盘（true）
     /// </summary>

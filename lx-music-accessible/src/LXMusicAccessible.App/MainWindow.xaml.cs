@@ -291,6 +291,13 @@ public partial class MainWindow : Window
 
         var mods = Keyboard.Modifiers;
 
+        // Ctrl+1~8 are fixed window-switching chords shared by browse and tool windows.
+        if (TryHandleWindowShortcut(e.Key == Key.System ? e.SystemKey : e.Key, mods))
+        {
+            e.Handled = true;
+            return;
+        }
+
         // 搜索历史操作（搜索框聚焦时，在隧道阶段处理，确保先于 TextBox 默认按键行为）
         if (ReferenceEquals(Keyboard.FocusedElement, SearchBox))
         {
@@ -376,19 +383,9 @@ public partial class MainWindow : Window
         var effectiveKey = e.Key == Key.System ? e.SystemKey : e.Key;
         if (TryExecuteFallbackHotkey(effectiveKey, mods)) { e.Handled = true; return; }
 
-        // Alt+1~4 只切换四个音乐浏览主页面；工具与临时管理页不占用数字键。
+        // Alt+M/C/L/S/R remain list-focus shortcuts.
         if (mods == ModifierKeys.Alt)
         {
-            int? tab = e.SystemKey switch
-            {
-                Key.D1 or Key.NumPad1 => 0,
-                Key.D2 or Key.NumPad2 => 1,
-                Key.D3 or Key.NumPad3 => 2,
-                Key.D4 or Key.NumPad4 => 3,
-                _ => null
-            };
-            if (tab.HasValue) { NavigateToTab(tab.Value); e.Handled = true; return; }
-
             switch (e.SystemKey)
             {
                 case Key.M: FocusSourceCombo(); e.Handled = true; return;
@@ -467,14 +464,60 @@ public partial class MainWindow : Window
     internal bool TryHandleToolWindowHotkey(KeyEventArgs e)
     {
         ArgumentNullException.ThrowIfNull(e);
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        var modifiers = Keyboard.Modifiers;
+        if (TryHandleWindowShortcut(key, modifiers)) return true;
+
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase { IsReadOnly: false } or PasswordBox)
             return false;
         if (FindAncestor<ComboBox>(Keyboard.FocusedElement as DependencyObject) is { IsEditable: true })
             return false;
 
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        var modifiers = Keyboard.Modifiers;
         return TryExecuteFallbackHotkey(key, modifiers) || TryExecuteLocalHotkey(key, modifiers);
+    }
+
+    /// <summary>Handles the fixed Ctrl+number window switcher from the main and tool windows.</summary>
+    internal bool TryHandleWindowShortcut(Key key, ModifierKeys modifiers)
+    {
+        if (!WindowShortcuts.Matches(modifiers) || !WindowShortcuts.TryGetTarget(key, out var target))
+            return false;
+
+        Dispatcher.BeginInvoke(
+            () => OpenWindowShortcutTarget(target),
+            System.Windows.Threading.DispatcherPriority.Input);
+        return true;
+    }
+
+    private void OpenWindowShortcutTarget(WindowShortcutTarget target)
+    {
+        if (!IsActive && IsVisible) Activate();
+        switch (target)
+        {
+            case WindowShortcutTarget.Search:
+                NavigateToTab(0);
+                break;
+            case WindowShortcutTarget.Playlist:
+                NavigateToTab(1);
+                break;
+            case WindowShortcutTarget.CategoryPlaylists:
+                NavigateToTab(2);
+                break;
+            case WindowShortcutTarget.Rankings:
+                NavigateToTab(3);
+                break;
+            case WindowShortcutTarget.DownloadManager:
+                MenuOpenDownloadManager(null!, new RoutedEventArgs());
+                break;
+            case WindowShortcutTarget.PlaylistImport:
+                MenuOpenPlaylistImport(null!, new RoutedEventArgs());
+                break;
+            case WindowShortcutTarget.SourceManager:
+                MenuOpenSourceManager(null!, new RoutedEventArgs());
+                break;
+            case WindowShortcutTarget.Settings:
+                ShowSettings(reconfigure: null);
+                break;
+        }
     }
 
     private bool TryExecuteFallbackHotkey(Key key, ModifierKeys modifiers)
@@ -2418,8 +2461,8 @@ public partial class MainWindow : Window
     {
         MessageBox.Show(
             "落雪音乐 无障碍版\n\n当前版本：V2.0（全部功能免费）\n\n常用快捷键：\n" +
-            "Alt+1~4：搜索、播放列表、分类歌单、排行榜\n" +
-            "Alt+5~8：无内置行为，可由用户自行绑定\n" +
+            "Ctrl+1~4：搜索、播放列表、分类歌单、排行榜\n" +
+            "Ctrl+5~8：下载管理、导入个人歌单、音源管理、设置；歌词窗口除外\n" +
             "Alt+T：打开工具菜单（下载管理、导入个人歌单、音源管理、设置）\n" +
             "Ctrl+F：搜索\n" +
             "Ctrl+R：刷新当前页面\n" +

@@ -207,12 +207,24 @@ public sealed class SettingsWorkflow
         CancellationToken cancellationToken = default)
     {
         var settings = Normalize(await _store.LoadAsync(cancellationToken) ?? new UserSettings());
+        var requiresHotkeyMigration = settings.HotkeySchemaVersion < 2;
+
+        // Settings below schema 2 contain the legacy global defaults. Remove only the
+        // stored globals so they are rebuilt from schema 2; local customizations stay.
+        if (requiresHotkeyMigration)
+            settings.CustomHotkeys = settings.CustomHotkeys
+                .Where(item => !item.IsGlobal)
+                .ToList();
+
         SettingsEditState current;
         lock (_stateGate)
         {
             settings.CustomHotkeys = _hotkeys.Load(settings.CustomHotkeys).ToList();
+            settings.HotkeySchemaVersion = 2;
             current = _current = new SettingsEditState(++_version, settings);
-            _persistedVersion = _version;
+            // A migrated state is deliberately dirty so the next explicit save stores
+            // schema 2 without an automatic write during startup.
+            _persistedVersion = requiresHotkeyMigration ? _version - 1 : _version;
         }
         _hotkeys.AttachWindow(windowHandle);
         PublishSettingsChanged(previous: null, current);

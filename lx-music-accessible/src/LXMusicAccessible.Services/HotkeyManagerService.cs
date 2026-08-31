@@ -7,6 +7,8 @@ namespace LXMusicAccessible.Services;
 
 internal interface IGlobalHotkeyAdapter
 {
+    int LastRegisterError { get; }
+
     bool Register(IntPtr windowHandle, int id, Key key, ModifierKeys modifiers);
     bool Unregister(IntPtr windowHandle, int id);
 }
@@ -25,12 +27,20 @@ internal sealed class Win32GlobalHotkeyAdapter : IGlobalHotkeyAdapter
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-    public bool Register(IntPtr windowHandle, int id, Key key, ModifierKeys modifiers) =>
-        RegisterHotKey(
+    public int LastRegisterError { get; private set; }
+
+    public bool Register(IntPtr windowHandle, int id, Key key, ModifierKeys modifiers)
+    {
+        LastRegisterError = 0;
+        var registered = RegisterHotKey(
             windowHandle,
             id,
             ToFlags(modifiers) | ModNoRepeat,
             (uint)KeyInterop.VirtualKeyFromKey(key));
+        if (!registered)
+            LastRegisterError = Marshal.GetLastWin32Error();
+        return registered;
+    }
 
     public bool Unregister(IntPtr windowHandle, int id) => UnregisterHotKey(windowHandle, id);
 
@@ -101,19 +111,26 @@ internal sealed class HotkeyManagerService
         if (_windowHandle == IntPtr.Zero) return Array.Empty<Hotkey>();
 
         var failed = new List<Hotkey>();
+        var failureDetails = new List<string>();
         foreach (var (hotkey, id) in EnabledGlobals(_hotkeys))
         {
             if (_native.Register(_windowHandle, id, hotkey.Key, hotkey.Modifiers))
+            {
                 _registered[id] = Clone(hotkey);
+            }
             else
+            {
+                failureDetails.Add($"{hotkey.ActionId}:{_native.LastRegisterError}");
                 failed.Add(Clone(hotkey));
+            }
         }
 
         if (failed.Count > 0)
         {
             _logger.LogWarning(
-                "Global hotkey initialization failed for {Count} bindings",
-                failed.Count);
+                "Global hotkey initialization failed for {Count} bindings: {Details}",
+                failed.Count,
+                string.Join(", ", failureDetails));
             RegistrationFailed?.Invoke(
                 this,
                 new HotkeysRegistrationFailedEventArgs { FailedHotkeys = failed });
@@ -385,21 +402,21 @@ internal sealed class HotkeyManagerService
     {
         var globals = new (string Id, string Name, Key Key, ModifierKeys Modifiers)[]
         {
-            (HotkeyActions.PlayPause, "播放/暂停", Key.Space, ModifierKeys.Control),
-            (HotkeyActions.Stop, "停止", Key.Space, ModifierKeys.Control | ModifierKeys.Shift),
-            (HotkeyActions.Previous, "上一首", Key.Left, ModifierKeys.Control),
-            (HotkeyActions.Next, "下一首", Key.Right, ModifierKeys.Control),
+            (HotkeyActions.PlayPause, "播放/暂停", Key.Home, ModifierKeys.Control | ModifierKeys.Alt),
+            (HotkeyActions.Stop, "停止", Key.End, ModifierKeys.Control | ModifierKeys.Alt),
+            (HotkeyActions.Previous, "上一首", Key.PageUp, ModifierKeys.Control | ModifierKeys.Alt),
+            (HotkeyActions.Next, "下一首", Key.PageDown, ModifierKeys.Control | ModifierKeys.Alt),
             (HotkeyActions.Rewind, "快退", Key.Left, ModifierKeys.Control | ModifierKeys.Alt),
             (HotkeyActions.Forward, "快进", Key.Right, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.TogglePlayMode, "播放模式", Key.M, ModifierKeys.Control),
-            (HotkeyActions.Download, "下载", Key.D, ModifierKeys.Control),
-            (HotkeyActions.VolumeUp, "音量加", Key.Up, ModifierKeys.Control),
-            (HotkeyActions.VolumeDown, "音量减", Key.Down, ModifierKeys.Control),
-            (HotkeyActions.SwitchNextOutputDevice, "下一个播放设备", Key.Up, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.SwitchPreviousOutputDevice, "上一个播放设备", Key.Down, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.LyricDelay, "歌词延后", Key.J, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.LyricAdvance, "歌词提前", Key.K, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.ToggleWindow, "隐藏/显示窗口", Key.H, ModifierKeys.Control | ModifierKeys.Shift)
+            (HotkeyActions.TogglePlayMode, "播放模式", Key.None, ModifierKeys.None),
+            (HotkeyActions.Download, "下载", Key.None, ModifierKeys.None),
+            (HotkeyActions.VolumeUp, "音量加", Key.Up, ModifierKeys.Control | ModifierKeys.Alt),
+            (HotkeyActions.VolumeDown, "音量减", Key.Down, ModifierKeys.Control | ModifierKeys.Alt),
+            (HotkeyActions.SwitchNextOutputDevice, "下一个播放设备", Key.None, ModifierKeys.None),
+            (HotkeyActions.SwitchPreviousOutputDevice, "上一个播放设备", Key.None, ModifierKeys.None),
+            (HotkeyActions.LyricDelay, "歌词延后", Key.None, ModifierKeys.None),
+            (HotkeyActions.LyricAdvance, "歌词提前", Key.None, ModifierKeys.None),
+            (HotkeyActions.ToggleWindow, "隐藏/显示窗口", Key.None, ModifierKeys.None)
         };
         var locals = new (string Id, string Name, Key Key, ModifierKeys Modifiers)[]
         {
@@ -433,7 +450,7 @@ internal sealed class HotkeyManagerService
         Key = item.Key,
         Modifiers = item.Modifiers,
         IsGlobal = global,
-        IsEnabled = true
+        IsEnabled = item.Key != Key.None
     };
 
     private static IEnumerable<(Hotkey Hotkey, int Id)> EnabledGlobals(
@@ -468,7 +485,7 @@ internal sealed class HotkeyManagerService
             or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin;
 
     private static bool IsReserved(Key key, ModifierKeys modifiers) =>
-        modifiers == ModifierKeys.Alt && key is >= Key.D1 and <= Key.D4
+        modifiers == ModifierKeys.Control && key is >= Key.D1 and <= Key.D8
         || modifiers == ModifierKeys.Control && key is Key.F or Key.R
         || modifiers == ModifierKeys.Alt && key is Key.M or Key.C or Key.L or Key.S or Key.R;
 
