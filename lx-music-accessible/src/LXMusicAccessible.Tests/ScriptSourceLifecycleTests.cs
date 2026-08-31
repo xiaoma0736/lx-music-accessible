@@ -66,6 +66,85 @@ public sealed class ScriptSourceLifecycleTests
     }
 
     [Fact]
+    public async Task Saving_sources_removes_sources_missing_from_the_current_list()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var data = app.Services.GetRequiredService<IDataService>();
+        var first = TrustedSource("first");
+        var second = TrustedSource("second");
+
+        await data.SaveMusicSourcesAsync([first, second]);
+        await data.SaveMusicSourcesAsync([second]);
+
+        var persisted = await data.GetMusicSourcesAsync();
+        Assert.Single(persisted, source => source.Id == "second");
+        Assert.DoesNotContain(persisted, source => source.Id == "first");
+    }
+
+    [Fact]
+    public async Task Deleted_subscription_is_not_readded_on_restart()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var data = app.Services.GetRequiredService<IDataService>();
+        await data.SaveMusicSourcesAsync([TrustedSource("hyw", SubscriptionUrl)]);
+        app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(SubscriptionUrl), UpdatedScript);
+
+        var sources = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+        await sources.InitializeScriptSourcesAsync();
+        sources.RemoveSource(sources.GetAllSources().Single(source => source.Id == "hyw"));
+        Assert.DoesNotContain(await data.GetMusicSourcesAsync(), source => source.Id == "hyw");
+
+        var restarted = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+        await restarted.InitializeScriptSourcesAsync();
+
+        Assert.DoesNotContain(restarted.GetAllSources(), source => source.Id == "hyw");
+        Assert.DoesNotContain(await data.GetMusicSourcesAsync(), source => source.Id == "hyw");
+    }
+
+    [Fact]
+    public async Task Refresh_source_downloads_validates_and_persists_the_remote_script()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var data = app.Services.GetRequiredService<IDataService>();
+        var url = new Uri("https://fixture.invalid/custom.js");
+        await data.SaveMusicSourcesAsync([TrustedSource("custom", url.ToString())]);
+        app.HttpHandler.RegisterText(HttpMethod.Get, url, UpdatedScript);
+        var sources = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+        await sources.InitializeScriptSourcesAsync();
+        var source = sources.GetAllSources().Single(item => item.Id == "custom");
+
+        var updated = await sources.RefreshSourceAsync(source);
+
+        Assert.True(updated);
+        Assert.Equal("Updated test source", source.Name);
+        Assert.Equal("2.0.0", source.Version);
+        Assert.Equal(UpdatedScript, source.ScriptContent);
+        Assert.Equal(ScriptMusicSource.ComputeSha256(UpdatedScript), source.ContentSha256);
+        Assert.Equal(UpdatedScript, sources.GetScriptSource().GetScript("custom")?.RawScript);
+        Assert.Equal(UpdatedScript, (await data.GetMusicSourcesAsync()).Single(item => item.Id == "custom").ScriptContent);
+    }
+
+    [Fact]
+    public async Task Failed_refresh_source_keeps_the_active_version()
+    {
+        await using var app = await TestApplicationHost.StartAsync();
+        var data = app.Services.GetRequiredService<IDataService>();
+        var url = new Uri("https://fixture.invalid/custom.js");
+        await data.SaveMusicSourcesAsync([TrustedSource("custom", url.ToString())]);
+        app.HttpHandler.RegisterText(HttpMethod.Get, url, "/* no request handler */");
+        var sources = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+        await sources.InitializeScriptSourcesAsync();
+        var source = sources.GetAllSources().Single(item => item.Id == "custom");
+
+        var updated = await sources.RefreshSourceAsync(source);
+
+        Assert.False(updated);
+        Assert.Equal(ValidScript, source.ScriptContent);
+        Assert.Equal(ValidScript, sources.GetScriptSource().GetScript("custom")?.RawScript);
+        Assert.Equal(ValidScript, (await data.GetMusicSourcesAsync()).Single(item => item.Id == "custom").ScriptContent);
+    }
+
+    [Fact]
     public async Task Cold_start_keeps_verified_bundled_source_when_subscriptions_are_unavailable()
     {
         await using var app = await TestApplicationHost.StartAsync();
@@ -518,4 +597,18 @@ public sealed class ScriptSourceLifecycleTests
         Assert.NotNull(sources.GetScriptSource().GetScript(imported.Id));
         Assert.NotNull(sources.GetScriptSource().GetScript(trusted.Id));
     }
+
+    private static MusicSource TrustedSource(string id, string? scriptUrl = null) => new()
+    {
+        Id = id,
+        Name = $"{id} source",
+        Version = "1.0.0",
+        ScriptUrl = scriptUrl ?? "",
+        ScriptContent = ValidScript,
+        ContentSha256 = ScriptMusicSource.ComputeSha256(ValidScript),
+        TrustState = ScriptTrustState.UserApproved,
+        Type = SourceType.Network,
+        IsEnabled = true,
+        Priority = 10
+    };
 }

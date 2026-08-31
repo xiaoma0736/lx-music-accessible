@@ -202,6 +202,39 @@ public sealed class SourceManagerWindowTests
     }
 
     [Fact]
+    public async Task Update_source_menu_refreshes_the_selected_network_source()
+    {
+        await RunOnStaThreadAsync(() =>
+        {
+            var announcer = new RecordingAnnouncer();
+            var source = Source("remote", "Remote source");
+            source.ScriptUrl = "https://fixture.invalid/source.js";
+            var sources = new RecordingSourceService(source)
+            {
+                RefreshSource = item =>
+                {
+                    item.Version = "2.0";
+                    return Task.FromResult(true);
+                }
+            };
+            var window = new SourceManagerWindow(announcer, sources, _ => false);
+            window.Show();
+            Pump(window.Dispatcher);
+            window.SourceList.SelectedIndex = 0;
+
+            var menu = Assert.IsType<ContextMenu>(window.FindResource("SourceContextMenu"));
+            var update = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "??????"));
+            update.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Pump(window.Dispatcher);
+
+            Assert.Equal(1, sources.RefreshCount);
+            Assert.Contains("?????????Remote source", announcer.Messages);
+            Assert.Contains("Remote source ???? 2.0", announcer.Messages);
+            window.Close();
+        });
+    }
+
+    [Fact]
     public async Task Playback_hotkeys_are_delegated_but_escape_closes_locally()
     {
         await RunOnStaThreadAsync(() =>
@@ -337,7 +370,15 @@ public sealed class SourceManagerWindowTests
             _sources.RemoveAll(item => string.Equals(item.Id, source.Id, StringComparison.OrdinalIgnoreCase));
             _sourcesChanged?.Invoke(this, EventArgs.Empty);
         }
+        public int RefreshCount { get; private set; }
+        public Func<MusicSource, Task<bool>> RefreshSource { get; set; } = _ => Task.FromResult(false);
+
         public Task<bool> UpdateSourceAsync(MusicSource source) => throw new NotSupportedException();
+        public Task<bool> RefreshSourceAsync(MusicSource source, CancellationToken cancellationToken = default)
+        {
+            RefreshCount++;
+            return RefreshSource(source);
+        }
         public MusicSource? GetDefaultSource() => _sources.FirstOrDefault();
         public void SetDefaultSource(string id) => throw new NotSupportedException();
         public Task<List<string>> GetQualitiesForSourceAsync(string sourceId) => throw new NotSupportedException();

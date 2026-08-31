@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Data;
@@ -209,6 +209,11 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         foreach (var subscription in SubscriptionSources)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!_sources.Any(source => string.Equals(
+                    source.Id,
+                    subscription.Id,
+                    StringComparison.OrdinalIgnoreCase)))
+                continue;
             try
             {
                 await RefreshSubscriptionAsync(subscription, cancellationToken);
@@ -1051,7 +1056,79 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         RaiseSourcesChanged();
     }
     private void ClearCache() { _searchSessions.Clear(); }
-    public async Task<bool> UpdateSourceAsync(MusicSource s) { s.LastUpdateDate = DateTime.Now; ClearCache(); await PersistSourcesAsync(); RaiseSourcesChanged(); return true; }
+    public async Task<bool> UpdateSourceAsync(MusicSource s)
+    {
+        s.LastUpdateDate = DateTime.Now;
+        ClearCache();
+        await PersistSourcesAsync();
+        RaiseSourcesChanged();
+        return true;
+    }
+
+    public async Task<bool> RefreshSourceAsync(
+        MusicSource source,
+        CancellationToken cancellationToken = default)
+    {
+        if (IsOfficialBuiltIn(source)
+            || source.Type is SourceType.Bundled or SourceType.Local
+            || !HasHttpScriptUrl(source)
+            || !_sources.Any(item => string.Equals(
+                item.Id,
+                source.Id,
+                StringComparison.OrdinalIgnoreCase)))
+            return false;
+
+        var candidate = await _scriptSource.StageFromUrlAsync(
+            source.ScriptUrl,
+            source.Id,
+            cancellationToken);
+        if (candidate?.RawScript is null
+            || !await _scriptEngine.TestLoadAsync(candidate, cancellationToken))
+            return false;
+
+        var digest = ScriptMusicSource.ComputeSha256(candidate.RawScript);
+        var previousScript = _scriptSource.GetScript(source.Id);
+        var previous = SourceSnapshot.Capture(source);
+
+        source.Name = candidate.Name;
+        source.Version = candidate.Version
+            ?? (string.IsNullOrEmpty(source.Version) ? "1.0" : source.Version);
+        source.ScriptContent = candidate.RawScript;
+        source.ContentSha256 = digest;
+        source.Type = SourceType.Network;
+        source.TrustState = ScriptTrustState.UserApproved;
+        source.LastUpdateDate = DateTime.Now;
+
+        if (!_scriptSource.RegisterVerified(candidate, digest))
+        {
+            previous.Restore(source);
+            return false;
+        }
+
+        try
+        {
+            await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
+        }
+        catch
+        {
+            previous.Restore(source);
+            if (previousScript?.RawScript is not null)
+            {
+                _scriptSource.RegisterVerified(
+                    previousScript,
+                    ScriptMusicSource.ComputeSha256(previousScript.RawScript));
+            }
+            else
+            {
+                _scriptSource.Remove(source.Id);
+            }
+            throw;
+        }
+
+        ClearCache();
+        RaiseSourcesChanged();
+        return true;
+    }
 
     public async Task<MusicSource?> ImportFromUrlAsync(
         string url,
@@ -1253,6 +1330,13 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
 
     public IMusicApi? GetApi(string id) => _apiMap.TryGetValue(id, out var a) ? a : null;
     public ScriptMusicSource GetScriptSource() => _scriptSource;
+
+    private static bool HasHttpScriptUrl(MusicSource source)
+    {
+        return Uri.TryCreate(source.ScriptUrl, UriKind.Absolute, out var url)
+            && (url.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                || url.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase));
+    }
 
     private bool IsOfficialBuiltIn(MusicSource source) =>
         source.Type == SourceType.BuiltIn && _apiMap.ContainsKey(source.Id);

@@ -10,6 +10,8 @@ namespace LXMusicAccessible.App;
 
 public partial class SourceManagerWindow : Window
 {
+    private const string UpdateSourceMenuHeader = "??????";
+
     private readonly IAccessibleAnnouncer _announcer;
     private readonly IMusicSourceService _sources;
     private readonly Func<KeyEventArgs, bool> _handleHotkey;
@@ -77,7 +79,22 @@ public partial class SourceManagerWindow : Window
         EmptySourceText.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         AutomationProperties.SetItemStatus(SourceList, empty ? "暂无音源" : $"共 {sources.Count} 个音源");
         if (hadFocus) Dispatcher.BeginInvoke(FocusSelectedSource, DispatcherPriority.Input);
+        UpdateRefreshMenuState(selected);
     }
+
+    private void UpdateRefreshMenuState(MusicSource? source)
+    {
+        if (SourceList.ContextMenu?.Items.OfType<MenuItem>()
+                .FirstOrDefault(item => Equals(item.Header, UpdateSourceMenuHeader)) is not { } update)
+            return;
+        update.IsEnabled = source is not null && CanRefreshSource(source);
+    }
+
+    private static bool CanRefreshSource(MusicSource source) =>
+        source.Type is not (SourceType.BuiltIn or SourceType.Bundled or SourceType.Local)
+        && Uri.TryCreate(source.ScriptUrl, UriKind.Absolute, out var url)
+        && (url.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            || url.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase));
 
     private async void ImportLocalSourceBtn_Click(object sender, RoutedEventArgs e)
     {
@@ -258,6 +275,32 @@ public partial class SourceManagerWindow : Window
         catch (Exception exception)
         {
             Announce($"检测失败：{exception.Message}", AnnouncementKind.Error);
+        }
+    }
+
+    private async void SourceMenu_Update_Click(object sender, RoutedEventArgs e)
+    {
+        if (SourceList.SelectedItem is not MusicSource source) return;
+        if (!CanRefreshSource(source))
+        {
+            Announce("?????????????", AnnouncementKind.Error);
+            return;
+        }
+
+        Announce($"?????????{source.Name}");
+        try
+        {
+            var updated = await _sources.RefreshSourceAsync(source);
+            RefreshIfOpen();
+            if (updated)
+                Announce($"{source.Name} ???? {source.Version}", AnnouncementKind.Success);
+            else
+                Announce($"{source.Name} ????????????", AnnouncementKind.Error);
+        }
+        catch (Exception exception)
+        {
+            RefreshIfOpen();
+            Announce($"???????{exception.Message}", AnnouncementKind.Error);
         }
     }
 

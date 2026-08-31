@@ -799,6 +799,18 @@ public class DataService : IDataService
         using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         try
         {
+            var parameters = new Dictionary<string, object>();
+            for (var index = 0; index < sources.Count; index++)
+                parameters[$"@Id{index}"] = sources[index].Id;
+            var idList = string.Join(", ", Enumerable.Range(0, sources.Count).Select(index => $"@Id{index}"));
+            await connection.ExecuteAsync(new CommandDefinition(
+                sources.Count == 0
+                    ? "DELETE FROM MusicSources"
+                    : $"DELETE FROM MusicSources WHERE Id NOT IN ({idList})",
+                parameters,
+                transaction,
+                cancellationToken: cancellationToken));
+
             foreach (var source in sources)
             {
                 await connection.ExecuteAsync(new CommandDefinition(@"

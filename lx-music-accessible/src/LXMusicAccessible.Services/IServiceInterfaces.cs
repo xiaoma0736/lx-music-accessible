@@ -412,6 +412,9 @@ public interface IMusicSourceService
     /// </summary>
     Task<bool> UpdateSourceAsync(MusicSource source);
 
+    /// <summary>??? URL ?????????????</summary>
+    Task<bool> RefreshSourceAsync(MusicSource source, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// 获取所有音源
     /// </summary>

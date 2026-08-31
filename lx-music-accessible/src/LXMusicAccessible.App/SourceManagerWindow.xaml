@@ -16,6 +16,7 @@
             <MenuItem Header="禁用" Click="SourceMenu_Disable_Click"/>
             <Separator/>
             <MenuItem Header="检测有效性" Click="SourceMenu_Test_Click"/>
+            <MenuItem x:Name="SourceMenuUpdateItem" Header="??????" Click="SourceMenu_Update_Click"/>
             <MenuItem Header="编辑" Click="SourceMenu_Edit_Click"/>
             <MenuItem Header="删除" Click="SourceMenu_Delete_Click"/>
         </ContextMenu>
