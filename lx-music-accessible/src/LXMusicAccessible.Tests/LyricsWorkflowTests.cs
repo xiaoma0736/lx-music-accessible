@@ -165,10 +165,12 @@ public sealed class LyricsWorkflowTests
             "LyricsWindow.xaml.cs"));
 
         Assert.Contains("Title=\"歌词\"", xaml);
-        Assert.Contains("x:Name=\"LyricsList\"", xaml);
+        Assert.Contains("x:Name=\"LyricsTextBox\"", xaml);
         Assert.Contains("AutomationProperties.Name=\"歌词\"", xaml);
-        Assert.Contains("AutomationProperties.Name\" Value=\"{Binding AccessibleText}\"", xaml);
-        Assert.Contains("Text=\"{Binding DisplayText}\"", xaml);
+        Assert.Contains("IsReadOnly=\"True\"", xaml);
+        Assert.Contains("IsReadOnlyCaretVisible=\"True\"", xaml);
+        Assert.Contains("TextWrapping=\"Wrap\"", xaml);
+        Assert.Contains("AcceptsReturn=\"True\"", xaml);
         Assert.Contains("x:Name=\"CopyLyricsButton\"", xaml);
         Assert.Contains("AutomationProperties.LiveSetting=\"Polite\"", xaml);
         Assert.DoesNotContain("AutomationProperties.HelpText=", xaml);

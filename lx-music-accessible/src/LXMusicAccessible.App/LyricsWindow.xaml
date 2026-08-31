@@ -13,30 +13,16 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <TextBlock x:Name="TitleText" Text="歌词" FontSize="20" FontWeight="Bold" Margin="12,10,12,6"/>
-        <ListBox x:Name="LyricsList" Grid.Row="1" Focusable="True" Margin="12,0,12,6"
+        <!-- 歌词 text viewer: read-only TextBox; screen-reader browse mode reads line by line and allows free selection/copy -->
+        <TextBox x:Name="LyricsTextBox" Grid.Row="1" Margin="12,0,12,6"
                  AutomationProperties.Name="歌词"
-                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                 HorizontalContentAlignment="Stretch"
-                 IsTabStop="False">
-            <ListBox.ItemContainerStyle>
-                <Style TargetType="ListBoxItem">
-                    <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleText}"/>
-                    <Setter Property="Padding" Value="4,2"/>
-                    <Setter Property="FontSize" Value="16"/>
-                    <Style.Triggers>
-                        <DataTrigger Binding="{Binding IsCurrent}" Value="True">
-                            <Setter Property="Background" Value="#FFFFF3A0"/>
-                            <Setter Property="FontSize" Value="22"/>
-                        </DataTrigger>
-                    </Style.Triggers>
-                </Style>
-            </ListBox.ItemContainerStyle>
-            <ListBox.ItemTemplate>
-                <DataTemplate>
-                    <TextBlock Text="{Binding DisplayText}" TextWrapping="Wrap"/>
-                </DataTemplate>
-            </ListBox.ItemTemplate>
-        </ListBox>
+                 IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                 TextWrapping="Wrap" AcceptsReturn="True"
+                 VerticalScrollBarVisibility="Auto"
+                 HorizontalScrollBarVisibility="Disabled"
+                 HorizontalContentAlignment="Left"
+                 Background="Transparent" BorderThickness="0"
+                 FontSize="16" IsTabStop="True"/>
         <StackPanel Grid.Row="2" Margin="12,6,12,10">
             <Button x:Name="CopyLyricsButton" Content="复制歌词" HorizontalAlignment="Left" Padding="16,6"
                     Click="CopyLyricsButton_Click" IsTabStop="True"/>

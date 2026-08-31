@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
@@ -7,16 +6,19 @@ using LXMusicAccessible.Services;
 namespace LXMusicAccessible.App;
 
 /// <summary>
-/// Presents lyric lines in the accessible list workflow and keeps local copy/live-region support.
+/// Presents lyrics in a read-only text viewer so screen-reader browse mode can read
+/// lines naturally and select or copy freely; keeps the copy button, the local live
+/// region, and auto-scroll-to-current-line highlighting.
 /// ESC/Alt+F4/close hides the reusable window until application shutdown.
 /// </summary>
 public partial class LyricsWindow : Window
 {
+    private const char LineSeparator = '\n';
     private readonly Func<KeyEventArgs, bool> _handleHotkey;
     private readonly LyricsWorkflow _workflow;
-    private readonly ObservableCollection<LyricsLineItem> _lines = [];
     private IReadOnlyList<LyricsLineState>? _presentedLines;
     private string? _contentKey;
+    private List<int> _lineOffsets = [];
     private bool _allowClose;
 
     public LyricsWindow(LyricsWorkflow workflow, Func<KeyEventArgs, bool> handleHotkey)
@@ -26,21 +28,23 @@ public partial class LyricsWindow : Window
         InitializeComponent();
         _workflow = workflow;
         _handleHotkey = handleHotkey;
-        LyricsList.ItemsSource = _lines;
         _workflow.StateChanged += Workflow_StateChanged;
         Present(_workflow.Current);
     }
 
     public void ScrollToLine(int index)
     {
-        if (index < 0 || index >= LyricsList.Items.Count) return;
-        LyricsList.ScrollIntoView(LyricsList.Items[index]);
+        if (index < 0 || index >= _lineOffsets.Count) return;
+        // Deferred so the new Text has completed layout before measuring the line rect.
+        Dispatcher.BeginInvoke(
+            () => RevealLine(index),
+            System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
-    public void FocusLyricsList()
+    public void FocusLyricsView()
     {
         Dispatcher.BeginInvoke(
-            LyricsList.FocusItemOrList,
+            LyricsTextBox.Focus,
             System.Windows.Threading.DispatcherPriority.Input);
     }
 
@@ -74,24 +78,46 @@ public partial class LyricsWindow : Window
         {
             _contentKey = key;
             _presentedLines = state.Lines;
-            _lines.Clear();
-            if (state.Lines.Count == 0)
-            {
-                _lines.Add(new LyricsLineItem(state.Message, state.Message));
-            }
-            else
-            {
-                foreach (var line in state.Lines)
-                    _lines.Add(new LyricsLineItem(line.DisplayText, line.AccessibleText));
-            }
+            var displayLines = state.Lines.Count == 0
+                ? [state.Message]
+                : state.Lines.Select(line => line.DisplayText).ToList();
+            LyricsTextBox.Text = string.Join(LineSeparator, displayLines);
+            RebuildLineOffsets(displayLines);
             CopyLyricsButton.IsEnabled = state.Status == LyricsLoadStatus.Ready && state.Lines.Count > 0;
         }
 
-        for (var index = 0; index < _lines.Count; index++)
-            _lines[index].IsCurrent = index == state.CurrentIndex;
         if (state.AutoScroll && state.CurrentIndex >= 0)
             ScrollToLine(state.CurrentIndex);
         return contentChanged;
+    }
+
+    private void RebuildLineOffsets(IReadOnlyList<string> displayLines)
+    {
+        _lineOffsets = new List<int>(displayLines.Count);
+        var offset = 0;
+        foreach (var line in displayLines)
+        {
+            _lineOffsets.Add(offset);
+            offset += line.Length + 1; // single LineSeparator character between lines
+        }
+    }
+
+    /// <summary>Selects the current line (visual highlight) and keeps it inside the viewport.</summary>
+    private void RevealLine(int index)
+    {
+        if (index < 0 || index >= _lineOffsets.Count) return;
+        var start = _lineOffsets[index];
+        var end = index + 1 < _lineOffsets.Count
+            ? _lineOffsets[index + 1] - 1
+            : LyricsTextBox.Text.Length;
+        LyricsTextBox.Select(start, Math.Max(0, end - start));
+        LyricsTextBox.CaretIndex = start;
+        var rect = LyricsTextBox.GetRectFromCharacterIndex(start, true);
+        if (rect.Height > 0)
+        {
+            var target = rect.Top - (LyricsTextBox.ViewportHeight / 2d);
+            LyricsTextBox.ScrollToVerticalOffset(Math.Max(0, target));
+        }
     }
 
     private void CopyLyricsButton_Click(object sender, RoutedEventArgs e)
@@ -102,11 +128,10 @@ public partial class LyricsWindow : Window
     /// <summary>Copies the lyric lines to the clipboard and reports the result through the live region.</summary>
     private void CopyLyricsToClipboard()
     {
-        if (!CopyLyricsButton.IsEnabled || _lines.Count == 0) return;
-        var text = string.Join(Environment.NewLine, _lines.Select(line => line.DisplayText));
+        if (!CopyLyricsButton.IsEnabled || LyricsTextBox.Text.Length == 0) return;
         try
         {
-            System.Windows.Clipboard.SetText(text);
+            System.Windows.Clipboard.SetText(LyricsTextBox.Text);
             SetLiveRegion("歌词已复制");
         }
         catch (Exception)
@@ -152,26 +177,5 @@ public partial class LyricsWindow : Window
     {
         _allowClose = true;
         _workflow.StateChanged -= Workflow_StateChanged;
-    }
-
-    private sealed class LyricsLineItem(string displayText, string accessibleText) : INotifyPropertyChanged
-    {
-        private bool _isCurrent;
-
-        public string DisplayText { get; } = displayText;
-        public string AccessibleText { get; } = accessibleText;
-
-        public bool IsCurrent
-        {
-            get => _isCurrent;
-            set
-            {
-                if (_isCurrent == value) return;
-                _isCurrent = value;
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsCurrent)));
-            }
-        }
-
-        public event PropertyChangedEventHandler? PropertyChanged;
     }
 }

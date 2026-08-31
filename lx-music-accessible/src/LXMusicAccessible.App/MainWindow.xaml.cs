@@ -1556,7 +1556,7 @@ public partial class MainWindow : Window
         if (!w.IsVisible)
             w.Show();
         w.Activate();
-        w.FocusLyricsList();
+        w.FocusLyricsView();
         _lyrics.AnnounceCurrentLine();
     }
 

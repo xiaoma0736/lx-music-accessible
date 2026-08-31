@@ -34,7 +34,6 @@ public sealed class ListFocusAuditTests
         Assert.Equal(new[]
         {
             "DownloadManagerWindow.xaml:DownloadTaskList",
-            "LyricsWindow.xaml:LyricsList",
             "MainWindow.xaml:CategoryList",
             "MainWindow.xaml:CategoryPlaylistsListBox",
             "MainWindow.xaml:CategorySongsList",

@@ -65,7 +65,7 @@ public sealed class ApplicationHostTests
                 Assert.Equal("关闭", sponsor.CloseBtn.Content);
                 Assert.Empty(AutomationProperties.GetName(lyrics));
                 Assert.Equal("歌词", lyrics.Title);
-                Assert.Equal("歌词", AutomationProperties.GetName(lyrics.LyricsList));
+                Assert.Equal("歌词", AutomationProperties.GetName(lyrics.LyricsTextBox));
                 Assert.Equal("音源管理", sourceManager.Title);
                 Assert.Equal("音源", AutomationProperties.GetName(sourceManager.SourceList));
                 Assert.Equal(WindowStartupLocation.CenterOwner, sourceManager.WindowStartupLocation);
