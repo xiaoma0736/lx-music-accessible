@@ -28,7 +28,7 @@ public sealed class MainWindowShellTests
     }
 
     [Fact]
-    public void Tools_have_one_menu_path_in_the_required_order_and_only_four_page_shortcuts()
+    public void Tools_have_one_menu_path_and_fixed_number_shortcuts_for_browse_and_tool_windows()
     {
         var root = LoadMainWindow();
         var tools = root.Descendants()
@@ -47,16 +47,21 @@ public sealed class MainWindowShellTests
 
         var code = File.ReadAllText(Path.Combine(FindRepositoryRoot(),
             "src", "LXMusicAccessible.App", "MainWindow.xaml.cs"));
-        foreach (var number in Enumerable.Range(1, 4))
+        var shortcuts = File.ReadAllText(Path.Combine(FindRepositoryRoot(),
+            "src", "LXMusicAccessible.App", "WindowShortcuts.cs"));
+        var targets = new[]
         {
-            Assert.Contains($"Key.D{number} or Key.NumPad{number} => {number - 1}", code,
-                StringComparison.Ordinal);
-        }
-        foreach (var number in Enumerable.Range(5, 4))
-        {
-            Assert.DoesNotContain($"Key.D{number}", code, StringComparison.Ordinal);
-            Assert.DoesNotContain($"Key.NumPad{number}", code, StringComparison.Ordinal);
-        }
+            "System.Windows.Input.Key.D1 or System.Windows.Input.Key.NumPad1 => WindowShortcutTarget.Search",
+            "System.Windows.Input.Key.D2 or System.Windows.Input.Key.NumPad2 => WindowShortcutTarget.Playlist",
+            "System.Windows.Input.Key.D3 or System.Windows.Input.Key.NumPad3 => WindowShortcutTarget.CategoryPlaylists",
+            "System.Windows.Input.Key.D4 or System.Windows.Input.Key.NumPad4 => WindowShortcutTarget.Rankings",
+            "System.Windows.Input.Key.D5 or System.Windows.Input.Key.NumPad5 => WindowShortcutTarget.DownloadManager",
+            "System.Windows.Input.Key.D6 or System.Windows.Input.Key.NumPad6 => WindowShortcutTarget.PlaylistImport",
+            "System.Windows.Input.Key.D7 or System.Windows.Input.Key.NumPad7 => WindowShortcutTarget.SourceManager",
+            "_ => WindowShortcutTarget.Settings"
+        };
+        foreach (var target in targets)
+            Assert.Contains(target, shortcuts, StringComparison.Ordinal);
         Assert.Contains("case 0: FocusControl(SearchBox)", code, StringComparison.Ordinal);
         Assert.Contains("case 1: FocusListContent(FavoriteSongsList)", code, StringComparison.Ordinal);
         Assert.Contains("case 2: FocusListContent(CategoryList)", code, StringComparison.Ordinal);
@@ -76,10 +81,10 @@ public sealed class MainWindowShellTests
 
         foreach (var document in documents)
         {
-            Assert.Contains("Alt+1", document, StringComparison.Ordinal);
-            Assert.Contains("Alt+4", document, StringComparison.Ordinal);
-            Assert.Contains("Alt+5", document, StringComparison.Ordinal);
-            Assert.Contains("Alt+8", document, StringComparison.Ordinal);
+            Assert.Contains("Ctrl+1", document, StringComparison.Ordinal);
+            Assert.Contains("Ctrl+4", document, StringComparison.Ordinal);
+            Assert.Contains("Ctrl+5", document, StringComparison.Ordinal);
+            Assert.Contains("Ctrl+8", document, StringComparison.Ordinal);
             Assert.Contains("工具→下载管理", document, StringComparison.Ordinal);
             Assert.Contains("工具→导入个人歌单", document, StringComparison.Ordinal);
             Assert.Contains("工具→音源管理", document, StringComparison.Ordinal);
