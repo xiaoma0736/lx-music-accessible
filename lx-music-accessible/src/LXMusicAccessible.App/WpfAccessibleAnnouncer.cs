@@ -99,8 +99,8 @@ internal sealed class WpfAccessibleAnnouncer(
 
     private bool ShouldSpeak(AccessibleAnnouncement announcement) =>
         _speech?.IsAvailable == true
-        && announcement.Speech != AnnouncementSpeech.None
-        && (SpeechEnabled || announcement.Speech == AnnouncementSpeech.Always);
+        && (SpeechEnabled || announcement.Speech == AnnouncementSpeech.Always)
+        && AccessibleSpeechPolicy.ShouldSpeak(announcement);
 
     private async Task SpeakAsync(AccessibleAnnouncement announcement)
     {

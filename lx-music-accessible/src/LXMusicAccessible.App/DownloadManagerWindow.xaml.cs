@@ -117,7 +117,7 @@ public partial class DownloadManagerWindow : Window
     }
 
     private void Announce(string text, AnnouncementKind kind = AnnouncementKind.Status) =>
-        _announcer.Announce(new(text, kind, Speech: AnnouncementSpeech.FollowPreference));
+        _announcer.Announce(new(text, kind, "download-window", AnnouncementSpeech.FollowPreference));
 
     private void Window_Closed(object? sender, EventArgs e)
     {
