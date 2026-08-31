@@ -15,7 +15,7 @@ public sealed class SpeechWhitelistTests
     public void Allowed_activity_categories_enable_speech(string activityId)
     {
         Assert.True(AccessibleSpeechPolicy.ShouldSpeak(
-            new AccessibleAnnouncement("??", ActivityId: activityId)));
+            new AccessibleAnnouncement("提示", ActivityId: activityId)));
     }
 
     [Theory]
@@ -23,11 +23,11 @@ public sealed class SpeechWhitelistTests
     [InlineData("welcome")]
     [InlineData("search")]
     [InlineData("lyrics")]
-    [InlineData("download")] // ?????????????? download ??/???
+    [InlineData("download")] // 裸 download 不匹配，仅 download:/download-list: 前缀生效
     public void Other_activity_categories_do_not_enable_speech(string? activityId)
     {
         Assert.False(AccessibleSpeechPolicy.ShouldSpeak(
-            new AccessibleAnnouncement("??", ActivityId: activityId)));
+            new AccessibleAnnouncement("提示", ActivityId: activityId)));
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public sealed class SpeechWhitelistTests
     {
         Assert.False(AccessibleSpeechPolicy.ShouldSpeak(
             new AccessibleAnnouncement(
-                "????",
+                "测试提示",
                 ActivityId: "download:42",
                 Speech: AnnouncementSpeech.None)));
     }

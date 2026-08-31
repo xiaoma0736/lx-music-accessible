@@ -10,7 +10,7 @@ namespace LXMusicAccessible.App;
 
 public partial class SourceManagerWindow : Window
 {
-    private const string UpdateSourceMenuHeader = "??????";
+    private const string UpdateSourceMenuHeader = "更新音源接口";
 
     private readonly IAccessibleAnnouncer _announcer;
     private readonly IMusicSourceService _sources;
@@ -283,24 +283,24 @@ public partial class SourceManagerWindow : Window
         if (SourceList.SelectedItem is not MusicSource source) return;
         if (!CanRefreshSource(source))
         {
-            Announce("?????????????", AnnouncementKind.Error);
+            Announce("当前音源类型不支持在线更新", AnnouncementKind.Error);
             return;
         }
 
-        Announce($"?????????{source.Name}");
+        Announce($"正在更新音源接口：{source.Name}");
         try
         {
             var updated = await _sources.RefreshSourceAsync(source);
             RefreshIfOpen();
             if (updated)
-                Announce($"{source.Name} ???? {source.Version}", AnnouncementKind.Success);
+                Announce($"{source.Name} 已更新至 {source.Version}", AnnouncementKind.Success);
             else
-                Announce($"{source.Name} ????????????", AnnouncementKind.Error);
+                Announce($"{source.Name} 更新音源接口失败，接口内容未变化", AnnouncementKind.Error);
         }
         catch (Exception exception)
         {
             RefreshIfOpen();
-            Announce($"???????{exception.Message}", AnnouncementKind.Error);
+            Announce($"更新音源接口失败：{exception.Message}", AnnouncementKind.Error);
         }
     }
 
