@@ -36,7 +36,7 @@ public partial class MainWindow : Window
     private bool _hotkeyConflictDialogOpen;
     private int _tabFocusToken;
     private bool _suppressTabContentFocus;
-    private const int WM_HOTKEY = 0x0312;
+    private readonly GlobalHotkeyMessageWindow _globalHotkeyWindow = new();
 
     // ===== 小键盘误触发方向键热键修复（NumLock 关闭时小键盘 4/6/2/8 上报为方向键） =====
     private const int WH_KEYBOARD_LL = 13;
@@ -129,6 +129,8 @@ public partial class MainWindow : Window
         AssignSongContextMenus();
         _playback.QueueCompleted += PlayerService_QueueCompleted;
         _settingsWorkflow.HotkeyPressed += HotkeyManager_HotkeyPressed;
+        _globalHotkeyWindow.HotkeyReceived += (_, hotkeyId) =>
+            _settingsWorkflow.RaiseGlobalHotkey(hotkeyId);
         _settingsWorkflow.HotkeysRegistrationFailed += HotkeyManager_HotkeysRegistrationFailed;
         _settingsWorkflow.SettingsChanged += SettingsWorkflow_SettingsChanged;
         _musicSourceService.ScriptUpdateAlert += MusicSourceService_ScriptUpdateAlert;
@@ -151,13 +153,6 @@ public partial class MainWindow : Window
     private void InitializePlayMode()
     {
         UpdatePlayModeDisplay();
-    }
-
-    protected override void OnSourceInitialized(EventArgs e)
-    {
-        base.OnSourceInitialized(e);
-        if (PresentationSource.FromVisual(this) is HwndSource source)
-            source.AddHook(WndProc);
     }
 
     private void SendWelcomeMessage()
@@ -727,8 +722,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var handle = new WindowInteropHelper(this).Handle;
-            var settings = (await _settingsWorkflow.LoadAsync(handle)).Settings;
+            var settings = (await _settingsWorkflow.LoadAsync(_globalHotkeyWindow.Handle)).Settings;
             if (settings != null)
             {
                 SelectComboByTag(SearchSourceCombo, settings.DefaultSearchSource);
@@ -2522,16 +2516,6 @@ public partial class MainWindow : Window
 
     // ==================== 快捷键 ====================
 
-    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        if (msg == WM_HOTKEY)
-        {
-            _settingsWorkflow.RaiseGlobalHotkey(wParam.ToInt32());
-            handled = true;
-        }
-        return IntPtr.Zero;
-    }
-
     [StructLayout(LayoutKind.Sequential)]
     private struct KBDLLHOOKSTRUCT
     {
@@ -2959,6 +2943,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _settingsWorkflow.UnregisterAllGlobal();
+        _globalHotkeyWindow.Dispose();
         UninstallNumpadHook();
         if (_lyricsWindow != null)
         {
