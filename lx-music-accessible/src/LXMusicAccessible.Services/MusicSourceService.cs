@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Data;
@@ -212,6 +212,10 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
             if (!_sources.Any(source => string.Equals(
                     source.Id,
                     subscription.Id,
+                    StringComparison.OrdinalIgnoreCase))
+                && !_sources.Any(source => string.Equals(
+                    source.ScriptUrl,
+                    subscription.Url,
                     StringComparison.OrdinalIgnoreCase)))
                 continue;
             try
@@ -552,7 +556,9 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         if (!string.IsNullOrEmpty(defaultSourceId))
         {
             var defaultScript = scripts.FirstOrDefault(s => string.Equals(s.Id, defaultSourceId, StringComparison.OrdinalIgnoreCase));
-            if (defaultScript != null && SupportsQuality(defaultScript, source, quality))
+            if (defaultScript != null
+                && SupportsRequestedSource(defaultScript, source)
+                && SupportsQuality(defaultScript, source, quality))
             {
                 try
                 {
@@ -594,10 +600,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         {
             var script = scripts.FirstOrDefault(s => string.Equals(s.Id, src.Id, StringComparison.OrdinalIgnoreCase));
             if (script == null) continue;
-            // 仅当脚本支持当前平台（或支持列表未知为空）时才尝试，防止跨平台歌曲 ID 串歌
-            if (script.SupportedSources.Count > 0 &&
-                !script.SupportedSources.Contains(source, StringComparer.OrdinalIgnoreCase))
-                continue;
+            // Scripts must explicitly declare the requested platform; empty support is rejected.
+            if (!SupportsRequestedSource(script, source)) continue;
             if (!SupportsQuality(script, source, quality)) continue;
             try
             {
@@ -650,6 +654,9 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         // 用网易的 ID 去查 QQ/酷我等必然返回另一首歌（导致“切换接口后播放另外歌曲”）。
         return null;
     }
+
+    private static bool SupportsRequestedSource(LxScriptInfo script, string source) =>
+        script.SupportedSources.Contains(source, StringComparer.OrdinalIgnoreCase);
 
     private static bool SupportsQuality(LxScriptInfo script, string source, string quality) =>
         !script.QualityMap.TryGetValue(source, out var declared)

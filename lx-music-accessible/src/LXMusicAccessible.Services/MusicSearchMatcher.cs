@@ -1,4 +1,4 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 using LXMusicAccessible.Models;
 
 namespace LXMusicAccessible.Services;
@@ -84,31 +84,43 @@ public static class MusicSearchMatcher
         return result;
     }
 
-    /// <summary>严格判定 item 是否与 target 为“同一首”：标题匹配 + 歌手匹配（双方都有时）+ 时长 ±5s</summary>
+    /// <summary>Strictly determines whether two entries are the same song.</summary>
     public static bool IsSameSong(MusicInfo item, MusicInfo target)
     {
-        if (item == null || target == null) return false;
-        var fName = FilterStr(target.Title).ToLowerInvariant();
-        var fSinger = FilterStr(SortSingle(target.Artist)).ToLowerInvariant();
-        var fIntv = GetIntv(target.Duration);
-        if (fName.Length == 0) return false;
+        if (item is null || target is null) return false;
 
-        var iName = FilterStr(item.Title).ToLowerInvariant();
-        var iSinger = FilterStr(SortSingle(item.Artist)).ToLowerInvariant();
-        var iIntv = GetIntv(item.Duration);
-
-        // 时长：双方都有时长且差 ≥5s → 不是同一首
-        if (fIntv > 0 && iIntv > 0 && Math.Abs(fIntv - iIntv) >= 5) return false;
-
-        // 标题：相等，或条目标题完整包含目标标题（条目可能是目标的某个版本）
-        if (!(iName == fName || (fName.Length >= 2 && iName.Contains(fName)))) return false;
-
-        // 歌手：双方都有歌手时必须互相匹配
-        if (fSinger.Length > 0 && iSinger.Length > 0 &&
-            !(iSinger == fSinger || iSinger.Contains(fSinger) || fSinger.Contains(iSinger)))
+        var targetTitle = NormalizeTitle(target.Title);
+        var candidateTitle = NormalizeTitle(item.Title);
+        if (targetTitle.Length == 0
+            || candidateTitle.Length == 0
+            || !string.Equals(candidateTitle, targetTitle, StringComparison.Ordinal))
+        {
             return false;
+        }
 
-        return true;
+        var targetArtists = SplitArtists(target.Artist);
+        var candidateArtists = SplitArtists(item.Artist);
+        if (targetArtists.Count == 0
+            || candidateArtists.Count == 0
+            || !candidateArtists.SetEquals(targetArtists))
+        {
+            return false;
+        }
+
+        var targetDuration = GetIntv(target.Duration);
+        var candidateDuration = GetIntv(item.Duration);
+        if (targetDuration <= 0
+            || candidateDuration <= 0
+            || Math.Abs(targetDuration - candidateDuration) > 5)
+        {
+            return false;
+        }
+
+        var targetAlbum = NormalizeTitle(target.Album);
+        var candidateAlbum = NormalizeTitle(item.Album);
+        return targetAlbum.Length == 0
+            || candidateAlbum.Length == 0
+            || string.Equals(candidateAlbum, targetAlbum, StringComparison.Ordinal);
     }
 
     /// <summary>规范化：去首尾空白与常见括号后缀（如“晴天(深情版)” → “晴天”）</summary>
@@ -131,6 +143,23 @@ public static class MusicSearchMatcher
     }
 
     /// <summary>去空白与常见标点（对齐原版 filterStr），用于严格比较</summary>
+    private static string NormalizeTitle(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        return FilterStr(Normalize(value)).ToLowerInvariant();
+    }
+
+    private static HashSet<string> SplitArtists(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return new HashSet<string>(
+            SingerSplitRxp.Split(value)
+                .Select(NormalizeTitle)
+                .Where(artist => artist.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
     private static string FilterStr(string? s)
     {
         if (string.IsNullOrEmpty(s)) return "";

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
@@ -25,6 +25,7 @@ public sealed class PlaybackFakeIpRegressionTests
     private static readonly Uri ProxyCdnUri = new("http://proxy-cdn.invalid/value");
     private const string FastScript = """
         /** @name Fast direct source @version 1.0.0 */
+        var MUSIC_QUALITY = { tx: ['128k'] };
         lx.on(lx.EVENT_NAMES.request, function () {
           return fetch('https://fast-source.test/value').then(function (response) {
             return response.text();
@@ -33,6 +34,7 @@ public sealed class PlaybackFakeIpRegressionTests
         """;
     private const string SlowScript = """
         /** @name Slow fallback source @version 1.0.0 */
+        var MUSIC_QUALITY = { tx: ['128k'] };
         lx.on(lx.EVENT_NAMES.request, function () {
           return fetch('https://slow-source.test/value').then(function (response) {
             return response.text();
@@ -41,6 +43,7 @@ public sealed class PlaybackFakeIpRegressionTests
         """;
     private const string ProxyOnlyScript = """
         /** @name Proxy-only source @version 1.0.0 */
+        var MUSIC_QUALITY = { tx: ['128k'] };
         lx.on(lx.EVENT_NAMES.request, function () {
           return fetch('http://proxy-only.invalid/value').then(function (response) {
             return response.text();
