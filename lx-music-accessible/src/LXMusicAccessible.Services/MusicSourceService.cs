@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Data;
@@ -212,10 +212,6 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
             if (!_sources.Any(source => string.Equals(
                     source.Id,
                     subscription.Id,
-                    StringComparison.OrdinalIgnoreCase))
-                && !_sources.Any(source => string.Equals(
-                    source.ScriptUrl,
-                    subscription.Url,
                     StringComparison.OrdinalIgnoreCase)))
                 continue;
             try
@@ -590,7 +586,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
         }
 
         // 第2级: 其余已启用脚本源（按优先级依次尝试；跳过默认源与系统隐藏源；每源限时 10 秒）。
-        // 只回退到“明确支持当前平台”的脚本（SupportedSources 为空视为未知，允许尝试），
+        // 只回退到“明确支持当前平台”的脚本；SupportedSources 为空视为未声明，直接拒绝，
         // 避免把网易的歌拿去酷我/酷狗脚本解析而串歌。
         var enabledScriptSources = _sources
             .Where(s => s.IsEnabled && !s.IsSystemHidden && !string.Equals(s.Id, defaultSourceId, StringComparison.OrdinalIgnoreCase))

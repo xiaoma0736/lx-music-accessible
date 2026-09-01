@@ -47,6 +47,38 @@ public sealed class Issue49PlaybackSourceSafetyTests
     }
 
     [Fact]
+    public async Task Fallback_script_with_explicit_requested_source_support_resolves_the_song()
+    {
+        await using var host = await TestApplicationHost.StartAsync();
+        host.HttpHandler.Register(HttpMethod.Get, AudioUri, AudioResponse);
+        var data = host.Services.GetRequiredService<IDataService>();
+        await data.SaveMusicSourcesAsync([TrustedSource(ExplicitNeteaseScript, isDefault: false)]);
+
+        var sources = host.Services.GetRequiredService<MusicSourceService>();
+        await sources.InitializeScriptSourcesAsync();
+        var url = await sources.GetPlayUrlAsync(Music(), "netease", "128k");
+
+        Assert.Equal(AudioUri.AbsoluteUri, url);
+        Assert.Contains((HttpMethod.Get.Method, AudioUri.AbsoluteUri), host.HttpHandler.Requests);
+    }
+
+    [Fact]
+    public async Task Fallback_script_without_explicit_requested_source_support_is_skipped()
+    {
+        await using var host = await TestApplicationHost.StartAsync();
+        host.HttpHandler.Register(HttpMethod.Get, AudioUri, AudioResponse);
+        var data = host.Services.GetRequiredService<IDataService>();
+        await data.SaveMusicSourcesAsync([TrustedSource(UnknownSupportScript, isDefault: false)]);
+
+        var sources = host.Services.GetRequiredService<MusicSourceService>();
+        await sources.InitializeScriptSourcesAsync();
+        var url = await sources.GetPlayUrlAsync(Music(), "netease", "128k");
+
+        Assert.Null(url);
+        Assert.DoesNotContain((HttpMethod.Get.Method, AudioUri.AbsoluteUri), host.HttpHandler.Requests);
+    }
+
+    [Fact]
     public async Task Script_without_explicit_requested_source_support_is_not_used()
     {
         await using var host = await TestApplicationHost.StartAsync();
@@ -70,7 +102,7 @@ public sealed class Issue49PlaybackSourceSafetyTests
         Artist = "同一位歌手"
     };
 
-    private static MusicSource TrustedSource(string script) => new()
+    private static MusicSource TrustedSource(string script, bool isDefault = true) => new()
     {
         Id = "script-source",
         Name = "Script source",
@@ -79,7 +111,7 @@ public sealed class Issue49PlaybackSourceSafetyTests
         ScriptContent = script,
         ContentSha256 = ScriptMusicSource.ComputeSha256(script),
         IsEnabled = true,
-        IsDefault = true,
+        IsDefault = isDefault,
         IsSystemHidden = false,
         Priority = 1,
         Type = SourceType.Custom,

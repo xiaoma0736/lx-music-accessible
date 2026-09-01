@@ -1,5 +1,5 @@
-﻿using System.IO;
 using System.Windows.Input;
+using LXMusicAccessible.App;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -95,12 +95,33 @@ public sealed class Issue49HotkeyTests
         Assert.Equal(Key.F6, restoredLyrics.Key);
         Assert.Equal(ModifierKeys.Control | ModifierKeys.Alt, restoredLyrics.Modifiers);
 
-        var mainCode = await File.ReadAllTextAsync(FindRepositoryFile(
-            Path.Combine("src", "LXMusicAccessible.App", "MainWindow.xaml.cs")));
-        Assert.Contains("case HotkeyActions.ToggleVoiceAnnouncement:", mainCode, StringComparison.Ordinal);
-        Assert.Contains("settings.EnableVoiceAnnouncement = !settings.EnableVoiceAnnouncement", mainCode, StringComparison.Ordinal);
-        Assert.Contains("case HotkeyActions.ToggleLyricAnnouncement:", mainCode, StringComparison.Ordinal);
-        Assert.Contains("settings.LyricAutoAnnounce = !settings.LyricAutoAnnounce", mainCode, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Announcement_toggle_actions_update_settings_and_dispatch_accessible_speech()
+    {
+        var workflow = CreateWorkflow(new RecordingSettingsStore());
+        await workflow.LoadAsync(IntPtr.Zero);
+        var announcer = new RecordingAnnouncer();
+        var service = new AnnouncementToggleService(announcer, workflow);
+
+        service.ToggleVoiceAnnouncement();
+
+        Assert.False(workflow.Current.Settings.EnableVoiceAnnouncement);
+        var voiceOff = Assert.Single(announcer.Announcements);
+        Assert.Equal("已关闭语音朗读提示", voiceOff.Text);
+        Assert.Equal("settings", voiceOff.ActivityId);
+        Assert.Equal(AnnouncementSpeech.Always, voiceOff.Speech);
+
+        service.ToggleVoiceAnnouncement();
+        Assert.True(workflow.Current.Settings.EnableVoiceAnnouncement);
+        Assert.Equal(AnnouncementSpeech.FollowPreference, announcer.Announcements[^1].Speech);
+
+        service.ToggleLyricAnnouncement();
+        Assert.False(workflow.Current.Settings.LyricAutoAnnounce);
+        var lyricOff = announcer.Announcements[^1];
+        Assert.Equal("已关闭语音朗读歌词", lyricOff.Text);
+        Assert.Equal("settings", lyricOff.ActivityId);
     }
 
     private static Hotkey Hotkey(UserSettings settings, string actionId) => Assert.Single(
@@ -119,18 +140,6 @@ public sealed class Issue49HotkeyTests
             NullLogger<HotkeyManagerService>.Instance,
             new RecordingHotkeyAdapter()),
         NullLogger<SettingsWorkflow>.Instance);
-
-    private static string FindRepositoryFile(string relativeProbe)
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            var candidate = Path.Combine(directory.FullName, relativeProbe);
-            if (File.Exists(candidate)) return candidate;
-            directory = directory.Parent;
-        }
-        throw new DirectoryNotFoundException("Repository file was not found.");
-    }
 
     private sealed class RecordingSettingsStore : ISettingsStore
     {
@@ -152,5 +161,12 @@ public sealed class Issue49HotkeyTests
         public int LastRegisterError { get; private set; }
         public bool Register(IntPtr windowHandle, int id, Key key, ModifierKeys modifiers) => true;
         public bool Unregister(IntPtr windowHandle, int id) => true;
+    }
+
+    private sealed class RecordingAnnouncer : IAccessibleAnnouncer
+    {
+        public bool SpeechEnabled { get; set; }
+        public List<AccessibleAnnouncement> Announcements { get; } = [];
+        public void Announce(AccessibleAnnouncement announcement) => Announcements.Add(announcement);
     }
 }

@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.ComponentModel;
 using System.Text.RegularExpressions;
 using System.Windows;

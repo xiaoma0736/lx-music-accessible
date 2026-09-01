@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private readonly LyricsWorkflow _lyrics;
     private readonly IDownloadWorkflow _downloads;
     private readonly SavedPlaylistWorkflow _savedPlaylists;
+    private readonly AnnouncementToggleService _announcementToggles;
     private readonly ApplicationWindowFactory _windowFactory;
     private readonly ToolWindowCoordinator _toolWindows;
     private readonly DesktopLifecycleWorkflow _desktopLifecycle;
@@ -112,6 +113,7 @@ public partial class MainWindow : Window
         _lyrics = lyrics;
         _downloads = downloads;
         _savedPlaylists = savedPlaylists;
+        _announcementToggles = new(accessibilityService, settingsWorkflow);
         _windowFactory = windowFactory;
         _toolWindows = toolWindows;
         _desktopLifecycle = desktopLifecycle;
@@ -2686,23 +2688,10 @@ public partial class MainWindow : Window
                 _lyrics.AdjustOffset(-500);
                 break;
             case HotkeyActions.ToggleVoiceAnnouncement:
-                var voiceEnabled = !_settingsWorkflow.Current.Settings.EnableVoiceAnnouncement;
-                _settingsWorkflow.Edit(settings =>
-                    settings.EnableVoiceAnnouncement = !settings.EnableVoiceAnnouncement);
-                Announce(
-                    voiceEnabled ? "已开启语音朗读提示" : "已关闭语音朗读提示",
-                    AnnouncementKind.Status,
-                    "settings",
-                    voiceEnabled ? AnnouncementSpeech.FollowPreference : AnnouncementSpeech.Always);
+                _announcementToggles.ToggleVoiceAnnouncement();
                 break;
             case HotkeyActions.ToggleLyricAnnouncement:
-                var lyricEnabled = !_settingsWorkflow.Current.Settings.LyricAutoAnnounce;
-                _settingsWorkflow.Edit(settings =>
-                    settings.LyricAutoAnnounce = !settings.LyricAutoAnnounce);
-                Announce(
-                    lyricEnabled ? "已开启语音朗读歌词" : "已关闭语音朗读歌词",
-                    AnnouncementKind.Status,
-                    "settings");
+                _announcementToggles.ToggleLyricAnnouncement();
                 break;
             case HotkeyActions.ToggleWindow:
                 ToggleWindowVisibility();

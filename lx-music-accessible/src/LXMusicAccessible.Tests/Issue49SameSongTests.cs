@@ -1,4 +1,4 @@
-﻿using LXMusicAccessible.Models;
+using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
 using Xunit;
 
@@ -8,7 +8,11 @@ public sealed class Issue49SameSongTests
 {
     [Theory]
     [InlineData("晴天", "周杰伦", "04:30", "晴天", "周杰伦", "04:31", true)]
-    [InlineData("晴天 (Live)", "周杰伦/群星", "04:30", "晴天", "群星、周杰伦", "04:33", true)]
+    [InlineData("晴天 (Live)", "周杰伦/群星", "04:30", "晴天", "群星、周杰伦", "04:33", false)]
+    [InlineData("晴天 (Live)", "周杰伦", "04:30", "晴天 (Live)", "周杰伦", "04:31", true)]
+    [InlineData("晴天 (Remix)", "周杰伦", "04:30", "晴天", "周杰伦", "04:31", false)]
+    [InlineData("晴天（伴奏）", "周杰伦", "04:30", "晴天", "周杰伦", "04:31", false)]
+    [InlineData("晴天 (Instrumental)", "周杰伦", "04:30", "晴天", "周杰伦", "04:31", false)]
     [InlineData("晴天", "周杰伦", "04:30", "晴天", "周杰伦", "04:36", false)]
     [InlineData("晴天", "周杰伦", "04:30", "晴天", "周杰伦", "", false)]
     [InlineData("晴天", "周杰伦", "04:30", "晴天", "", "04:31", false)]

@@ -144,6 +144,45 @@ public sealed class Issue49SettingsAccessibilityTests
         });
     }
 
+    [Fact]
+    public async Task Forward_settings_tab_cycle_back_to_category_announces_selected_name()
+    {
+        var dependencies = await CreateDependenciesAsync();
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(dependencies);
+            try
+            {
+                window.Show();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+                var category = Assert.IsType<ListBoxItem>(
+                    window.CategoryList.ItemContainerGenerator.ContainerFromIndex(0));
+                Assert.True(category.Focus());
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                var before = dependencies.Announcer.Announcements.Count;
+
+                Assert.True(window.MoveAcrossCategoryBoundary(reverse: false));
+                Assert.True(window.CloseBehaviorCombo.IsKeyboardFocusWithin);
+
+                category.Focus();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+                Assert.Same(category, Keyboard.FocusedElement);
+                var announcement = Assert.Single(
+                    dependencies.Announcer.Announcements.Skip(before),
+                    item => item.Text == "常规");
+                Assert.Equal("settings", announcement.ActivityId);
+                Assert.Equal(AnnouncementSpeech.None, announcement.Speech);
+            }
+            finally
+            {
+                window.Close();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            }
+        });
+    }
+
     private static async Task<TestDependencies> CreateDependenciesAsync()
     {
         var settings = new SettingsWorkflow(
@@ -228,6 +267,7 @@ public sealed class Issue49SettingsAccessibilityTests
         public Task<ExternalPlaybackResult> PlayExternallyAsync(ExternalPlaybackRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public DownloadCacheCleanupResult ClearTemporaryFiles() => new(0, 0);
     }
+
     private sealed class RecordingHotkeyAdapter : IGlobalHotkeyAdapter
     {
         public int LastRegisterError { get; private set; }

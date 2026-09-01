@@ -5,6 +5,12 @@ namespace LXMusicAccessible.App;
 /// <summary>Restricts optional TTS to high-value playback/download/device/lyrics announcements.</summary>
 internal static class AccessibleSpeechPolicy
 {
+    /// <summary>Live-region activity used by settings pages and settings toggle feedback.</summary>
+    private const string SettingsActivityId = "settings";
+
+    /// <summary>Live-region activity used while recording and confirming hotkey assignments.</summary>
+    private const string HotkeyRecordingActivityId = "hotkey-recording";
+
     public static bool ShouldSpeak(AccessibleAnnouncement announcement)
     {
         return announcement.Speech != AnnouncementSpeech.None && IsAllowed(announcement);
@@ -14,8 +20,8 @@ internal static class AccessibleSpeechPolicy
     {
         if (announcement.ActivityId is not { Length: > 0 } activityId)
             return false;
-        return activityId.Equals("settings", StringComparison.Ordinal)
-            || activityId.Equals("hotkey-recording", StringComparison.Ordinal)
+        return activityId.Equals(SettingsActivityId, StringComparison.Ordinal)
+            || activityId.Equals(HotkeyRecordingActivityId, StringComparison.Ordinal)
             || activityId.Equals("play-mode", StringComparison.Ordinal)
             || activityId.Equals("audio-device", StringComparison.Ordinal)
             || activityId.Equals("playback-song", StringComparison.Ordinal)

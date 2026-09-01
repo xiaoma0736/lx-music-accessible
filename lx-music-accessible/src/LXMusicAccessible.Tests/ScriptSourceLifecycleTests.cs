@@ -1,4 +1,4 @@
-﻿using System.Net.Http;
+using System.Net.Http;
 using System.Net;
 using System.IO;
 using LXMusicAccessible.Core.MusicApi;
@@ -23,7 +23,6 @@ public sealed class ScriptSourceLifecycleTests
          * @version 1.0.0
          * @description Test-only source
          */
-        var MUSIC_QUALITY = { wy: ['128k'] };
         lx.on(lx.EVENT_NAMES.request, function () {
           return Promise.resolve('https://fixture.invalid/audio.mp3');
         });
@@ -34,7 +33,6 @@ public sealed class ScriptSourceLifecycleTests
          * @name Updated test source
          * @version 2.0.0
          */
-        var MUSIC_QUALITY = { wy: ['128k'] };
         lx.on(lx.EVENT_NAMES.request, function () {
           return Promise.resolve('https://fixture.invalid/updated.mp3');
         });
@@ -307,14 +305,14 @@ public sealed class ScriptSourceLifecycleTests
     }
 
     [Fact]
-    public async Task Existing_subscription_url_is_updated_without_a_duplicate()
+    public async Task Existing_subscription_by_id_is_updated_without_a_duplicate()
     {
         await using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([
             new MusicSource
             {
-                Id = "script_existing",
+                Id = "hyw",
                 Name = "Manually imported subscription",
                 Version = "1.0.0",
                 ScriptUrl = SubscriptionUrl,
@@ -335,7 +333,7 @@ public sealed class ScriptSourceLifecycleTests
             .Where(source => source.ScriptUrl == SubscriptionUrl)
             .ToList();
         var updated = Assert.Single(matching);
-        Assert.Equal("script_existing", updated.Id);
+        Assert.Equal("hyw", updated.Id);
         Assert.Equal(UpdatedScript, updated.ScriptContent);
     }
 

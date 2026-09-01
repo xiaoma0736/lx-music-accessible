@@ -26,6 +26,8 @@ public partial class SettingsWindow : Window
     private bool _allowClose;
     private bool _closed;
     private bool _inputSuppressed;
+    private DependencyObject? _lastFocusedElement;
+    private bool _hasTrackedFocus;
 
     public SettingsWindow(
         IAccessibleAnnouncer announcer,
@@ -553,8 +555,34 @@ public partial class SettingsWindow : Window
         if (_handleHotkey(e)) e.Handled = true;
     }
 
-    private void Window_FocusChanged(object sender, KeyboardFocusChangedEventArgs e) =>
-        _ = Dispatcher.BeginInvoke(UpdateInputSuppression, DispatcherPriority.Input);
+    private void Window_FocusChanged(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        var next = e.NewFocus as DependencyObject;
+        var nextCategory = next is not null && IsDescendantOf(next, CategoryList);
+        var previousCategory = _lastFocusedElement is not null
+            && IsDescendantOf(_lastFocusedElement, CategoryList);
+        var announceReturn = nextCategory && _hasTrackedFocus && !previousCategory;
+        _lastFocusedElement = next;
+        _hasTrackedFocus = next is not null;
+
+        _ = Dispatcher.BeginInvoke(
+            () =>
+            {
+                if (announceReturn
+                    && CategoryList.IsKeyboardFocusWithin
+                    && CategoryList.SelectedItem is ListBoxItem selected)
+                {
+                    Announce(
+                        AutomationProperties.GetName(selected),
+                        AnnouncementKind.Status,
+                        "settings",
+                        AnnouncementSpeech.None);
+                }
+
+                UpdateInputSuppression();
+            },
+            DispatcherPriority.Input);
+    }
 
     private void UpdateInputSuppression()
     {
@@ -603,12 +631,18 @@ public partial class SettingsWindow : Window
 
     private bool FocusSelectedCategory(bool announceReturnFocus = false)
     {
+        if (announceReturnFocus && CategoryList.SelectedItem is ListBoxItem selected)
+        {
+            _lastFocusedElement = selected;
+            _hasTrackedFocus = true;
+        }
+
         if (!CategoryList.FocusItemOrList()) return false;
         if (announceReturnFocus
-            && CategoryList.SelectedItem is ListBoxItem selected)
+            && CategoryList.SelectedItem is ListBoxItem selectedItem)
         {
             Announce(
-                AutomationProperties.GetName(selected),
+                AutomationProperties.GetName(selectedItem),
                 AnnouncementKind.Status,
                 "settings",
                 AnnouncementSpeech.None);

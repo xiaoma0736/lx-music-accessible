@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using LXMusicAccessible.Models;
 
 namespace LXMusicAccessible.Services;
@@ -146,7 +146,7 @@ public static class MusicSearchMatcher
     private static string NormalizeTitle(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
-        return FilterStr(Normalize(value)).ToLowerInvariant();
+        return FilterStr(value).ToLowerInvariant();
     }
 
     private static HashSet<string> SplitArtists(string? value)
