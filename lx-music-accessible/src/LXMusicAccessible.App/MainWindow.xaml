@@ -418,6 +418,9 @@
             <StatusBarItem>
                 <TextBlock x:Name="StatusText" Text="就绪"/>
             </StatusBarItem>
+            <StatusBarItem AutomationProperties.Name="播放信息">
+                <TextBlock x:Name="PlaybackInfoText" Text="未播放" />
+            </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Right">
                 <TextBlock x:Name="TimeText" Text=""/>
             </StatusBarItem>

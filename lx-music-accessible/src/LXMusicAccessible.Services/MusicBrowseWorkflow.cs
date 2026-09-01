@@ -620,7 +620,8 @@ public sealed class MusicBrowseWorkflow
             result.Value.Items,
             selection,
             _playback.DefaultQuality,
-            PlaybackQueueOrigin.Search));
+            PlaybackQueueOrigin.Search,
+            Trigger: PlaybackTrigger.AutoContinuation));
         return new(PlaybackQueueOrigin.Search, Search: result.Value);
     }
 
@@ -636,7 +637,8 @@ public sealed class MusicBrowseWorkflow
             page.Items,
             page.Items[0],
             _playback.DefaultQuality,
-            PlaybackQueueOrigin.Category));
+            PlaybackQueueOrigin.Category,
+            Trigger: PlaybackTrigger.AutoContinuation));
         return new(PlaybackQueueOrigin.Category, Playlist: page);
     }
 
@@ -652,7 +654,8 @@ public sealed class MusicBrowseWorkflow
             page.Items,
             page.Items[0],
             _playback.DefaultQuality,
-            PlaybackQueueOrigin.Ranking));
+            PlaybackQueueOrigin.Ranking,
+            Trigger: PlaybackTrigger.AutoContinuation));
         return new(PlaybackQueueOrigin.Ranking, Ranking: page);
     }
 

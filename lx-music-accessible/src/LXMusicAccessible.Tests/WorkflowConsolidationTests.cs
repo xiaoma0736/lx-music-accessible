@@ -75,6 +75,7 @@ public sealed class WorkflowConsolidationTests
         Assert.Equal(21, continuation!.Search!.Items.Count);
         Assert.Equal("page-2", playback.LastRequest!.Selection.Id);
         Assert.Equal(PlaybackQueueOrigin.Search, playback.LastRequest.Origin);
+        Assert.Equal(PlaybackTrigger.AutoContinuation, playback.LastRequest.Trigger);
 
         workflow.SelectSearch("different", "song", "fixture");
         Assert.Null(await workflow.ContinuePlaybackAsync(PlaybackQueueOrigin.Search));

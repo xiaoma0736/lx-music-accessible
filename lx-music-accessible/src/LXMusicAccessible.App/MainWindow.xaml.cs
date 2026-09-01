@@ -17,6 +17,7 @@ namespace LXMusicAccessible.App;
 
 public partial class MainWindow : Window
 {
+    private const string BaseTitle = "落雪音乐 无障碍版";
     private readonly IAccessibleAnnouncer _accessibilityService;
     private readonly IPlaybackCoordinator _playback;
     private readonly IAudioPlaybackControl _playerService;
@@ -195,6 +196,7 @@ public partial class MainWindow : Window
         var pos = _playerService.Position;
         var dur = _playerService.Duration;
         PositionText.Text = $"{FormatTime(pos)} / {FormatTime(dur)}";
+        UpdatePlaybackInfo(_playback.IsPlaying);
 
     }
 
@@ -202,6 +204,24 @@ public partial class MainWindow : Window
     {
         TimeText.Text = DateTime.Now.ToString("HH:mm:ss");
     }
+
+    private void UpdatePlaybackInfo(bool isPlaying)
+    {
+        if (!isPlaying)
+        {
+            PlaybackInfoText.Text = "未播放";
+            return;
+        }
+
+        var quality = TranslateActualQuality(_playerService.ActualQuality);
+        PlaybackInfoText.Text =
+            $"{quality}，总时长 {FormatTime(NormalizeTime(_playerService.Duration))}，当前位置 {FormatTime(NormalizeTime(_playerService.Position))}";
+    }
+
+    private static TimeSpan NormalizeTime(TimeSpan value) => value < TimeSpan.Zero ? TimeSpan.Zero : value;
+
+    private static string TranslateActualQuality(string? quality) =>
+        string.IsNullOrWhiteSpace(quality) ? "未知" : TranslateQuality(quality);
 
     private static string FormatTime(TimeSpan t)
     {
@@ -680,6 +700,10 @@ public partial class MainWindow : Window
                     CurrentArtist.Text = e.CurrentMusic.Artist;
                     CurrentAlbum.Text = e.CurrentMusic.Album;
                 }
+                Title = e.NewState == Models.PlayerState.Playing && e.CurrentMusic != null
+                    ? $"{e.CurrentMusic.Title} - {e.CurrentMusic.Artist} - {BaseTitle}"
+                    : BaseTitle;
+                UpdatePlaybackInfo(e.NewState == Models.PlayerState.Playing);
                 UpdatePlayPauseMenuHeader(e.NewState == Models.PlayerState.Playing ? "暂停" : "播放");
                 var text = e.NewState switch
                 {
@@ -1430,6 +1454,14 @@ public partial class MainWindow : Window
             ForceResolve: quality is not null));
         if (result.Status == PlaybackResultStatus.Playing && result.Music is not null)
             UpdatePlayingUI(result.Music);
+        else if (result.Status == PlaybackResultStatus.Failed
+            && result.Trigger == PlaybackTrigger.UserInitiated)
+            MessageBox.Show(
+                this,
+                $"{result.Message}\n\n该歌曲不能正常播放。",
+                "播放失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
     }
 
     private PlaybackQueueOrigin GetPlaybackOrigin(ListBox? list) => list switch

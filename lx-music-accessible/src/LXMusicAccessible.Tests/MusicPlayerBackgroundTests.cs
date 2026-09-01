@@ -124,7 +124,8 @@ public sealed class MusicPlayerBackgroundTests
         Assert.Equal("good-c", fixture.Audio.LoadedUrls[^1]);
         Assert.Equal(new[] { "b", "c" }, sources.SearchedSources.Order());
         Assert.NotEmpty(sources.ResolvedQualities);
-        Assert.All(sources.ResolvedQualities, quality => Assert.Equal("320k", quality));
+        Assert.Equal("320k", sources.ResolvedQualities.First());
+        Assert.All(sources.ResolvedQualities.Skip(1), quality => Assert.Equal("128k", quality));
         Assert.Single(fixture.Announcer.Announcements, item =>
             item.Kind == AnnouncementKind.Success);
     }

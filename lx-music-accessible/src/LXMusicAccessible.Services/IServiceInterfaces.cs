@@ -61,20 +61,28 @@ public enum PlaybackResultStatus
     NoChange
 }
 
-/// <summary>一个完整的播放意图；模块据此原子替换队列并播放所选歌曲。</summary>
+/// <summary>播放请求的触发方式。</summary>
+public enum PlaybackTrigger
+{
+    UserInitiated,
+    AutoContinuation
+}
+
 public sealed record PlaybackRequest(
     IReadOnlyList<MusicInfo> Queue,
     MusicInfo Selection,
     string Quality = "128k",
     PlaybackQueueOrigin Origin = PlaybackQueueOrigin.Static,
-    bool ForceResolve = false);
+    bool ForceResolve = false,
+    PlaybackTrigger Trigger = PlaybackTrigger.UserInitiated);
 
 /// <summary>播放意图完成后的可观察结果。</summary>
 public sealed record PlaybackResult(
     PlaybackResultStatus Status,
     MusicInfo? Music,
     PlaybackQueueOrigin Origin,
-    string Message);
+    string Message,
+    PlaybackTrigger Trigger = PlaybackTrigger.UserInitiated);
 
 public sealed class PlaybackQueueCompletedEventArgs(
     PlaybackQueueOrigin origin) : EventArgs

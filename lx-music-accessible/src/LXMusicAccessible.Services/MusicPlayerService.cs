@@ -16,6 +16,8 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
     private const int MaxAlternativeSources = 5;
     private const int MaxMatchesPerSource = 2;
     private static readonly TimeSpan PlaybackAttemptBudget = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan RequestedPlaybackBudget = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DowngradePlaybackBudget = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AlternativeResolutionBudget = TimeSpan.FromSeconds(10);
 
     private readonly object _gate = new();
@@ -129,7 +131,8 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
             index,
             request.Selection,
             request.Quality,
-            request.ForceResolve);
+            request.ForceResolve,
+            request.Trigger);
     }
 
     public Task<PlaybackResult> ReplayAsync()
@@ -152,7 +155,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
             return Task.FromResult(NoChange(origin, "当前没有可重播的歌曲"));
 
         CancelGenerationWork();
-        return RunPlayAsync(revision, index, music, quality, forceResolve: false);
+        return RunPlayAsync(revision, index, music, quality, forceResolve: false, trigger: PlaybackTrigger.UserInitiated);
     }
 
     public Task<PlaybackResult> NextAsync() => AdvanceAsync(1, naturalEnd: false);
@@ -167,6 +170,9 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         string quality;
         PlaybackQueueOrigin origin;
         bool completed = false;
+        var trigger = naturalEnd
+            ? PlaybackTrigger.AutoContinuation
+            : PlaybackTrigger.UserInitiated;
 
         lock (_gate)
         {
@@ -203,7 +209,13 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         if (target is null)
             return Task.FromResult(NoChange(origin, "播放队列中没有可播放的歌曲"));
 
-        return RunPlayAsync(revision, targetIndex, target, quality, forceResolve: false);
+        return RunPlayAsync(
+            revision,
+            targetIndex,
+            target,
+            quality,
+            forceResolve: false,
+            trigger);
     }
 
     private int ComputeTargetIndex(int direction, bool naturalEnd)
@@ -227,9 +239,10 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         int index,
         MusicInfo music,
         string quality,
-        bool forceResolve)
+        bool forceResolve,
+        PlaybackTrigger trigger)
     {
-        var result = Superseded();
+        var result = Superseded(trigger);
         await _backgroundWork.RunLatestAsync(PlaySlot, async context =>
         {
             result = await PlayGenerationAsync(
@@ -238,6 +251,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
                 music,
                 string.IsNullOrWhiteSpace(quality) ? DefaultQuality : quality,
                 forceResolve,
+                trigger,
                 context);
         });
         return result;
@@ -249,6 +263,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         MusicInfo requestedMusic,
         string quality,
         bool forceResolve,
+        PlaybackTrigger trigger,
         BackgroundWorkContext context)
     {
         var generationToken = context.CancellationToken;
@@ -256,99 +271,187 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         attempt.CancelAfter(PlaybackAttemptBudget);
         var token = attempt.Token;
         if (!PublishState(context, revision, PlayerState.Loading, requestedMusic))
-            return Superseded();
+            return Superseded(trigger);
 
         try
         {
             var directUrl = forceResolve ? null : GetDirectUrl(requestedMusic);
-            if (!string.IsNullOrWhiteSpace(directUrl)
-                && await TryLoadAsync(requestedMusic, directUrl, quality, token))
-            {
-                return CommitPlaying(context, revision, index, requestedMusic, directUrl);
-            }
+            using var requestedBudget = CancellationTokenSource.CreateLinkedTokenSource(token);
+            requestedBudget.CancelAfter(RequestedPlaybackBudget);
+            var (started, playedUrl) = await TryPlayAtQualityAsync(
+                requestedMusic,
+                directUrl,
+                quality,
+                forceResolve,
+                generationToken,
+                requestedBudget);
+            if (started && !string.IsNullOrWhiteSpace(playedUrl))
+                return CommitPlaying(context, revision, index, requestedMusic, playedUrl, trigger);
 
-            var resolvedUrl = await TryResolveAsync(requestedMusic, quality, token);
-            if (!string.IsNullOrWhiteSpace(resolvedUrl)
-                && !string.Equals(resolvedUrl, directUrl, StringComparison.Ordinal)
-                && await TryLoadAsync(requestedMusic, resolvedUrl, quality, token))
+            var downgradeQuality = GetDowngradeQuality(quality);
+            if (!string.IsNullOrWhiteSpace(downgradeQuality))
             {
-                return CommitPlaying(context, revision, index, requestedMusic, resolvedUrl);
+                using var downgradeBudget = CancellationTokenSource.CreateLinkedTokenSource(token);
+                downgradeBudget.CancelAfter(DowngradePlaybackBudget);
+                (started, playedUrl) = await TryPlayAtQualityAsync(
+                    requestedMusic,
+                    directUrl,
+                    downgradeQuality,
+                    forceResolve,
+                    generationToken,
+                    downgradeBudget);
+                if (started && !string.IsNullOrWhiteSpace(playedUrl))
+                    return CommitPlaying(context, revision, index, requestedMusic, playedUrl, trigger);
             }
 
             if (!IsLocal(requestedMusic))
             {
-                var sourceIds = GetAlternativeSourceIds(requestedMusic);
-
-                using var fallback = CancellationTokenSource.CreateLinkedTokenSource(token);
-                fallback.CancelAfter(AlternativeResolutionBudget);
-                var pending = sourceIds
-                    .Select(sourceId => TryResolveAlternativeAsync(
-                        requestedMusic,
-                        sourceId,
-                        quality,
-                        fallback.Token))
-                    .ToList();
-                var allAttempts = pending.ToArray();
-                try
-                {
-                    while (pending.Count > 0)
-                    {
-                        token.ThrowIfCancellationRequested();
-                        var completed = await Task.WhenAny(pending);
-                        pending.Remove(completed);
-                        AlternativeResolution? alternative;
-                        try { alternative = await completed; }
-                        catch (OperationCanceledException) when (
-                            fallback.IsCancellationRequested && !token.IsCancellationRequested)
-                        {
-                            _logger.LogDebug("Playback alternative resolution reached its fixed budget");
-                            break;
-                        }
-                        if (alternative is null) continue;
-                        var candidate = alternative.Music;
-                        var url = alternative.Url;
-                        if (!await TryLoadAsync(candidate, url, quality, token)) continue;
-
-                        var switched = CommitPlaying(
-                            context,
-                            revision,
-                            index,
-                            candidate,
-                            url);
-                        if (switched.Status == PlaybackResultStatus.Playing)
-                        {
-                            AnnounceIfCurrent(revision, new(
-                                $"已自动切换音源播放：{candidate.Title}",
-                                AnnouncementKind.Success,
-                                ActivityId(revision)));
-                        }
-                        return switched;
-                    }
-                }
-                finally
-                {
-                    fallback.Cancel();
-                    try { await Task.WhenAll(allAttempts); }
-                    catch (OperationCanceledException) when (fallback.IsCancellationRequested)
-                    {
-                        _logger.LogDebug("Playback alternative resolution was cancelled");
-                    }
-                }
+                AnnounceIfCurrent(revision, new(
+                    "正在切换音源接口",
+                    AnnouncementKind.Busy,
+                    ActivityId(revision)));
+                var switched = await TryAlternativeSourcesAsync(
+                    context,
+                    revision,
+                    index,
+                    requestedMusic,
+                    downgradeQuality ?? quality,
+                    trigger,
+                    token);
+                if (switched is not null) return switched;
             }
 
-            return CommitFailure(context, revision, requestedMusic);
+            return CommitFailure(context, revision, requestedMusic, trigger);
         }
         catch (OperationCanceledException) when (generationToken.IsCancellationRequested)
         {
             _audioPlayer.Stop();
-            return Superseded();
+            return Superseded(trigger);
         }
         catch (OperationCanceledException) when (attempt.IsCancellationRequested)
         {
             _audioPlayer.Stop();
             _logger.LogDebug("Playback generation reached its fixed budget");
-            return CommitFailure(context, revision, requestedMusic);
+            return CommitFailure(context, revision, requestedMusic, trigger);
         }
+    }
+
+    private async Task<(bool Started, string? Url)> TryPlayAtQualityAsync(
+        MusicInfo music,
+        string? directUrl,
+        string quality,
+        bool forceResolve,
+        CancellationToken generationToken,
+        CancellationTokenSource budgetSource)
+    {
+        if (!forceResolve
+            && !string.IsNullOrWhiteSpace(directUrl)
+            && await TryLoadWithinBudgetAsync(
+                music,
+                directUrl,
+                quality,
+                generationToken,
+                budgetSource))
+        {
+            return (true, directUrl);
+        }
+
+        var resolvedUrl = await TryResolveWithinBudgetAsync(
+            music,
+            quality,
+            generationToken,
+            budgetSource);
+        if (string.IsNullOrWhiteSpace(resolvedUrl)
+            || string.Equals(resolvedUrl, directUrl, StringComparison.Ordinal))
+        {
+            return (false, null);
+        }
+
+        var started = await TryLoadWithinBudgetAsync(
+            music,
+            resolvedUrl,
+            quality,
+            generationToken,
+            budgetSource);
+        return started ? (true, resolvedUrl) : (false, null);
+    }
+
+    private async Task<PlaybackResult?> TryAlternativeSourcesAsync(
+        BackgroundWorkContext context,
+        long revision,
+        int index,
+        MusicInfo requestedMusic,
+        string quality,
+        PlaybackTrigger trigger,
+        CancellationToken token)
+    {
+        var sourceIds = GetAlternativeSourceIds(requestedMusic);
+        using var fallback = CancellationTokenSource.CreateLinkedTokenSource(token);
+        fallback.CancelAfter(AlternativeResolutionBudget);
+        var pending = sourceIds
+            .Select(sourceId => TryResolveAlternativeAsync(
+                requestedMusic,
+                sourceId,
+                quality,
+                fallback.Token))
+            .ToList();
+        var allAttempts = pending.ToArray();
+        try
+        {
+            while (pending.Count > 0)
+            {
+                token.ThrowIfCancellationRequested();
+                var completed = await Task.WhenAny(pending);
+                pending.Remove(completed);
+                AlternativeResolution? alternative;
+                try { alternative = await completed; }
+                catch (OperationCanceledException) when (
+                    fallback.IsCancellationRequested && !token.IsCancellationRequested)
+                {
+                    _logger.LogDebug("Playback alternative resolution reached its fixed budget");
+                    break;
+                }
+                if (alternative is null) continue;
+                var candidate = alternative.Music;
+                var url = alternative.Url;
+                if (!await TryLoadWithinBudgetAsync(
+                        candidate,
+                        url,
+                        quality,
+                        token,
+                        fallback))
+                {
+                    continue;
+                }
+
+                var switched = CommitPlaying(
+                    context,
+                    revision,
+                    index,
+                    candidate,
+                    url,
+                    trigger);
+                if (switched.Status == PlaybackResultStatus.Playing)
+                {
+                    AnnounceIfCurrent(revision, new(
+                        $"已自动切换音源播放：{candidate.Title}",
+                        AnnouncementKind.Success,
+                        ActivityId(revision)));
+                }
+                return switched;
+            }
+        }
+        finally
+        {
+            fallback.Cancel();
+            try { await Task.WhenAll(allAttempts); }
+            catch (OperationCanceledException) when (fallback.IsCancellationRequested)
+            {
+                _logger.LogDebug("Playback alternative resolution was cancelled");
+            }
+        }
+
+        return null;
     }
 
     private async Task<string?> TryResolveAsync(
@@ -421,6 +524,47 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         return null;
     }
 
+    private async Task<string?> TryResolveWithinBudgetAsync(
+        MusicInfo music,
+        string quality,
+        CancellationToken generationToken,
+        CancellationTokenSource budgetSource)
+    {
+        try
+        {
+            return await TryResolveAsync(music, quality, budgetSource.Token);
+        }
+        catch (OperationCanceledException) when (
+            budgetSource.IsCancellationRequested
+            && !generationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug("Playback resolution reached its fixed budget");
+            return null;
+        }
+    }
+
+    private async Task<bool> TryLoadWithinBudgetAsync(
+        MusicInfo music,
+        string? url,
+        string quality,
+        CancellationToken generationToken,
+        CancellationTokenSource budgetSource)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        try
+        {
+            return await TryLoadAsync(music, url, quality, budgetSource.Token);
+        }
+        catch (OperationCanceledException) when (
+            budgetSource.IsCancellationRequested
+            && !generationToken.IsCancellationRequested)
+        {
+            _audioPlayer.Stop();
+            _logger.LogDebug("Audio playback attempt reached its fixed budget");
+            return false;
+        }
+    }
+
     private async Task<bool> TryLoadAsync(
         MusicInfo music,
         string url,
@@ -442,9 +586,9 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
                     actual);
                 return false;
             }
-            await _audioPlayer.PlayAsync();
+            await StartPlaybackAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            return true;
+            return _audioPlayer.State == AudioPlayerState.Playing;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -461,12 +605,39 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         }
     }
 
+    private async Task StartPlaybackAsync(CancellationToken cancellationToken)
+    {
+        var playbackTask = _audioPlayer.PlayAsync();
+        var timeoutTask = Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        var completed = await Task.WhenAny(playbackTask, timeoutTask);
+        if (completed != playbackTask)
+        {
+            IgnorePlaybackException(playbackTask);
+            cancellationToken.ThrowIfCancellationRequested();
+            return;
+        }
+
+        await playbackTask;
+        while (_audioPlayer.State != AudioPlayerState.Playing)
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+    }
+
+    private static void IgnorePlaybackException(Task playbackTask)
+    {
+        _ = playbackTask.ContinueWith(
+            task => _ = task.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
+    }
+
     private PlaybackResult CommitPlaying(
         BackgroundWorkContext context,
         long revision,
         int index,
         MusicInfo music,
-        string url)
+        string url,
+        PlaybackTrigger trigger)
     {
         PlaybackQueueOrigin origin = PlaybackQueueOrigin.Static;
         var applied = false;
@@ -491,7 +662,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         if (!applied)
         {
             _audioPlayer.Stop();
-            return Superseded();
+            return Superseded(trigger);
         }
 
         ConsumePrecache(music);
@@ -500,13 +671,15 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
             PlaybackResultStatus.Playing,
             music,
             origin,
-            $"正在播放：{music.Title}");
+            $"正在播放：{music.Title}",
+            trigger);
     }
 
     private PlaybackResult CommitFailure(
         BackgroundWorkContext context,
         long revision,
-        MusicInfo music)
+        MusicInfo music,
+        PlaybackTrigger trigger)
     {
         PlaybackQueueOrigin origin = PlaybackQueueOrigin.Static;
         var applied = false;
@@ -537,8 +710,8 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
         });
 
         return applied
-            ? new PlaybackResult(PlaybackResultStatus.Failed, music, origin, message)
-            : Superseded();
+            ? new PlaybackResult(PlaybackResultStatus.Failed, music, origin, message, trigger)
+            : Superseded(trigger);
     }
 
     private bool PublishState(
@@ -921,11 +1094,17 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
     private static string MusicKey(MusicInfo music) => $"{music.Source}|{music.Id}";
     private sealed record AlternativeResolution(MusicInfo Music, string Url);
     private static string ActivityId(long revision) => $"playback-{revision}";
-    private static PlaybackResult Superseded() => new(
+    private static string? GetDowngradeQuality(string quality) =>
+        string.Equals(quality.Trim(), "128k", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : "128k";
+
+    private static PlaybackResult Superseded(PlaybackTrigger trigger) => new(
         PlaybackResultStatus.Superseded,
         null,
         PlaybackQueueOrigin.Static,
-        "播放请求已被更新的请求替代");
+        "播放请求已被更新的请求替代",
+        trigger);
     private static PlaybackResult NoChange(PlaybackQueueOrigin origin, string message) =>
         new(PlaybackResultStatus.NoChange, null, origin, message);
     private static PlayerStateChangedEventArgs StateChange(
