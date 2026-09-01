@@ -100,6 +100,8 @@ public static class HotkeyActions
     public const string LyricDelay = "lyric_delay";
     public const string LyricAdvance = "lyric_advance";
     public const string ToggleWindow = "toggle_window";
+    public const string ToggleVoiceAnnouncement = "toggle_voice_announcement";
+    public const string ToggleLyricAnnouncement = "toggle_lyric_announcement";
 
     public static readonly string[] All =
     {
@@ -107,7 +109,7 @@ public static class HotkeyActions
         TogglePlayMode, Download, VolumeUp, VolumeDown,
         SwitchNextOutputDevice, SwitchPreviousOutputDevice,
         LyricDelay, LyricAdvance,
-        ToggleWindow
+        ToggleWindow, ToggleVoiceAnnouncement, ToggleLyricAnnouncement
     };
 }
 
@@ -346,4 +348,3 @@ public class SearchHistory
 
     public override string ToString() => Keyword;
 }
-

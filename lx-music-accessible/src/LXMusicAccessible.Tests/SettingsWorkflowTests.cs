@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using System.Windows.Input;
 using LXMusicAccessible.Data;
@@ -23,9 +23,9 @@ public sealed class SettingsWorkflowTests
         firstCopy.DefaultVolume = 0.1;
 
         Assert.Equal(0.8, loaded.Settings.DefaultVolume);
-        Assert.Equal(29, loaded.Settings.CustomHotkeys.Count);
+        Assert.Equal(31, loaded.Settings.CustomHotkeys.Count);
         Assert.Equal(15, loaded.Settings.CustomHotkeys.Count(item => item.IsGlobal));
-        Assert.Equal(14, loaded.Settings.CustomHotkeys.Count(item => !item.IsGlobal));
+        Assert.Equal(16, loaded.Settings.CustomHotkeys.Count(item => !item.IsGlobal));
 
         var invalid = workflow.Edit(settings => settings.DownloadPath = "relative\\path");
         Assert.False(invalid.Accepted);

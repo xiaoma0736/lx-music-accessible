@@ -375,6 +375,12 @@ internal sealed class HotkeyManagerService
             var existing = provided.FirstOrDefault(item => SameIdentity(item, fallback));
             if (existing is null)
             {
+                if (IsBindingUsed(result.Concat(provided), fallback))
+                {
+                    fallback.Key = Key.None;
+                    fallback.Modifiers = ModifierKeys.None;
+                    fallback.IsEnabled = false;
+                }
                 result.Add(fallback);
                 continue;
             }
@@ -433,12 +439,20 @@ internal sealed class HotkeyManagerService
             (HotkeyActions.LyricDelay, "歌词延后", Key.F7, ModifierKeys.Shift),
             (HotkeyActions.LyricAdvance, "歌词提前", Key.F8, ModifierKeys.Shift),
             (HotkeyActions.TogglePlayMode, "播放模式", Key.F1, ModifierKeys.None),
-            (HotkeyActions.Download, "下载", Key.F2, ModifierKeys.None)
+            (HotkeyActions.Download, "下载", Key.F2, ModifierKeys.None),
+            (HotkeyActions.ToggleVoiceAnnouncement, "语音朗读提示开关", Key.F5, ModifierKeys.Shift),
+            (HotkeyActions.ToggleLyricAnnouncement, "语音朗读歌词开关", Key.F6, ModifierKeys.Shift)
         };
         return globals.Select(item => New(item, true))
             .Concat(locals.Select(item => New(item, false)))
             .ToList();
     }
+
+    private static bool IsBindingUsed(IEnumerable<Hotkey> hotkeys, Hotkey candidate) =>
+        hotkeys.Any(item => item.IsEnabled
+            && item.Key != Key.None
+            && item.Key == candidate.Key
+            && item.Modifiers == candidate.Modifiers);
 
     private static Hotkey New(
         (string Id, string Name, Key Key, ModifierKeys Modifiers) item,

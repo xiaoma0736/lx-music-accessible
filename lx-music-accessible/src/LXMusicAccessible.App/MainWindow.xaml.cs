@@ -2685,6 +2685,25 @@ public partial class MainWindow : Window
             case HotkeyActions.LyricAdvance:
                 _lyrics.AdjustOffset(-500);
                 break;
+            case HotkeyActions.ToggleVoiceAnnouncement:
+                var voiceEnabled = !_settingsWorkflow.Current.Settings.EnableVoiceAnnouncement;
+                _settingsWorkflow.Edit(settings =>
+                    settings.EnableVoiceAnnouncement = !settings.EnableVoiceAnnouncement);
+                Announce(
+                    voiceEnabled ? "已开启语音朗读提示" : "已关闭语音朗读提示",
+                    AnnouncementKind.Status,
+                    "settings",
+                    voiceEnabled ? AnnouncementSpeech.FollowPreference : AnnouncementSpeech.Always);
+                break;
+            case HotkeyActions.ToggleLyricAnnouncement:
+                var lyricEnabled = !_settingsWorkflow.Current.Settings.LyricAutoAnnounce;
+                _settingsWorkflow.Edit(settings =>
+                    settings.LyricAutoAnnounce = !settings.LyricAutoAnnounce);
+                Announce(
+                    lyricEnabled ? "已开启语音朗读歌词" : "已关闭语音朗读歌词",
+                    AnnouncementKind.Status,
+                    "settings");
+                break;
             case HotkeyActions.ToggleWindow:
                 ToggleWindowVisibility();
                 break;
