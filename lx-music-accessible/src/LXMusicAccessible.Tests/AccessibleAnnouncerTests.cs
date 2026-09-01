@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
@@ -130,16 +130,16 @@ public sealed class AccessibleAnnouncerTests
 
         try
         {
-            announcer!.Announce(new("进度 1", AnnouncementKind.Progress, "import"));
-            announcer.Announce(new("进度 2", AnnouncementKind.Progress, "import"));
-            announcer.Announce(new("进度 3", AnnouncementKind.Progress, "import"));
+            announcer!.Announce(new("进度 1", AnnouncementKind.Progress, "download:import"));
+            announcer.Announce(new("进度 2", AnnouncementKind.Progress, "download:import"));
+            announcer.Announce(new("进度 3", AnnouncementKind.Progress, "download:import"));
             WaitUntil(() => received.Count >= 1);
 
-            announcer.Announce(new("导入完成", AnnouncementKind.Success, "import"));
-            announcer.Announce(new("导入完成", AnnouncementKind.Success, "import"));
+            announcer.Announce(new("导入完成", AnnouncementKind.Success, "download:import"));
+            announcer.Announce(new("导入完成", AnnouncementKind.Success, "download:import"));
             WaitUntil(() => received.Count >= 2);
-            announcer.Announce(new("导入失败", AnnouncementKind.Error, "retry"));
-            announcer.Announce(new("导入失败", AnnouncementKind.Error, "retry"));
+            announcer.Announce(new("导入失败", AnnouncementKind.Error, "download:retry"));
+            announcer.Announce(new("导入失败", AnnouncementKind.Error, "download:retry"));
             WaitUntil(() => received.Count >= 3);
 
             uiDispatcher!.Invoke(() =>

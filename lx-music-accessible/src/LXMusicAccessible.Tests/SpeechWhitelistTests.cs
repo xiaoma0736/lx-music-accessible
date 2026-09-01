@@ -12,6 +12,8 @@ public sealed class SpeechWhitelistTests
     [InlineData("playback-song")]
     [InlineData("lyrics")]
     [InlineData("lyrics-offset")]
+    [InlineData("settings")]
+    [InlineData("hotkey-recording")]
     [InlineData("download:42")]
     [InlineData("download-list:abc")]
     public void Allowed_activity_categories_enable_speech(string activityId)

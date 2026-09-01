@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.ComponentModel;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -354,7 +354,12 @@ public sealed partial class AccessibilitySemanticsTests
             if (string.IsNullOrWhiteSpace(name) || IsMarkupExtension(name)) continue;
 
             var visible = VisibleText(element);
-            if (!string.IsNullOrWhiteSpace(visible))
+            // Issue 49 requires the static settings categories to expose explicit item names;
+            // their exact text is the intended short native category label.
+            var explicitCategoryLabel = ElementRole(element) == "ListBoxItem"
+                && file.Name == "SettingsWindow.xaml"
+                && name == visible;
+            if (!explicitCategoryLabel && !string.IsNullOrWhiteSpace(visible))
                 issues.Add($"{file.Name}|{ElementRole(element)}|{name}|duplicates visible {visible}");
             else if (ContainsRedundantRole(ElementRole(element), name))
                 issues.Add($"{file.Name}|{ElementRole(element)}|{name}|contains control role");

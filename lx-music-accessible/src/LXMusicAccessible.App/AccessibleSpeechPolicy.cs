@@ -14,7 +14,9 @@ internal static class AccessibleSpeechPolicy
     {
         if (announcement.ActivityId is not { Length: > 0 } activityId)
             return false;
-        return activityId.Equals("play-mode", StringComparison.Ordinal)
+        return activityId.Equals("settings", StringComparison.Ordinal)
+            || activityId.Equals("hotkey-recording", StringComparison.Ordinal)
+            || activityId.Equals("play-mode", StringComparison.Ordinal)
             || activityId.Equals("audio-device", StringComparison.Ordinal)
             || activityId.Equals("playback-song", StringComparison.Ordinal)
             || activityId.Equals("lyrics", StringComparison.Ordinal)

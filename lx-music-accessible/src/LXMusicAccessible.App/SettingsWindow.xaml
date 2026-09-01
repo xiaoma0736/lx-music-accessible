@@ -18,13 +18,13 @@
                  AutomationProperties.Name="设置分类"
                  SelectionChanged="CategoryList_SelectionChanged"
                  KeyboardNavigation.TabIndex="0" KeyboardNavigation.TabNavigation="Once" IsTabStop="True">
-            <ListBoxItem Content="常规"/>
-            <ListBoxItem Content="播放"/>
-            <ListBoxItem Content="歌词"/>
-            <ListBoxItem Content="下载"/>
-            <ListBoxItem Content="存储与缓存"/>
-            <ListBoxItem Content="无障碍"/>
-            <ListBoxItem Content="快捷键"/>
+            <ListBoxItem Content="常规" AutomationProperties.Name="常规"/>
+            <ListBoxItem Content="播放" AutomationProperties.Name="播放"/>
+            <ListBoxItem Content="歌词" AutomationProperties.Name="歌词"/>
+            <ListBoxItem Content="下载" AutomationProperties.Name="下载"/>
+            <ListBoxItem Content="存储与缓存" AutomationProperties.Name="存储与缓存"/>
+            <ListBoxItem Content="无障碍" AutomationProperties.Name="无障碍"/>
+            <ListBoxItem Content="快捷键" AutomationProperties.Name="快捷键"/>
         </ListBox>
 
         <Border Grid.Column="2" BorderBrush="Gray" BorderThickness="1" Padding="12">

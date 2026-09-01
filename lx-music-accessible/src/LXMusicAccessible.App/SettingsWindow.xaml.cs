@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -239,7 +240,11 @@ public partial class SettingsWindow : Window
         if (_loading) return;
         var enabled = EnableVoiceAnnouncementCheckBox.IsChecked == true;
         if (Edit(settings => settings.EnableVoiceAnnouncement = enabled))
-            Announce(enabled ? "已开启语音朗读提示" : "已关闭语音朗读提示");
+            Announce(
+                enabled ? "已开启语音朗读提示" : "已关闭语音朗读提示",
+                AnnouncementKind.Status,
+                "settings",
+                enabled ? AnnouncementSpeech.FollowPreference : AnnouncementSpeech.Always);
     }
 
     private void VoiceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -434,7 +439,11 @@ public partial class SettingsWindow : Window
     {
         _recording = item;
         UpdateInputSuppression();
-        Announce($"请按下{item.ActionName}的快捷键，Esc 取消，Delete 清除");
+        Announce(
+            $"请按下{item.ActionName}的快捷键，Esc 取消，Delete 清除",
+            AnnouncementKind.Status,
+            "hotkey-recording");
+
     }
 
     private async Task ClearHotkeyAsync(HotkeySettingItem item)
@@ -482,7 +491,7 @@ public partial class SettingsWindow : Window
     {
         _recording = null;
         UpdateInputSuppression();
-        Announce(message);
+        Announce(message, AnnouncementKind.Status, "hotkey-recording");
         RefocusHotkeyList();
     }
 
@@ -504,7 +513,10 @@ public partial class SettingsWindow : Window
             HotkeyEditStatus.PersistenceFailed => "快捷键已生效，但保存失败；退出时将再次保存。",
             _ => "快捷键未更改。"
         };
-        Announce(message, result.Applied ? AnnouncementKind.Success : AnnouncementKind.Error);
+        Announce(
+            message,
+            result.Applied ? AnnouncementKind.Success : AnnouncementKind.Error,
+            "hotkey-recording");
         if (result.Applied && item is not null)
             new HotkeyConfirmDialog(message) { Owner = this }.ShowDialog();
     }
@@ -585,11 +597,24 @@ public partial class SettingsWindow : Window
                 ? list.FocusItemOrList()
                 : firstContent?.Focus() == true;
         if (reverse && firstContent?.IsKeyboardFocusWithin == true)
-            return FocusSelectedCategory();
+            return FocusSelectedCategory(announceReturnFocus: true);
         return false;
     }
 
-    private bool FocusSelectedCategory() => CategoryList.FocusItemOrList();
+    private bool FocusSelectedCategory(bool announceReturnFocus = false)
+    {
+        if (!CategoryList.FocusItemOrList()) return false;
+        if (announceReturnFocus
+            && CategoryList.SelectedItem is ListBoxItem selected)
+        {
+            Announce(
+                AutomationProperties.GetName(selected),
+                AnnouncementKind.Status,
+                "settings",
+                AnnouncementSpeech.None);
+        }
+        return true;
+    }
 
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
@@ -616,6 +641,10 @@ public partial class SettingsWindow : Window
         _recording = null;
     }
 
-    private void Announce(string text, AnnouncementKind kind = AnnouncementKind.Status) =>
-        _announcer.Announce(new(text, kind, Speech: AnnouncementSpeech.FollowPreference));
+    private void Announce(
+        string text,
+        AnnouncementKind kind = AnnouncementKind.Status,
+        string? activityId = "settings",
+        AnnouncementSpeech speech = AnnouncementSpeech.FollowPreference) =>
+        _announcer.Announce(new(text, kind, activityId, speech));
 }
