@@ -2,7 +2,7 @@ using LXMusicAccessible.Services;
 
 namespace LXMusicAccessible.App;
 
-/// <summary>Restricts optional TTS to high-value playback/download/device/lyrics announcements.</summary>
+/// <summary>Restricts optional TTS to high-value playback, download, device, lyrics, settings, and hotkey-recording announcements.</summary>
 internal static class AccessibleSpeechPolicy
 {
     /// <summary>Live-region activity used by settings pages and settings toggle feedback.</summary>

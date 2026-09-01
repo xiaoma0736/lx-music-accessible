@@ -18,7 +18,7 @@ internal sealed class AnnouncementToggleService(
             enabled ? "已开启语音朗读提示" : "已关闭语音朗读提示",
             AnnouncementKind.Status,
             "settings",
-            enabled ? AnnouncementSpeech.FollowPreference : AnnouncementSpeech.Always));
+            AnnouncementSpeech.Always));
     }
 
     public void ToggleLyricAnnouncement()

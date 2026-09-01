@@ -115,7 +115,11 @@ public sealed class Issue49HotkeyTests
 
         service.ToggleVoiceAnnouncement();
         Assert.True(workflow.Current.Settings.EnableVoiceAnnouncement);
-        Assert.Equal(AnnouncementSpeech.FollowPreference, announcer.Announcements[^1].Speech);
+        Assert.Equal(2, announcer.Announcements.Count);
+        var voiceOn = announcer.Announcements[^1];
+        Assert.Equal("已开启语音朗读提示", voiceOn.Text);
+        Assert.Equal("settings", voiceOn.ActivityId);
+        Assert.Equal(AnnouncementSpeech.Always, voiceOn.Speech);
 
         service.ToggleLyricAnnouncement();
         Assert.False(workflow.Current.Settings.LyricAutoAnnounce);
