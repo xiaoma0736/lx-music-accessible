@@ -231,10 +231,72 @@ public sealed class ManualSourceSwitchWindowTests
         });
     }
 
+    [Theory]
+    [InlineData(PlaybackQueueOrigin.Search)]
+    [InlineData(PlaybackQueueOrigin.Category)]
+    [InlineData(PlaybackQueueOrigin.Ranking)]
+    public async Task Enter_passes_correct_playback_queue_origin_to_playback_request(
+        PlaybackQueueOrigin origin)
+    {
+        var option = CreateOption();
+        var workflow = new RecordingWorkflow(ManualSourceDiscoveryResult.Success([option]));
+        var playbackRequests = new ConcurrentQueue<ManualSourcePlaybackRequest>();
+
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(
+                workflow,
+                new RecordingAnnouncer(),
+                request =>
+                {
+                    playbackRequests.Enqueue(request);
+                    return Task.FromResult(new PlaybackResult(
+                        PlaybackResultStatus.Playing,
+                        request.Option.Candidate,
+                        request.Origin,
+                        "正在播放"));
+                },
+                origin);
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+                RaiseKey(window, Key.Enter);
+                Pump(window.Dispatcher);
+
+                var request = Assert.Single(playbackRequests);
+                Assert.Equal(origin, request.Origin);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Window_close_cancels_active_discovery_query()
+    {
+        var workflow = new CancelRecordingWorkflow();
+        var announcer = new RecordingAnnouncer();
+
+        await RunOnStaThreadAsync(async () =>
+        {
+            var window = CreateWindow(workflow, announcer);
+            window.Show();
+            Pump(window.Dispatcher);
+            window.Close();
+            Pump(window.Dispatcher);
+            await workflow.WaitForCancelledAsync(TimeSpan.FromSeconds(5));
+            Assert.True(workflow.WasCancelled);
+        });
+    }
+
     private static ManualSourceSwitchWindow CreateWindow(
         IManualSourceDiscoveryWorkflow workflow,
         IAccessibleAnnouncer announcer,
-        Func<ManualSourcePlaybackRequest, Task<PlaybackResult>>? playback = null) =>
+        Func<ManualSourcePlaybackRequest, Task<PlaybackResult>>? playback = null,
+        PlaybackQueueOrigin origin = PlaybackQueueOrigin.Static) =>
         new(
             Target,
             [Target, Candidate("netease-2")],
@@ -243,8 +305,9 @@ public sealed class ManualSourceSwitchWindowTests
             playback ?? (_ => Task.FromResult(new PlaybackResult(
                 PlaybackResultStatus.Playing,
                 Target,
-                PlaybackQueueOrigin.Static,
-                "正在播放"))));
+                origin,
+                "正在播放"))),
+            origin);
 
     private static ManualSourceOption CreateOption() => ManualSourceOption.Create(
         "script-a",
@@ -286,9 +349,15 @@ public sealed class ManualSourceSwitchWindowTests
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(async () =>
         {
+            Exception? failure = null;
             try { await action(); }
-            catch (Exception exception) { completion.SetException(exception); }
-            finally { completion.SetResult(); }
+            catch (Exception exception) { failure = exception; }
+            finally
+            {
+                Dispatcher.FromThread(Thread.CurrentThread)?.InvokeShutdown();
+                if (failure is null) completion.SetResult();
+                else completion.SetException(failure);
+            }
         });
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
@@ -319,6 +388,39 @@ public sealed class ManualSourceSwitchWindowTests
             MusicInfo target,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(result);
+
+        public Task<PlaybackResult> PlayAsync(
+            ManualSourcePlaybackRequest request,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public void Dispose() { }
+    }
+
+    private sealed class CancelRecordingWorkflow : IManualSourceDiscoveryWorkflow
+    {
+        private readonly TaskCompletionSource _cancelled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool WasCancelled { get; private set; }
+
+        public async Task<ManualSourceDiscoveryResult> DiscoverAsync(
+            MusicInfo target,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                WasCancelled = true;
+                _cancelled.TrySetResult();
+                throw;
+            }
+            return ManualSourceDiscoveryResult.Success([]);
+        }
+
+        public async Task WaitForCancelledAsync(TimeSpan timeout) =>
+            await _cancelled.Task.WaitAsync(timeout);
 
         public Task<PlaybackResult> PlayAsync(
             ManualSourcePlaybackRequest request,

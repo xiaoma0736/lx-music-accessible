@@ -15,20 +15,24 @@ public partial class ManualSourceSwitchWindow : Window
     private readonly IAccessibleAnnouncer _announcer;
     private readonly Func<ManualSourcePlaybackRequest, Task<PlaybackResult>> _playback;
     private readonly CancellationTokenSource _queryCancellation = new();
+    private readonly PlaybackQueueOrigin _origin;
     private bool _completed;
+    private bool _playbackInFlight;
 
     public ManualSourceSwitchWindow(
         MusicInfo target,
         IReadOnlyList<MusicInfo> queue,
         IManualSourceDiscoveryWorkflow workflow,
         IAccessibleAnnouncer announcer,
-        Func<ManualSourcePlaybackRequest, Task<PlaybackResult>> playback)
+        Func<ManualSourcePlaybackRequest, Task<PlaybackResult>> playback,
+        PlaybackQueueOrigin origin = PlaybackQueueOrigin.Static)
     {
         _target = target ?? throw new ArgumentNullException(nameof(target));
         _queue = queue ?? throw new ArgumentNullException(nameof(queue));
         _workflow = workflow ?? throw new ArgumentNullException(nameof(workflow));
         _announcer = announcer ?? throw new ArgumentNullException(nameof(announcer));
         _playback = playback ?? throw new ArgumentNullException(nameof(playback));
+        _origin = origin;
 
         InitializeComponent();
         TargetSongText.Text = $"{_target.Title} - {_target.Artist}";
@@ -101,14 +105,16 @@ public partial class ManualSourceSwitchWindow : Window
             return;
         }
         if (e.Key != Key.Enter || SourceOptionsList.SelectedItem is not ManualSourceOption option) return;
+        if (_playbackInFlight) { e.Handled = true; return; }
 
         e.Handled = true;
+        _playbackInFlight = true;
         Announce("\u6b63\u5728\u5c1d\u8bd5\u6362\u6e90\u64ad\u653e", AnnouncementKind.Busy, "manual-source-playback");
         PlaybackResult result;
         try
         {
             result = await _playback(
-                new(_queue, _target, option, GetOrigin()));
+                new(_queue, _target, option, _origin));
         }
         catch (OperationCanceledException)
         {
@@ -119,9 +125,13 @@ public partial class ManualSourceSwitchWindow : Window
             result = new(
                 PlaybackResultStatus.Failed,
                 null,
-                GetOrigin(),
+                _origin,
                 "\u6362\u6e90\u64ad\u653e\u5931\u8d25",
                 PlaybackTrigger.UserInitiated);
+        }
+        finally
+        {
+            _playbackInFlight = false;
         }
 
         if (result.Status == PlaybackResultStatus.Playing)
@@ -130,12 +140,9 @@ public partial class ManualSourceSwitchWindow : Window
             return;
         }
 
-        StatusText.Text = string.IsNullOrWhiteSpace(result.Message) ? "\u6362\u6e90\u64ad\u653e\u5931\u8d25" : result.Message;
+        StatusText.Text = string.IsNullOrWhiteSpace(result.Message) ? "\u9009\u5b9a\u63a5\u53e3\u64ad\u653e\u5931\u8d25" : result.Message;
         Announce(StatusText.Text, AnnouncementKind.Error, "manual-source-playback");
     }
-
-    private PlaybackQueueOrigin GetOrigin() =>
-        Owner is MainWindow mainWindow ? mainWindow.GetPlaybackQueueOrigin(_queue) : PlaybackQueueOrigin.Static;
 
     private void Announce(
         string text,

@@ -2268,13 +2268,15 @@ public partial class MainWindow : Window
             return;
 
         var queue = GetListSongs(list);
+        var origin = GetPlaybackOrigin(list);
         _manualSourceWindow?.Close();
         _manualSourceWindow = new ManualSourceSwitchWindow(
             target,
             queue,
             _manualSourceWorkflow,
             _accessibilityService,
-            request => _manualSourceWorkflow.PlayAsync(request));
+            request => _manualSourceWorkflow.PlayAsync(request),
+            origin);
         _manualSourceWindow.Owner = this;
         _manualSourceWindow.Closed += (_, _) => _manualSourceWindow = null;
         _manualSourceWindow.Show();

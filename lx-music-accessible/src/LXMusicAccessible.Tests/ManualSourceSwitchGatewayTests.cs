@@ -17,8 +17,8 @@ public sealed class ManualSourceSwitchGatewayTests
         {
             Id = "netease-1",
             Source = "netease",
-            Title = "????",
-            Artist = "?????"
+            Title = "测试歌曲",
+            Artist = "测试歌手"
         };
 
         var interfaces = service.GetPlaybackInterfaces(target);

@@ -148,7 +148,8 @@ public sealed class ManualSourceDiscoveryWorkflow(
 
         try
         {
-            var options = await DiscoverCoreAsync(target, linked.Token);
+            var options = await DiscoverCoreAsync(target, linked.Token)
+                .WaitAsync(timeout.Token);
             return ManualSourceDiscoveryResult.Success(options);
         }
         catch (OperationCanceledException) when (
