@@ -372,3 +372,24 @@ public partial class SourceManagerWindow : Window
         IsSourceSubscriptionActive = false;
     }
 }
+
+/// <summary>Deterministic arrow-key handling for the source manager list.</summary>
+public sealed class SourceManagerListBox : SingleReadListBox
+{
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.Key is Key.Up or Key.Down && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            var target = SelectedIndex + (e.Key == Key.Down ? 1 : -1);
+            e.Handled = true;
+            if (target >= 0 && target < Items.Count)
+            {
+                SelectedIndex = target;
+                this.FocusItemOrList();
+            }
+            return;
+        }
+
+        base.OnKeyDown(e);
+    }
+}

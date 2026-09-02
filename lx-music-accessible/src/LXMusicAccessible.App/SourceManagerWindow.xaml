@@ -45,7 +45,7 @@
                 </Grid.RowDefinitions>
                 <TextBlock x:Name="EmptySourceText" Text="暂无音源" Margin="6,4"
                            AutomationProperties.LiveSetting="Polite"/>
-                <local:SingleReadListBox x:Name="SourceList" Grid.Row="1" MinHeight="300"
+                <local:SourceManagerListBox x:Name="SourceList" Grid.Row="1" MinHeight="300"
                                          AutomationProperties.Name="音源"
                                          ContextMenu="{StaticResource SourceContextMenu}"
                                          KeyDown="SourceList_KeyDown">
@@ -64,7 +64,7 @@
                             <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}"/>
                         </Style>
                     </ListBox.ItemContainerStyle>
-                </local:SingleReadListBox>
+                </local:SourceManagerListBox>
             </Grid>
         </GroupBox>
     </Grid>

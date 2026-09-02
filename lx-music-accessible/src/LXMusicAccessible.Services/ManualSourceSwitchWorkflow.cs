@@ -134,6 +134,7 @@ public sealed class ManualSourceDiscoveryWorkflow(
     TimeSpan? budget = null) : IManualSourceDiscoveryWorkflow
 {
     private static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(11);
+    private static readonly TimeSpan CancellationPropagationGrace = TimeSpan.FromMilliseconds(250);
 
     public async Task<ManualSourceDiscoveryResult> DiscoverAsync(
         MusicInfo target,
@@ -145,17 +146,18 @@ public sealed class ManualSourceDiscoveryWorkflow(
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             timeout.Token);
+        var discovery = DiscoverCoreAsync(target, linked.Token);
 
         try
         {
-            var options = await DiscoverCoreAsync(target, linked.Token)
-                .WaitAsync(timeout.Token);
+            var options = await discovery.WaitAsync(timeout.Token);
             return ManualSourceDiscoveryResult.Success(options);
         }
         catch (OperationCanceledException) when (
             timeout.IsCancellationRequested
             && !cancellationToken.IsCancellationRequested)
         {
+            await WaitForCancellationPropagationAsync(discovery);
             return ManualSourceDiscoveryResult.Timeout();
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -199,6 +201,28 @@ public sealed class ManualSourceDiscoveryWorkflow(
     }
 
     public void Dispose() => GC.SuppressFinalize(this);
+
+    /// <summary>
+    /// Gives a timed-out discovery task a bounded chance to observe cancellation.
+    /// </summary>
+    private async Task WaitForCancellationPropagationAsync(
+        Task<IReadOnlyList<ManualSourceOption>> discovery)
+    {
+        try
+        {
+            await discovery.WaitAsync(CancellationPropagationGrace);
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogDebug("Manual source discovery cancellation propagated after the budget expired");
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(
+                exception,
+                "Manual source discovery completed exceptionally while propagating cancellation");
+        }
+    }
 
     private async Task<IReadOnlyList<ManualSourceOption>> DiscoverCoreAsync(
         MusicInfo target,
