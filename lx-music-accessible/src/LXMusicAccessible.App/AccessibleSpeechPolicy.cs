@@ -28,6 +28,8 @@ internal static class AccessibleSpeechPolicy
             || activityId.Equals("lyrics", StringComparison.Ordinal)
             || activityId.Equals("lyrics-offset", StringComparison.Ordinal)
             || activityId.StartsWith("download:", StringComparison.Ordinal)
-            || activityId.StartsWith("download-list:", StringComparison.Ordinal);
+            || activityId.StartsWith("download-list:", StringComparison.Ordinal)
+            || activityId.StartsWith("manual-source-query:", StringComparison.Ordinal)
+            || activityId.StartsWith("manual-source-playback:", StringComparison.Ordinal);
     }
 }

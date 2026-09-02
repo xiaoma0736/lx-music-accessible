@@ -58,6 +58,305 @@ public sealed class ManualSourceSwitchWindowTests
     }
 
     [Fact]
+    public async Task Repeated_enter_on_same_failed_option_announces_each_attempt_with_unique_activity()
+    {
+        var option = CreateOption();
+        var workflow = new RecordingWorkflow(ManualSourceDiscoveryResult.Success([option]));
+        var playbackRequests = new ConcurrentQueue<ManualSourcePlaybackRequest>();
+        var announcer = new RecordingAnnouncer();
+
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(workflow, announcer, _ =>
+            {
+                playbackRequests.Enqueue(new([], Target, option, PlaybackQueueOrigin.Static));
+                return Task.FromResult(FailedPlayback());
+            });
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+                var item = Assert.IsType<ListBoxItem>(
+                    window.SourceOptionsList.ItemContainerGenerator.ContainerFromIndex(0));
+
+                RaiseKey(window, Key.Enter);
+                Pump(window.Dispatcher);
+                RaiseKey(window, Key.Enter);
+                Pump(window.Dispatcher);
+
+                Assert.Equal(2, playbackRequests.Count);
+                var failures = PlaybackFailures(announcer);
+                Assert.Equal(2, failures.Length);
+                Assert.NotEqual(failures[0].ActivityId, failures[1].ActivityId);
+                Assert.All(failures, announcement =>
+                    Assert.Equal("换源播放失败", announcement.Text));
+                Assert.Same(item, Keyboard.FocusedElement);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Different_failed_options_announce_each_attempt()
+    {
+        var first = CreateOption();
+        var second = ManualSourceOption.Create(
+            "script-b", "脚本B", Target.Source, Candidate("second-candidate"), "flac",
+            "脚本B，flac，second-candidate，目标歌手");
+        var workflow = new RecordingWorkflow(ManualSourceDiscoveryResult.Success([first, second]));
+        var playedOptions = new ConcurrentQueue<ManualSourceOption>();
+        var announcer = new RecordingAnnouncer();
+
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(workflow, announcer, request =>
+            {
+                playedOptions.Enqueue(request.Option);
+                return Task.FromResult(FailedPlayback());
+            });
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+                var firstItem = Assert.IsType<ListBoxItem>(
+                    window.SourceOptionsList.ItemContainerGenerator.ContainerFromIndex(0));
+
+                RaiseKey(window, Key.Enter);
+                Pump(window.Dispatcher);
+                RaiseKey(firstItem, Key.Down, preview: false);
+                Pump(window.Dispatcher);
+                RaiseKey(window, Key.Enter);
+                Pump(window.Dispatcher);
+
+                Assert.Equal([first, second], playedOptions);
+                var failures = PlaybackFailures(announcer);
+                Assert.Equal(2, failures.Length);
+                Assert.NotEqual(failures[0].ActivityId, failures[1].ActivityId);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Playback_exception_announces_failure_and_keeps_switcher_focus()
+    {
+        var option = CreateOption();
+        var workflow = new RecordingWorkflow(ManualSourceDiscoveryResult.Success([option]));
+        var announcer = new RecordingAnnouncer();
+
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(workflow, announcer, _ => throw new InvalidOperationException("network failed"));
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+                var item = Assert.IsType<ListBoxItem>(
+                    window.SourceOptionsList.ItemContainerGenerator.ContainerFromIndex(0));
+
+                RaiseKey(window, Key.Enter);
+                Pump(window.Dispatcher);
+
+                Assert.Equal("换源播放失败", window.StatusText.Text);
+                Assert.Contains(PlaybackFailures(announcer), a => a.Text == "换源播放失败");
+                Assert.Equal(AutomationLiveSetting.Assertive, AutomationProperties.GetLiveSetting(window.StatusText));
+                Assert.Same(item, Keyboard.FocusedElement);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Cancelled_playback_announces_cancelled_status_when_window_is_open()
+    {
+        var option = CreateOption();
+        var workflow = new RecordingWorkflow(ManualSourceDiscoveryResult.Success([option]));
+        var playbackRequests = new ConcurrentQueue<ManualSourcePlaybackRequest>();
+        var announcer = new RecordingAnnouncer();
+
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(workflow, announcer, _ =>
+            {
+                playbackRequests.Enqueue(new([], Target, option, PlaybackQueueOrigin.Static));
+                return Task.FromCanceled<PlaybackResult>(new CancellationToken(canceled: true));
+            });
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+                RaiseKey(window, Key.Enter);
+                Pump(window.Dispatcher);
+
+                Assert.Single(playbackRequests);
+                Assert.True(window.IsVisible);
+                Assert.Equal("换源播放已取消", window.StatusText.Text);
+                Assert.Contains(announcer.Announcements, a =>
+                    a.Kind == AnnouncementKind.Status
+                    && a.Text == "换源播放已取消"
+                    && a.ActivityId!.StartsWith("manual-source-playback:", StringComparison.Ordinal));
+                Assert.Equal(AutomationLiveSetting.Polite, AutomationProperties.GetLiveSetting(window.StatusText));
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Empty_result_enter_reports_missing_options_without_playback_request()
+    {
+        var workflow = new RecordingWorkflow(ManualSourceDiscoveryResult.Success([]));
+        var playbackRequests = new ConcurrentQueue<ManualSourcePlaybackRequest>();
+        var announcer = new RecordingAnnouncer();
+
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(workflow, announcer, _ =>
+            {
+                playbackRequests.Enqueue(new([], Target, CreateOption(), PlaybackQueueOrigin.Static));
+                throw new InvalidOperationException("Empty result must not start playback.");
+            });
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+                RaiseKey(window, Key.Enter);
+                Pump(window.Dispatcher);
+
+                Assert.Empty(playbackRequests);
+                Assert.Equal("未找到可播放的换源选项", window.StatusText.Text);
+                Assert.Contains(announcer.Announcements, a =>
+                    a.Kind == AnnouncementKind.Error
+                    && a.Text == "未找到可播放的换源选项"
+                    && a.ActivityId!.StartsWith("manual-source-query:", StringComparison.Ordinal));
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(ManualSourceDiscoveryStatus.Timeout, "\u6362\u6e90\u67e5\u8be2\u8d85\u65f6")]
+    [InlineData(ManualSourceDiscoveryStatus.Failed, "\u6362\u6e90\u67e5\u8be2\u5931\u8d25")]
+    public async Task Query_terminal_without_message_uses_fallback_status(ManualSourceDiscoveryStatus status, string expected)
+    {
+        var workflow = new RecordingWorkflow(new(status, [], string.Empty));
+        var announcer = new RecordingAnnouncer();
+        var expectedActivityId = $"manual-source-query:{Target.Source}:{Target.Id}";
+
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(workflow, announcer);
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+
+                Assert.Equal(expected, window.StatusText.Text);
+                Assert.Contains(announcer.Announcements, a =>
+                    a.Kind == AnnouncementKind.Error
+                    && a.Text == expected
+                    && a.ActivityId == expectedActivityId);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Repeated_empty_result_enter_announces_each_time_with_unique_activity()
+    {
+        var workflow = new RecordingWorkflow(ManualSourceDiscoveryResult.Success([]));
+        var playbackRequests = new ConcurrentQueue<ManualSourcePlaybackRequest>();
+        var announcer = new RecordingAnnouncer();
+
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(workflow, announcer, _ =>
+            {
+                playbackRequests.Enqueue(new([], Target, CreateOption(), PlaybackQueueOrigin.Static));
+                throw new InvalidOperationException("Empty result must not start playback.");
+            });
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+
+                RaiseKey(window, Key.Enter);
+                Pump(window.Dispatcher);
+                RaiseKey(window, Key.Enter);
+                Pump(window.Dispatcher);
+
+                Assert.Empty(playbackRequests);
+                var announcements = announcer.Announcements
+                    .Where(a => a.Kind == AnnouncementKind.Error
+                        && a.Text == "\u672a\u627e\u5230\u53ef\u64ad\u653e\u7684\u6362\u6e90\u9009\u9879"
+                        && a.ActivityId!.StartsWith($"manual-source-query:{Target.Source}:{Target.Id}:empty:", StringComparison.Ordinal))
+                    .ToArray();
+                Assert.Equal(2, announcements.Length);
+                Assert.Equal(
+                    [
+                        $"manual-source-query:{Target.Source}:{Target.Id}:empty:1",
+                        $"manual-source-query:{Target.Source}:{Target.Id}:empty:2"
+                    ],
+                    announcements.Select(a => a.ActivityId));
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Switcher_exposes_dynamic_status_name_keyboard_instructions_and_source_list()
+    {
+        var option = CreateOption();
+        var workflow = new RecordingWorkflow(ManualSourceDiscoveryResult.Success([option]));
+        var announcer = new RecordingAnnouncer();
+
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(workflow, announcer, _ => Task.FromResult(FailedPlayback()));
+            try
+            {
+                window.Show();
+                Pump(window.Dispatcher);
+
+                Assert.Equal(window.StatusText.Text, AutomationProperties.GetName(window.StatusText));
+                var help = Assert.IsType<TextBlock>(FindLogicalDescendant(
+                    window, "方向键选择，回车播放，Esc 关闭"));
+                Assert.Equal("方向键选择，回车播放，Esc 关闭", help.Text);
+                Assert.Equal("换源选项", new ListBoxAutomationPeer(window.SourceOptionsList).GetName());
+                Assert.Equal("目标歌曲 - 目标歌手", AutomationProperties.GetName(window.TargetSongText));
+
+                RaiseKey(window, Key.Enter);
+                Pump(window.Dispatcher);
+                Assert.Equal(AutomationLiveSetting.Assertive, AutomationProperties.GetLiveSetting(window.StatusText));
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public async Task Enter_plays_selected_option_with_queue_context_and_closes_after_success()
     {
         var option = CreateOption();
@@ -292,6 +591,33 @@ public sealed class ManualSourceSwitchWindowTests
         });
     }
 
+    private static PlaybackResult FailedPlayback() => new(
+        PlaybackResultStatus.Failed,
+        null,
+        PlaybackQueueOrigin.Static,
+        "换源播放失败",
+        PlaybackTrigger.UserInitiated);
+
+    private static AccessibleAnnouncement[] PlaybackFailures(RecordingAnnouncer announcer) =>
+        announcer.Announcements
+            .Where(a => a.Kind == AnnouncementKind.Error
+                && a.ActivityId!.StartsWith("manual-source-playback:", StringComparison.Ordinal))
+            .ToArray();
+
+    private static DependencyObject? FindLogicalDescendant(DependencyObject parent, string text)
+    {
+        if (parent is TextBlock block && block.Text == text)
+            return parent;
+
+        foreach (var child in LogicalTreeHelper.GetChildren(parent).OfType<DependencyObject>())
+        {
+            var match = FindLogicalDescendant(child, text);
+            if (match is not null) return match;
+        }
+
+        return null;
+    }
+
     private static ManualSourceSwitchWindow CreateWindow(
         IManualSourceDiscoveryWorkflow workflow,
         IAccessibleAnnouncer announcer,
@@ -432,7 +758,13 @@ public sealed class ManualSourceSwitchWindowTests
     private sealed class RecordingAnnouncer : IAccessibleAnnouncer
     {
         public bool SpeechEnabled { get; set; }
+        public List<AccessibleAnnouncement> Announcements { get; } = [];
         public List<string> Messages { get; } = [];
-        public void Announce(AccessibleAnnouncement announcement) => Messages.Add(announcement.Text);
+
+        public void Announce(AccessibleAnnouncement announcement)
+        {
+            Announcements.Add(announcement);
+            Messages.Add(announcement.Text);
+        }
     }
 }

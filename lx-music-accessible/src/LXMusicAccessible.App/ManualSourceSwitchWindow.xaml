@@ -11,15 +11,18 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
         <TextBlock x:Name="TargetSongText" Margin="0,0,0,8" TextWrapping="Wrap"
                    AutomationProperties.Name="{Binding Text, RelativeSource={RelativeSource Self}}"/>
         <TextBlock x:Name="StatusText" Grid.Row="1" Margin="0,0,0,8" TextWrapping="Wrap"
-                   AutomationProperties.Name="换源状态"
+                   AutomationProperties.Name="{Binding Text, RelativeSource={RelativeSource Self}}"
                    AutomationProperties.LiveSetting="Polite"/>
-        <local:SingleReadListBox x:Name="SourceOptionsList" Grid.Row="2"
+        <TextBlock x:Name="KeyboardHelpText" Grid.Row="2" Margin="0,0,0,8" TextWrapping="Wrap"
+                   Text="方向键选择，回车播放，Esc 关闭"/>
+        <local:SingleReadListBox x:Name="SourceOptionsList" Grid.Row="3"
                                  AutomationProperties.Name="换源选项"
                                  HorizontalContentAlignment="Stretch">
             <ListBox.ItemContainerStyle>

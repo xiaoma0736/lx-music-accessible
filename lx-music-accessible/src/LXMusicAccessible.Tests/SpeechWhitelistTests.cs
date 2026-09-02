@@ -15,6 +15,8 @@ public sealed class SpeechWhitelistTests
     [InlineData("settings")]
     [InlineData("hotkey-recording")]
     [InlineData("download:42")]
+    [InlineData("manual-source-query:netease:target-1")]
+    [InlineData("manual-source-playback:qq:song-1:2")]
     [InlineData("download-list:abc")]
     public void Allowed_activity_categories_enable_speech(string activityId)
     {

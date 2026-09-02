@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Input;
 using System.Windows.Threading;
 using LXMusicAccessible.Models;
@@ -18,6 +19,9 @@ public partial class ManualSourceSwitchWindow : Window
     private readonly PlaybackQueueOrigin _origin;
     private bool _completed;
     private bool _playbackInFlight;
+    private bool _isClosed;
+    private int _playbackAttempt;
+    private int _emptyQueryAttempt;
 
     public ManualSourceSwitchWindow(
         MusicInfo target,
@@ -39,6 +43,7 @@ public partial class ManualSourceSwitchWindow : Window
         Loaded += ManualSourceSwitchWindow_Loaded;
         Closed += (_, _) =>
         {
+            _isClosed = true;
             _queryCancellation.Cancel();
             _queryCancellation.Dispose();
         };
@@ -46,29 +51,35 @@ public partial class ManualSourceSwitchWindow : Window
 
     private async void ManualSourceSwitchWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        StatusText.Text = "\u6b63\u5728\u67e5\u8be2\u53ef\u64ad\u653e\u7684\u6362\u6e90\u9009\u9879";
-        Announce(StatusText.Text, AnnouncementKind.Busy, "manual-source-query");
+        SetStatus("\u6b63\u5728\u67e5\u8be2\u53ef\u64ad\u653e\u7684\u6362\u6e90\u9009\u9879", AnnouncementKind.Busy);
+        Announce(StatusText.Text, AnnouncementKind.Busy, QueryActivityId);
         try
         {
             var result = await _workflow.DiscoverAsync(_target, _queryCancellation.Token);
-            if (_completed || _queryCancellation.IsCancellationRequested) return;
+            if (_completed || _queryCancellation.IsCancellationRequested || _isClosed) return;
 
             _completed = true;
             SourceOptionsList.ItemsSource = result.Options;
-            StatusText.Text = result.Status switch
+            var kind = result.Status switch
+            {
+                ManualSourceDiscoveryStatus.Success when result.Options.Count > 0 => AnnouncementKind.Success,
+                ManualSourceDiscoveryStatus.Timeout => AnnouncementKind.Error,
+                ManualSourceDiscoveryStatus.Failed => AnnouncementKind.Error,
+                _ => AnnouncementKind.Error
+            };
+            SetStatus(result.Status switch
             {
                 ManualSourceDiscoveryStatus.Success when result.Options.Count > 0 =>
                     $"\u627e\u5230 {result.Options.Count} \u4e2a\u53ef\u64ad\u653e\u7684\u6362\u6e90\u9009\u9879",
-                ManualSourceDiscoveryStatus.Timeout => result.Message,
-                ManualSourceDiscoveryStatus.Failed => result.Message,
+                ManualSourceDiscoveryStatus.Timeout => string.IsNullOrWhiteSpace(result.Message)
+                    ? "\u6362\u6e90\u67e5\u8be2\u8d85\u65f6"
+                    : result.Message,
+                ManualSourceDiscoveryStatus.Failed => string.IsNullOrWhiteSpace(result.Message)
+                    ? "\u6362\u6e90\u67e5\u8be2\u5931\u8d25"
+                    : result.Message,
                 _ => "\u672a\u627e\u5230\u53ef\u64ad\u653e\u7684\u6362\u6e90\u9009\u9879"
-            };
-            Announce(
-                StatusText.Text,
-                result.Status == ManualSourceDiscoveryStatus.Success && result.Options.Count > 0
-                    ? AnnouncementKind.Success
-                    : AnnouncementKind.Error,
-                "manual-source-query");
+            }, kind);
+            Announce(StatusText.Text, kind, QueryActivityId);
             _ = Dispatcher.BeginInvoke(SourceOptionsList.FocusItemOrList, DispatcherPriority.Input);
         }
         catch (ObjectDisposedException)
@@ -81,11 +92,11 @@ public partial class ManualSourceSwitchWindow : Window
         }
         catch (Exception)
         {
-            if (_completed || _queryCancellation.IsCancellationRequested) return;
+            if (_completed || _queryCancellation.IsCancellationRequested || _isClosed) return;
             _completed = true;
             SourceOptionsList.ItemsSource = null;
-            StatusText.Text = "\u6362\u6e90\u67e5\u8be2\u5931\u8d25";
-            Announce(StatusText.Text, AnnouncementKind.Error, "manual-source-query");
+            SetStatus("\u6362\u6e90\u67e5\u8be2\u5931\u8d25", AnnouncementKind.Error);
+            Announce(StatusText.Text, AnnouncementKind.Error, QueryActivityId);
             _ = Dispatcher.BeginInvoke(SourceOptionsList.FocusItemOrList, DispatcherPriority.Input);
         }
     }
@@ -104,12 +115,25 @@ public partial class ManualSourceSwitchWindow : Window
             e.Handled = true;
             return;
         }
-        if (e.Key != Key.Enter || SourceOptionsList.SelectedItem is not ManualSourceOption option) return;
+        if (e.Key != Key.Enter) return;
+
+        if (SourceOptionsList.SelectedItem is not ManualSourceOption option)
+        {
+            if (SourceOptionsList.Items.Count == 0)
+            {
+                e.Handled = true;
+                SetStatus("\u672a\u627e\u5230\u53ef\u64ad\u653e\u7684\u6362\u6e90\u9009\u9879", AnnouncementKind.Error);
+                Announce(StatusText.Text, AnnouncementKind.Error, CreateEmptyQueryActivityId());
+            }
+            return;
+        }
         if (_playbackInFlight) { e.Handled = true; return; }
 
         e.Handled = true;
         _playbackInFlight = true;
-        Announce("\u6b63\u5728\u5c1d\u8bd5\u6362\u6e90\u64ad\u653e", AnnouncementKind.Busy, "manual-source-playback");
+        var activityId = CreatePlaybackActivityId(option);
+        SetStatus("\u6b63\u5728\u5c1d\u8bd5\u6362\u6e90\u64ad\u653e", AnnouncementKind.Busy);
+        Announce(StatusText.Text, AnnouncementKind.Busy, activityId);
         PlaybackResult result;
         try
         {
@@ -118,6 +142,9 @@ public partial class ManualSourceSwitchWindow : Window
         }
         catch (OperationCanceledException)
         {
+            if (_isClosed) return;
+            SetStatus("\u6362\u6e90\u64ad\u653e\u5df2\u53d6\u6d88", AnnouncementKind.Status);
+            Announce(StatusText.Text, AnnouncementKind.Status, activityId);
             return;
         }
         catch (Exception)
@@ -134,15 +161,45 @@ public partial class ManualSourceSwitchWindow : Window
             _playbackInFlight = false;
         }
 
+        if (_isClosed) return;
         if (result.Status == PlaybackResultStatus.Playing)
         {
             Close();
             return;
         }
 
-        StatusText.Text = string.IsNullOrWhiteSpace(result.Message) ? "\u9009\u5b9a\u63a5\u53e3\u64ad\u653e\u5931\u8d25" : result.Message;
-        Announce(StatusText.Text, AnnouncementKind.Error, "manual-source-playback");
+        SetStatus(GetPlaybackFailureText(result), AnnouncementKind.Error);
+        Announce(StatusText.Text, AnnouncementKind.Error, activityId);
     }
+
+    private string QueryActivityId =>
+        $"manual-source-query:{_target.Source}:{_target.Id}";
+
+    private string CreateEmptyQueryActivityId() =>
+        $"manual-source-query:{_target.Source}:{_target.Id}:empty:{++_emptyQueryAttempt}";
+
+    private string CreatePlaybackActivityId(ManualSourceOption option) =>
+        $"manual-source-playback:{option.SourceId}:{option.Candidate.Id}:{++_playbackAttempt}";
+
+    private void SetStatus(string text, AnnouncementKind kind)
+    {
+        StatusText.Text = text;
+        AutomationProperties.SetLiveSetting(
+            StatusText,
+            kind == AnnouncementKind.Error
+                ? AutomationLiveSetting.Assertive
+                : AutomationLiveSetting.Polite);
+    }
+
+    private static string GetPlaybackFailureText(PlaybackResult result) =>
+        string.IsNullOrWhiteSpace(result.Message)
+            ? result.Status switch
+            {
+                PlaybackResultStatus.Superseded => "\u6362\u6e90\u64ad\u653e\u5df2\u8fc7\u671f",
+                PlaybackResultStatus.NoChange => "\u6362\u6e90\u64ad\u653e\u672a\u751f\u6548",
+                _ => "\u9009\u5b9a\u63a5\u53e3\u64ad\u653e\u5931\u8d25"
+            }
+            : result.Message;
 
     private void Announce(
         string text,
