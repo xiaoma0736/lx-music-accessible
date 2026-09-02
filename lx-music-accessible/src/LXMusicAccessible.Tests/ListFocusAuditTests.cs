@@ -42,6 +42,7 @@ public sealed class ListFocusAuditTests
             "MainWindow.xaml:RankingList",
             "MainWindow.xaml:RankingSongsList",
             "MainWindow.xaml:SearchResultsList",
+            "ManualSourceSwitchWindow.xaml:SourceOptionsList",
             "PlaylistImportWindow.xaml:MyPlaylistsList",
             "PlaylistImportWindow.xaml:PlaylistSongsList",
             "PlaylistLoginMethodWindow.xaml:MethodsList",

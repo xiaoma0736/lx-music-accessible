@@ -87,7 +87,11 @@ public static class ApplicationHost
                     sp.GetRequiredService<MusicPlayerService>());
                 services.AddSingleton<IAudioPlaybackControl>(sp =>
                     sp.GetRequiredService<MusicPlayerService>());
+                services.AddSingleton<IExactPlaybackCoordinator>(sp =>
+                    sp.GetRequiredService<MusicPlayerService>());
                 services.AddSingleton<MusicSourceService>();
+                services.AddSingleton<IManualSourceGateway>(sp => sp.GetRequiredService<MusicSourceService>());
+                services.AddSingleton<IManualSourceDiscoveryWorkflow, ManualSourceDiscoveryWorkflow>();
                 services.AddSingleton<IMusicSourceService>(sp => sp.GetRequiredService<MusicSourceService>());
                 services.AddSingleton<IMusicBrowseSource>(sp => sp.GetRequiredService<MusicSourceService>());
                 services.AddSingleton(_ =>

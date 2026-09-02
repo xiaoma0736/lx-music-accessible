@@ -357,6 +357,12 @@ public sealed class MusicPlayerBackgroundTests
             string sourceId,
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<MusicInfo>>([]);
+
+        public Task<string?> ResolveExactAsync(
+            MusicInfo music,
+            string sourceId,
+            string quality,
+            CancellationToken cancellationToken) => Task.FromResult<string?>(null);
     }
 
     private sealed class ControlledPlaybackSources(
@@ -397,6 +403,12 @@ public sealed class MusicPlayerBackgroundTests
                 : [];
             return Task.FromResult(result);
         }
+
+        public Task<string?> ResolveExactAsync(
+            MusicInfo music,
+            string sourceId,
+            string quality,
+            CancellationToken cancellationToken) => Task.FromResult<string?>(null);
     }
 
     private sealed class DelayedAlternativeSources(
@@ -428,6 +440,12 @@ public sealed class MusicPlayerBackgroundTests
             SearchedSources.Enqueue(sourceId);
             return [NetworkSong($"match-{sourceId}", sourceId)];
         }
+
+        public Task<string?> ResolveExactAsync(
+            MusicInfo music,
+            string sourceId,
+            string quality,
+            CancellationToken cancellationToken) => Task.FromResult<string?>(null);
     }
 
     private sealed class ControlledAudioPlayer(string? blockedUrl = null) : IAudioPlayer

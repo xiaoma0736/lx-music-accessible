@@ -1,0 +1,38 @@
+<Window x:Class="LXMusicAccessible.App.ManualSourceSwitchWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:LXMusicAccessible.App"
+        Title="换源播放"
+        Width="720" Height="520" MinWidth="560" MinHeight="420"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        ShowInTaskbar="False">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="TargetSongText" Margin="0,0,0,8" TextWrapping="Wrap"
+                   AutomationProperties.Name="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+        <TextBlock x:Name="StatusText" Grid.Row="1" Margin="0,0,0,8" TextWrapping="Wrap"
+                   AutomationProperties.Name="换源状态"
+                   AutomationProperties.LiveSetting="Polite"/>
+        <local:SingleReadListBox x:Name="SourceOptionsList" Grid.Row="2"
+                                 AutomationProperties.Name="换源选项"
+                                 HorizontalContentAlignment="Stretch">
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="AutomationProperties.Name" Value="{Binding DisplayLabel}"/>
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding DisplayLabel}" TextWrapping="Wrap" Margin="4"/>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </local:SingleReadListBox>
+    </Grid>
+</Window>

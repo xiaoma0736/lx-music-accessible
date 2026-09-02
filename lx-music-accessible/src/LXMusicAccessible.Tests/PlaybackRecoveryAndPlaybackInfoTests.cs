@@ -329,6 +329,12 @@ public sealed class PlaybackRecoveryAndPlaybackInfoTests
                 : [];
             return Task.FromResult(result);
         }
+
+        public Task<string?> ResolveExactAsync(
+            MusicInfo music,
+            string sourceId,
+            string quality,
+            CancellationToken cancellationToken) => Task.FromResult<string?>(null);
     }
 
     private sealed class RecoveryAudioPlayer : IAudioPlayer

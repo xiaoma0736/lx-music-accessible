@@ -16,10 +16,16 @@ public interface IPlaybackSourceAdapter
         MusicInfo music,
         string sourceId,
         CancellationToken cancellationToken);
+
+    Task<string?> ResolveExactAsync(
+        MusicInfo music,
+        string sourceId,
+        string quality,
+        CancellationToken cancellationToken);
 }
 
 public sealed class MusicPlaybackSourceAdapter(
-    IMusicSourceService sources) : IPlaybackSourceAdapter
+    MusicSourceService sources) : IPlaybackSourceAdapter
 {
     private static readonly TimeSpan ResolutionBudget = TimeSpan.FromSeconds(10);
 
@@ -44,6 +50,28 @@ public sealed class MusicPlaybackSourceAdapter(
             return await sources.GetPlayUrlAsync(
                 music,
                 music.Source,
+                quality,
+                attempt.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    public async Task<string?> ResolveExactAsync(
+        MusicInfo music,
+        string sourceId,
+        string quality,
+        CancellationToken cancellationToken)
+    {
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        attempt.CancelAfter(ResolutionBudget);
+        try
+        {
+            return await sources.ResolveExactAsync(
+                music,
+                sourceId,
                 quality,
                 attempt.Token);
         }

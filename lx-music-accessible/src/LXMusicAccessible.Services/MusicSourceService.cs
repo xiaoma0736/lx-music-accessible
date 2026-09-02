@@ -8,7 +8,7 @@ namespace LXMusicAccessible.Services;
 /// <summary>
 /// 音源管理服务 — 统一调度 5 大内置音源 + 外部脚本源
 /// </summary>
-public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
+public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManualSourceGateway
 {
     private readonly ILogger<MusicSourceService> _logger;
     private readonly NeteaseMusicService _netease;
@@ -944,6 +944,131 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource
     }
 
     /// <summary>获取指定音源支持的音质列表</summary>
+
+    public IReadOnlyList<ManualSourceInterface> GetPlaybackInterfaces(MusicInfo target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (string.IsNullOrWhiteSpace(target.Source)) return [];
+
+        var interfaces = new List<ManualSourceInterface>();
+        foreach (var (platform, api) in _apiMap)
+        {
+            var source = _sources.FirstOrDefault(item =>
+                string.Equals(item.Id, platform, StringComparison.OrdinalIgnoreCase));
+            if (source?.IsEnabled == true)
+            {
+                interfaces.Add(ManualSourceInterface.BuiltIn(
+                    source.Id,
+                    string.IsNullOrWhiteSpace(source.Name) ? api.SourceName : source.Name,
+                    platform,
+                    api.GetSupportedQualities()));
+            }
+        }
+
+        foreach (var source in _sources
+                     .Where(item => item.IsEnabled && !item.IsSystemHidden)
+                     .OrderBy(item => item.Priority))
+        {
+            var script = _scriptSource.GetScript(source.Id);
+            if (script is null
+                || !SupportsRequestedSource(script, target.Source))
+                continue;
+            interfaces.Add(ManualSourceInterface.Script(
+                source.Id,
+                string.IsNullOrWhiteSpace(source.Name) ? script.Name : source.Name,
+                target.Source,
+                GetScriptQualities(script, target.Source)));
+        }
+
+        return interfaces;
+    }
+
+    public async Task<IReadOnlyList<MusicInfo>> SearchCandidatesAsync(
+        MusicInfo target,
+        string sourceId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!_apiMap.TryGetValue(sourceId, out var api))
+        {
+            var source = _sources.FirstOrDefault(item =>
+                string.Equals(item.Id, sourceId, StringComparison.OrdinalIgnoreCase)
+                && item.IsEnabled
+                && !item.IsSystemHidden);
+            var script = source is null ? null : _scriptSource.GetScript(source.Id);
+            if (script is null
+                || !SupportsRequestedSource(script, target.Source)
+                || !MusicSearchMatcher.IsSameSong(target, target))
+                return [];
+            return [target];
+        }
+
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        attempt.CancelAfter(TimeSpan.FromSeconds(8));
+        var result = await api.SearchAsync(
+            MusicSearchMatcher.BuildSearchKeyword(target),
+            1,
+            30,
+            "song",
+            attempt.Token);
+        return MusicSearchMatcher.FindBestMatches(result.Items, target)
+            .Where(candidate => MusicSearchMatcher.IsSameSong(candidate, target))
+            .ToArray();
+    }
+
+    public async Task<string?> ResolveExactAsync(
+        MusicInfo candidate,
+        string sourceId,
+        string quality,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        if (string.IsNullOrWhiteSpace(quality)) return null;
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (_apiMap.TryGetValue(sourceId, out var api)
+            && api.GetSupportedQualities().Contains(quality, StringComparer.OrdinalIgnoreCase))
+        {
+            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            attempt.CancelAfter(TimeSpan.FromSeconds(8));
+            var url = await api.GetPlayUrlAsync(candidate.Id, quality, attempt.Token);
+            return string.IsNullOrWhiteSpace(url) || !await IsPlayableAsync(url, attempt.Token)
+                ? null
+                : url;
+        }
+
+        var source = _sources.FirstOrDefault(item =>
+            string.Equals(item.Id, sourceId, StringComparison.OrdinalIgnoreCase)
+            && item.IsEnabled
+            && !item.IsSystemHidden);
+        var script = source is null ? null : _scriptSource.GetScript(source.Id);
+        if (script is null
+            || !SupportsRequestedSource(script, candidate.Source)
+            || !SupportsQuality(script, candidate.Source, quality))
+            return null;
+
+        using var scriptAttempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        scriptAttempt.CancelAfter(TimeSpan.FromSeconds(10));
+        return await TryResolveScriptUrlAsync(
+            script,
+            candidate.Id,
+            candidate.Source,
+            quality,
+            candidate,
+            scriptAttempt.Token);
+    }
+
+    private IReadOnlyList<string> GetScriptQualities(LxScriptInfo script, string source)
+    {
+        if (script.QualityMap.TryGetValue(source, out var declared)
+            && declared.Count > 0)
+            return declared.ToArray();
+        return _apiMap.TryGetValue(source, out var api)
+            ? api.GetSupportedQualities()
+            : ["128k"];
+    }
+
     public Task<List<string>> GetQualitiesForSourceAsync(string sourceId)
     {
         var list = new List<string>();

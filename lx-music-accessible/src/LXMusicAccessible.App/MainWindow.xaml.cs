@@ -83,6 +83,8 @@ public partial class MainWindow : Window
     private string? _lastAnnouncedSongKey; // 最近一次语音播报过歌名的歌曲键（Source|Id），避免重复播报
 
     private readonly HashSet<ListBox> _externalSongLists = new();
+    private ManualSourceSwitchWindow? _manualSourceWindow;
+    private readonly IManualSourceDiscoveryWorkflow _manualSourceWorkflow;
 
     private readonly System.Windows.Threading.DispatcherTimer _positionTimer =
         new() { Interval = TimeSpan.FromMilliseconds(500) };
@@ -103,7 +105,8 @@ public partial class MainWindow : Window
         ApplicationWindowFactory windowFactory,
         ToolWindowCoordinator toolWindows,
         DesktopLifecycleWorkflow desktopLifecycle,
-        MusicBrowseWorkflow browseWorkflow)
+        MusicBrowseWorkflow browseWorkflow,
+        IManualSourceDiscoveryWorkflow manualSourceWorkflow)
     {
         _accessibilityService = accessibilityService;
         _playback = playback;
@@ -119,6 +122,7 @@ public partial class MainWindow : Window
         _toolWindows = toolWindows;
         _desktopLifecycle = desktopLifecycle;
         _browseWorkflow = browseWorkflow;
+        _manualSourceWorkflow = manualSourceWorkflow;
 
         InitializeComponent();
         _desktopLifecycle.Attach(this);
@@ -1879,6 +1883,10 @@ public partial class MainWindow : Window
         }
 
         // 用第三方播放器播放（所有歌曲列表通用；路径在“工具→设置→播放”中配置）
+        var switchSource = new MenuItem { Header = ManualSourceSwitchMenuHeader, Tag = ManualSourceSwitchMenuTag };
+        switchSource.Click += SongMenu_SwitchSource_Click;
+        menu.Items.Add(switchSource);
+
         var playExternal = new MenuItem { Header = "用第三方播放器播放" };
         playExternal.Click += SongMenu_PlayWithExternal_Click;
         menu.Items.Add(playExternal);
@@ -1906,6 +1914,12 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 return;
             }
+            var switchSource = list.ContextMenu?.Items.OfType<MenuItem>()
+                .FirstOrDefault(item => Equals(item.Tag, ManualSourceSwitchMenuTag));
+            if (switchSource is not null)
+                switchSource.Visibility = CanManualSourceSwitch(m)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
         }
         else
         {
@@ -2245,6 +2259,42 @@ public partial class MainWindow : Window
     }
 
     /// <summary>用第三方播放器播放当前歌曲：本地歌曲直接传本地路径；在线歌曲先下载到临时文件再交外部播放器（下载失败回退直接传 URL），确保各类播放器都能正常播放</summary>
+    private void SongMenu_SwitchSource_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: ManualSourceSwitchMenuTag }
+            || FindContextMenu(sender as DependencyObject)?.PlacementTarget is not ListBox list
+            || list.SelectedItem is not MusicInfo target
+            || !CanManualSourceSwitch(target))
+            return;
+
+        var queue = GetListSongs(list);
+        _manualSourceWindow?.Close();
+        _manualSourceWindow = new ManualSourceSwitchWindow(
+            target,
+            queue,
+            _manualSourceWorkflow,
+            _accessibilityService,
+            request => _manualSourceWorkflow.PlayAsync(request));
+        _manualSourceWindow.Owner = this;
+        _manualSourceWindow.Closed += (_, _) => _manualSourceWindow = null;
+        _manualSourceWindow.Show();
+    }
+
+    internal static bool CanManualSourceSwitch(MusicInfo? music) => music is not null
+        && !music.IsAlbum
+        && !string.IsNullOrWhiteSpace(music.Source)
+        && !string.Equals(music.Source, "Local", StringComparison.OrdinalIgnoreCase)
+        && music.Id is not PagePrevId and not PageNextId and not AlbumBackId and not SearchMoreId;
+
+    internal PlaybackQueueOrigin GetPlaybackQueueOrigin(IReadOnlyList<MusicInfo> queue)
+    {
+        var lists = new[] { SearchResultsList, CategorySongsList, RankingSongsList }
+            .Concat(_externalSongLists);
+        return lists.FirstOrDefault(list => ReferenceEquals(list.ItemsSource, queue)) is { } list
+            ? GetPlaybackOrigin(list)
+            : PlaybackQueueOrigin.Static;
+    }
+
     private async void SongMenu_PlayWithExternal_Click(object sender, RoutedEventArgs e)
     {
         var music = GetContextMusic(sender);
@@ -2512,8 +2562,10 @@ public partial class MainWindow : Window
 
     // ==================== 列表内翻页条目 ====================
 
-    private const string PagePrevId = "__PAGE_PREV__";
-    private const string PageNextId = "__PAGE_NEXT__";
+    internal const string PagePrevId = "__PAGE_PREV__";
+    internal const string PageNextId = "__PAGE_NEXT__";
+    internal const string ManualSourceSwitchMenuHeader = "\u6362\u6e90\u64ad\u653e";
+    private const string ManualSourceSwitchMenuTag = "manual-source-switch";
     private const string AlbumBackId = "__ALBUM_BACK__";
     private const string SearchMoreId = "__SEARCH_MORE__";
     private const string BatchDownloadListTag = "__BATCH_DOWNLOAD_LIST__";

@@ -9,7 +9,7 @@ namespace LXMusicAccessible.Services;
 /// 播放协调深模块：唯一拥有队列、索引、播放模式、来源重试、代际和预缓存。
 /// 调用者只提交播放意图并观察结果或状态事件。
 /// </summary>
-public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackControl, IAsyncDisposable
+public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoordinator, IAudioPlaybackControl, IAsyncDisposable
 {
     private const string PlaySlot = "music-player.play";
     private const string PrecacheSlot = "music-player.precache";
@@ -133,6 +133,161 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IAudioPlaybackCon
             request.Quality,
             request.ForceResolve,
             request.Trigger);
+    }
+
+    public Task<PlaybackResult> PlayExactAsync(
+        PlaybackRequest request,
+        ManualSourceOption option)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(option);
+        ArgumentNullException.ThrowIfNull(request.Selection);
+        if (!MusicSearchMatcher.IsSameSong(option.Candidate, request.Selection)
+            || !string.Equals(option.Candidate.Source, option.Platform, StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(new PlaybackResult(
+                PlaybackResultStatus.Failed,
+                null,
+                request.Origin,
+                "\u6362\u6e90\u5019\u9009\u4e0d\u662f\u4e25\u683c\u540c\u66f2",
+                request.Trigger));
+        }
+
+        var queue = request.Queue?.Where(item => item is not null).ToList() ?? [];
+        var index = FindIndex(queue, request.Selection);
+        if (index < 0)
+        {
+            queue.Add(request.Selection);
+            index = queue.Count - 1;
+        }
+        else
+        {
+            queue[index] = option.Candidate;
+        }
+
+        long revision;
+        lock (_gate)
+        {
+            revision = ++_queueRevision;
+            _queue = queue;
+            _currentIndex = index;
+            _queueOrigin = request.Origin;
+        }
+
+        CancelGenerationWork();
+        return RunExactPlayAsync(
+            revision,
+            index,
+            option.Candidate,
+            option.SourceId,
+            request.Quality,
+            request.Trigger);
+    }
+
+
+    private async Task<PlaybackResult> RunExactPlayAsync(
+        long revision,
+        int index,
+        MusicInfo music,
+        string sourceId,
+        string quality,
+        PlaybackTrigger trigger)
+    {
+        var result = Superseded(trigger);
+        await _backgroundWork.RunLatestAsync(PlaySlot, async context =>
+        {
+            result = await PlayExactGenerationAsync(
+                revision,
+                index,
+                music,
+                sourceId,
+                string.IsNullOrWhiteSpace(quality) ? DefaultQuality : quality,
+                trigger,
+                context);
+        });
+        return result;
+    }
+
+    private async Task<PlaybackResult> PlayExactGenerationAsync(
+        long revision,
+        int index,
+        MusicInfo music,
+        string sourceId,
+        string quality,
+        PlaybackTrigger trigger,
+        BackgroundWorkContext context)
+    {
+        var generationToken = context.CancellationToken;
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(generationToken);
+        attempt.CancelAfter(PlaybackAttemptBudget);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(attempt.Token);
+        budget.CancelAfter(RequestedPlaybackBudget);
+
+        if (!PublishState(context, revision, PlayerState.Loading, music))
+            return Superseded(trigger);
+
+        try
+        {
+            var url = await TryResolveExactWithinBudgetAsync(
+                music,
+                sourceId,
+                quality,
+                generationToken,
+                budget);
+            if (string.IsNullOrWhiteSpace(url)
+                || !await TryLoadWithinBudgetAsync(
+                    music,
+                    url,
+                    quality,
+                    generationToken,
+                    budget))
+            {
+                return CommitFailure(context, revision, music, trigger);
+            }
+
+            return CommitPlaying(context, revision, index, music, url!, trigger);
+        }
+        catch (OperationCanceledException) when (generationToken.IsCancellationRequested)
+        {
+            _audioPlayer.Stop();
+            return Superseded(trigger);
+        }
+        catch (OperationCanceledException) when (attempt.IsCancellationRequested)
+        {
+            _audioPlayer.Stop();
+            return CommitFailure(context, revision, music, trigger);
+        }
+    }
+
+    private async Task<string?> TryResolveExactWithinBudgetAsync(
+        MusicInfo music,
+        string sourceId,
+        string quality,
+        CancellationToken generationToken,
+        CancellationTokenSource budgetSource)
+    {
+        try
+        {
+            return await _sources.ResolveExactAsync(
+                music,
+                sourceId,
+                quality,
+                budgetSource.Token);
+        }
+        catch (OperationCanceledException) when (
+            budgetSource.IsCancellationRequested
+            && !generationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "Exact playback URL resolution failed ({SourceId}): {ErrorType}",
+                sourceId,
+                exception.GetType().Name);
+            return null;
+        }
     }
 
     public Task<PlaybackResult> ReplayAsync()
