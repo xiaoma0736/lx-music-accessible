@@ -28,6 +28,7 @@ public class LxScriptEngine
     private const int MaxHeaderCharacters = 64 * 1024;
     private const int MaxOptionsCharacters = 4 * 1024;
     private const int MaxKeyCharacters = 64 * 1024;
+    private const int MaxInitedManifestCharacters = 64 * 1024;
     private static readonly HashSet<string> SafeFailureCodes =
     [
         "content_encoding_invalid",
@@ -233,6 +234,7 @@ public class LxScriptEngine
         {
             if (!(bool)engine.Evaluate("globalThis.lx.__probe()"))
                 throw new LxScriptActionException("脚本未注册 request 处理器");
+            ApplyInitedSources(script, engine.Evaluate("String(globalThis.__lxInitedJson || '')") as string);
             return null;
         }
 
@@ -286,6 +288,7 @@ public class LxScriptEngine
         engine.Execute(rawScript);
         if (!engine.Evaluate("globalThis.lx.__probe()").AsBoolean())
             throw new LxScriptActionException("脚本未注册 request 处理器");
+        ApplyInitedSources(script, engine.Evaluate("String(globalThis.__lxInitedJson || '')").AsString());
         return true;
     }
 
@@ -316,6 +319,74 @@ public class LxScriptEngine
     {
         public LxScriptActionException(string message) : base(message) { }
     }
+
+    private static void ApplyInitedSources(LxScriptInfo script, string? initedJson)
+    {
+        if (string.IsNullOrWhiteSpace(initedJson)) return;
+        if (initedJson.Length > MaxInitedManifestCharacters) return;
+        try
+        {
+            using var document = JsonDocument.Parse(initedJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("sources", out var sources)
+                || sources.ValueKind != JsonValueKind.Object)
+                return;
+
+            foreach (var declaredSource in sources.EnumerateObject())
+            {
+                var platform = MapSourceId(declaredSource.Name);
+                if (platform is null
+                    || declaredSource.Value.ValueKind != JsonValueKind.Object
+                    || !declaredSource.Value.TryGetProperty("type", out var type)
+                    || type.ValueKind != JsonValueKind.String
+                    || !string.Equals(type.GetString(), "music", StringComparison.Ordinal)
+                    || !declaredSource.Value.TryGetProperty("actions", out var actions)
+                    || actions.ValueKind != JsonValueKind.Array
+                    || !actions.EnumerateArray().Any(item =>
+                        item.ValueKind == JsonValueKind.String
+                        && string.Equals(item.GetString(), "musicUrl", StringComparison.Ordinal))
+                    || !declaredSource.Value.TryGetProperty("qualitys", out var qualities)
+                    || qualities.ValueKind != JsonValueKind.Array)
+                    continue;
+
+                var seenQualities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var parsedQualities = new List<string>();
+                foreach (var qualityValue in qualities.EnumerateArray())
+                {
+                    if (qualityValue.ValueKind != JsonValueKind.String) continue;
+                    var quality = qualityValue.GetString()?.Trim();
+                    if (string.IsNullOrEmpty(quality) || !seenQualities.Add(quality)) continue;
+                    parsedQualities.Add(quality);
+                }
+                if (parsedQualities.Count == 0) continue;
+
+                if (!script.SupportedSources.Contains(platform, StringComparer.OrdinalIgnoreCase))
+                    script.SupportedSources.Add(platform);
+                if (!script.QualityMap.TryGetValue(platform, out var existingQualities))
+                    script.QualityMap[platform] = existingQualities = [];
+                foreach (var quality in parsedQualities)
+                {
+                    if (!existingQualities.Contains(quality, StringComparer.OrdinalIgnoreCase))
+                        existingQualities.Add(quality);
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // A malformed runtime declaration must not make the script eligible for playback.
+        }
+    }
+
+    private static string? MapSourceId(string source) => source.ToLowerInvariant() switch
+    {
+        "tx" => "qq",
+        "wy" => "netease",
+        "mg" => "migu",
+        "kg" => "kg",
+        "kw" => "kw",
+        "git" or "github" => null,
+        _ => source.ToLowerInvariant()
+    };
 
     private static LxLyricRaw? ParseLyricResult(JsonElement v)
     {
@@ -1227,7 +1298,21 @@ public class LxScriptEngine
     },
     send: function (eventName, data) {
       return new Promise(function (resolve, reject) {
-        if (eventName === EVENT_NAMES.inited) { resolve(); return; }
+        if (eventName === EVENT_NAMES.inited) {
+          if (!globalThis.__lxInitedCaptured) {
+            globalThis.__lxInitedCaptured = true;
+            try {
+              var serialized = JSON.stringify(data || null);
+              globalThis.__lxInitedJson = typeof serialized === 'string' && serialized.length <= 65536
+                ? serialized
+                : null;
+            } catch (e) {
+              globalThis.__lxInitedJson = null;
+            }
+          }
+          resolve();
+          return;
+        }
         if (eventName === EVENT_NAMES.updateAlert) {
           try { if (nativeUpdateAlert) nativeUpdateAlert(JSON.stringify(data || {})); }
           catch (e) { reject(e); return; }
@@ -1282,6 +1367,8 @@ public class LxScriptEngine
     currentScriptInfo: (function () { try { return JSON.parse(globalThis.__scriptInfo); } catch (e) { return { name: 'lx-music-accessible', version: '1.0.0' }; } })()
   };
 
+  globalThis.__lxInitedJson = null;
+  globalThis.__lxInitedCaptured = false;
   globalThis.lx.__invoke = function (action, source, musicInfo, type) {
     var h = handlers['request'];
     if (typeof h === 'function') return h({ action: action, source: source, info: { musicInfo: musicInfo, type: type } });
