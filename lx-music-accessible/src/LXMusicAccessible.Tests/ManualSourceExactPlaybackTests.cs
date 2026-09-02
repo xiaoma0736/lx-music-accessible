@@ -95,6 +95,26 @@ public sealed class ManualSourceExactPlaybackTests
         Assert.Equal("128k", player.DefaultQuality);
     }
 
+    [Fact]
+    public async Task Exact_playback_failure_message_does_not_imply_all_sources_tried()
+    {
+        var audio = new ExactAudioPlayer();
+        var sources = new ExactSourceAdapter();
+        await using var player = CreatePlayer(audio, sources);
+        var option = ManualSourceOption.Create(
+            "qq-script", "QQ脚本", "qq", Candidate, "320k", "QQ脚本，320k");
+
+        var result = await player.PlayExactAsync(
+            new([Original], Original, option.Quality, PlaybackQueueOrigin.Search),
+            option);
+
+        Assert.Equal(PlaybackResultStatus.Failed, result.Status);
+        Assert.DoesNotContain("已尝试所有可用音源", result.Message);
+        Assert.Contains("选定接口", result.Message);
+        Assert.Contains("qq-script", result.Message);
+        Assert.Contains("320k", result.Message);
+    }
+
     private static MusicPlayerService CreatePlayer(
         IAudioPlayer audio,
         IPlaybackSourceAdapter sources) => new(

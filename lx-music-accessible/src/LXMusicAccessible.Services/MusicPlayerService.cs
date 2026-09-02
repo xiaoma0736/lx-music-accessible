@@ -242,7 +242,8 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                     generationToken,
                     budget))
             {
-                return CommitFailure(context, revision, music, trigger);
+                return CommitFailure(context, revision, music, trigger,
+                    $"选定接口播放失败：{music.Title}（{sourceId}，{quality}）");
             }
 
             return CommitPlaying(context, revision, index, music, url!, trigger);
@@ -255,7 +256,8 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         catch (OperationCanceledException) when (attempt.IsCancellationRequested)
         {
             _audioPlayer.Stop();
-            return CommitFailure(context, revision, music, trigger);
+            return CommitFailure(context, revision, music, trigger,
+                $"选定接口播放失败：{music.Title}（{sourceId}，{quality}）");
         }
     }
 
@@ -834,13 +836,14 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         BackgroundWorkContext context,
         long revision,
         MusicInfo music,
-        PlaybackTrigger trigger)
+        PlaybackTrigger trigger,
+        string? message = null)
     {
         PlaybackQueueOrigin origin = PlaybackQueueOrigin.Static;
         var applied = false;
-        var message = IsLocal(music)
+        var failureMessage = message ?? (IsLocal(music)
             ? $"本地歌曲播放失败：{music.Title}"
-            : $"无法播放《{music.Title}》，已尝试所有可用音源";
+            : $"无法播放《{music.Title}》，已尝试所有可用音源");
         context.TryCommit(() =>
         {
             lock (_gate)
@@ -855,17 +858,17 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                     OldState = oldState,
                     NewState = _state,
                     CurrentMusic = music,
-                    ErrorMessage = message
+                    ErrorMessage = failureMessage
                 });
                 SafeAnnounce(new(
-                    message,
+                    failureMessage,
                     AnnouncementKind.Error,
                     ActivityId(revision)));
             }
         });
 
         return applied
-            ? new PlaybackResult(PlaybackResultStatus.Failed, music, origin, message, trigger)
+            ? new PlaybackResult(PlaybackResultStatus.Failed, music, origin, failureMessage, trigger)
             : Superseded(trigger);
     }
 
