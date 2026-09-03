@@ -17,7 +17,8 @@
         <ListBox x:Name="CategoryList" Grid.Column="0"
                  AutomationProperties.Name="设置分类"
                  SelectionChanged="CategoryList_SelectionChanged"
-                 KeyboardNavigation.TabIndex="0" KeyboardNavigation.TabNavigation="Once" IsTabStop="True">
+                 KeyboardNavigation.TabIndex="0" KeyboardNavigation.TabNavigation="Once"
+                 Focusable="False" IsTabStop="False">
             <ListBoxItem Content="常规" AutomationProperties.Name="常规"/>
             <ListBoxItem Content="播放" AutomationProperties.Name="播放"/>
             <ListBoxItem Content="歌词" AutomationProperties.Name="歌词"/>

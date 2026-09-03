@@ -124,6 +124,73 @@ public sealed class SettingsWindowTests
     }
 
     [Fact]
+    public async Task Category_list_shell_is_not_a_keyboard_focus_target()
+    {
+        var dependencies = await CreateDependenciesAsync();
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(dependencies);
+            try
+            {
+                window.Show();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+                Assert.False(window.CategoryList.Focusable);
+                Assert.False(window.CategoryList.IsTabStop);
+                Assert.False(window.CategoryList.Focus());
+
+                var listPeer = new ListBoxAutomationPeer(window.CategoryList);
+                Assert.False(listPeer.IsKeyboardFocusable());
+
+                var category = Assert.IsType<ListBoxItem>(
+                    window.CategoryList.ItemContainerGenerator.ContainerFromIndex(0));
+                var categoryPeer = UIElementAutomationPeer.CreatePeerForElement(category);
+                Assert.NotNull(categoryPeer);
+                Assert.True(categoryPeer.IsKeyboardFocusable());
+                Assert.Equal("常规", categoryPeer.GetName());
+            }
+            finally
+            {
+                window.Close();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Forward_settings_tab_returns_to_selected_category_item_not_list_shell()
+    {
+        var dependencies = await CreateDependenciesAsync();
+        await RunOnStaThreadAsync(() =>
+        {
+            var window = CreateWindow(dependencies);
+            try
+            {
+                window.Show();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+                window.CategoryList.SelectedIndex = 6;
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                var resetButton = Assert.IsType<Button>(window.HotkeysPanel.Children.OfType<Button>().Single());
+                Assert.True(resetButton.Focus());
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+                var selectedCategory = Assert.IsType<ListBoxItem>(
+                    window.CategoryList.ItemContainerGenerator.ContainerFromIndex(6));
+                Assert.True(resetButton.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next)));
+
+                Assert.Same(selectedCategory, Keyboard.FocusedElement);
+                Assert.NotSame(window.CategoryList, Keyboard.FocusedElement);
+            }
+            finally
+            {
+                window.Close();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            }
+        });
+    }
+
+    [Fact]
     public async Task User_edits_apply_once_while_invalid_typed_paths_block_close_and_keep_focus()
     {
         var dependencies = await CreateDependenciesAsync();
@@ -143,7 +210,9 @@ public sealed class SettingsWindowTests
             window.CategoryList.SelectedIndex = 3;
             window.DownloadPathBox.Text = "relative\\music";
             window.DownloadPathBox.Focus();
-            window.CategoryList.Focus();
+            var downloadCategory = Assert.IsType<ListBoxItem>(
+                window.CategoryList.ItemContainerGenerator.ContainerFromIndex(3));
+            Assert.True(downloadCategory.Focus());
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
             Assert.Equal(string.Empty, dependencies.Settings.Current.Settings.DownloadPath);
             Assert.Equal("relative\\music", window.DownloadPathBox.Text);
@@ -249,7 +318,9 @@ public sealed class SettingsWindowTests
             Assert.True(suppression[^1]);
             RaisePreviewKey(window, Key.F5);
             Assert.Equal(0, routed);
-            window.CategoryList.Focus();
+            var playbackCategory = Assert.IsType<ListBoxItem>(
+                window.CategoryList.ItemContainerGenerator.ContainerFromIndex(1));
+            Assert.True(playbackCategory.Focus());
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
             Assert.False(suppression[^1]);
             RaisePreviewKey(window, Key.F5);
