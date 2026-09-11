@@ -143,6 +143,12 @@ public class ScriptMusicSource : IDisposable
             _logger.LogWarning("脚本内容暂存被拒绝: {Code}", ex.Code);
             return null;
         }
+        catch (JsonSourceManifestException ex)
+        {
+            LastFailureCode = ex.Code;
+            _logger.LogWarning("JSON 音源暂存被拒绝: {Code}", ex.Code);
+            return null;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "暂存脚本内容失败: {SourceId}", sourceId);
@@ -193,6 +199,40 @@ public class ScriptMusicSource : IDisposable
 
     private LxScriptInfo? ParseLxScript(string script, string sourceId, string source, bool isLocal)
     {
+        var trimmedScript = script.TrimStart();
+        if (trimmedScript.StartsWith("{", StringComparison.Ordinal) || trimmedScript.StartsWith("[", StringComparison.Ordinal))
+        {
+            var manifest = JsonSourceDefinitionParser.Parse(script);
+            var jsonInfo = new LxScriptInfo
+            {
+                Id = sourceId,
+                SourceUrl = source,
+                IsLocal = isLocal,
+                LoadedAt = DateTime.Now,
+                RawScript = script,
+                Kind = LxSourceType.JsonManifest,
+                Name = manifest.Name,
+                Version = manifest.Version,
+                Description = manifest.Description,
+                JsonSource = manifest,
+                SupportedSources = manifest.Platforms.Keys.Select(MapSourceId)
+                    .Where(mappedSource => mappedSource is not null)
+                    .Select(mappedSource => mappedSource!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            };
+            foreach (var (platform, definition) in manifest.Platforms)
+            {
+                var mappedPlatform = MapSourceId(platform);
+                if (mappedPlatform is null) continue;
+                jsonInfo.QualityMap[mappedPlatform] = definition.Url?.Qualities.Keys
+                    .Select(MapQuality)
+                    .Where(mappedQuality => mappedQuality is not null)
+                    .Select(mappedQuality => mappedQuality!)
+                    .ToList() ?? [];
+                };
+            return jsonInfo;
+        }
         var info = new LxScriptInfo
         {
             Id = sourceId,
@@ -445,6 +485,14 @@ public class ScriptMusicSource : IDisposable
     };
 
     /// <summary>我们的源ID → LX 源ID</summary>
+    private static string? MapQuality(string quality) => quality.ToLowerInvariant() switch
+    {
+        "standard" => "128k",
+        "high" => "320k",
+        "lossless" => "flac24bit",
+        _ => null
+    };
+
     private static string ReverseMapSource(string ourId) => ourId.ToLower() switch
     {
         "qq" => "tx", "netease" => "wy", "migu" => "mg",
@@ -472,6 +520,8 @@ public class LxScriptInfo
     public LxUrlPattern UrlPattern { get; set; } = LxUrlPattern.None;
     public string? RawScript { get; set; }
     public DateTime LoadedAt { get; set; }
+    public LxSourceType Kind { get; set; } = LxSourceType.Script;
+    public JsonSourceDefinition? JsonSource { get; set; }
 }
 
 public enum LxUrlPattern
@@ -481,6 +531,3 @@ public enum LxUrlPattern
     QueryString,     // /url?source={source}&songId={songId}&quality={quality}
     QueryStringId    // /url?source={source}&id={songId}&quality={quality}
 }
-
-
-
