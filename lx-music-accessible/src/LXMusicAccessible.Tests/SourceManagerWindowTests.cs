@@ -41,6 +41,22 @@ public sealed class SourceManagerWindowTests
     }
 
     [Fact]
+    public void Local_import_filter_allows_json_and_preserves_accessible_announcements()
+    {
+        var root = FindRepositoryRoot();
+        var xaml = File.ReadAllText(Path.Combine(
+            root, "src", "LXMusicAccessible.App", "SourceManagerWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(
+            root, "src", "LXMusicAccessible.App", "SourceManagerWindow.xaml.cs"));
+
+        Assert.Contains("x:Name=\"ImportLocalSourceBtn\" Content=\"从本地导入\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Filter = \"音源脚本与清单|*.js;*.json|所有文件|*.*\"", code, StringComparison.Ordinal);
+        Assert.Contains("Title = \"导入本地音源脚本或清单\"", code, StringComparison.Ordinal);
+        Assert.Contains("""Announce("正在导入本地音源...")""", code, StringComparison.Ordinal);
+        Assert.Contains("""Announce("导入失败：无法读取或解析脚本", AnnouncementKind.Error)""", code, StringComparison.Ordinal);
+        Assert.Contains("""Announce($"已导入并启用本地音源：{source.Name} v{source.Version}", AnnouncementKind.Success)""", code, StringComparison.Ordinal);
+    }
+    [Fact]
     public async Task Empty_source_list_is_the_initial_focus_and_exposes_a_concise_empty_state()
     {
         await RunOnStaThreadAsync(() =>

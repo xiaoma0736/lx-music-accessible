@@ -100,8 +100,8 @@ public partial class SourceManagerWindow : Window
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
-            Filter = "音源脚本|*.js|所有文件|*.*",
-            Title = "导入本地音源脚本",
+            Filter = "音源脚本与清单|*.js;*.json|所有文件|*.*",
+            Title = "导入本地音源脚本或清单",
             Multiselect = false
         };
         if (dialog.ShowDialog(this) != true) return;
