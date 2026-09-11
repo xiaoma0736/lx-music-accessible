@@ -246,7 +246,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             sourceId,
             cancellationToken);
         if (candidate?.RawScript is null
-            || !await _scriptEngine.TestLoadAsync(candidate, cancellationToken))
+            || (candidate.Kind is not LxSourceType.JsonManifest
+                && !await _scriptEngine.TestLoadAsync(candidate, cancellationToken)))
         {
             _logger.LogWarning(
                 "订阅音源无有效更新，保留现有版本: SourceId={SourceId}",
@@ -354,6 +355,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
                     query,
                     searchType,
                     batchSize,
+                    sourceId,
                     cancellationToken);
             }
 
@@ -430,55 +432,144 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
     /// <summary>确定参与搜索的启用内置源（单音源或全部音源）</summary>
     private List<MusicSource> GetSearchSources(string sourceId)
     {
+        var requestedSourceId = string.IsNullOrWhiteSpace(sourceId) ? "all" : sourceId;
         var enabled = GetEnabledSources().Where(s => s.Type == SourceType.BuiltIn).ToList();
-        if (!string.IsNullOrWhiteSpace(sourceId) && !string.Equals(sourceId, "all", StringComparison.OrdinalIgnoreCase))
-            enabled = enabled.Where(s => string.Equals(s.Id, sourceId, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (!string.Equals(requestedSourceId, "all", StringComparison.OrdinalIgnoreCase))
+            enabled = enabled.Where(s => string.Equals(s.Id, requestedSourceId, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        // JSON manifests participate after built-ins, only when they explicitly support the requested platform.
+        var jsonSources = GetEnabledSources()
+            .Where(s => s.Type != SourceType.BuiltIn)
+            .Where(s =>
+            {
+                var script = _scriptSource.GetScript(s.Id);
+                return script?.Kind is LxSourceType.JsonManifest
+                    && (string.Equals(requestedSourceId, "all", StringComparison.OrdinalIgnoreCase)
+                        || SupportsRequestedSource(script, requestedSourceId));
+            });
+        enabled.AddRange(jsonSources);
         return enabled;
     }
-
-    /// <summary>抓取一轮：各源取下一页原始结果，全局去重后按固定源顺序追加到会话缓冲</summary>
+    /// <summary>抓取一轮：内置源和 JSON 清单各取下一页，全局去重后按固定源顺序追加到会话缓冲</summary>
     private async Task FetchNextSearchRoundAsync(
         SearchSession session,
         List<MusicSource> sources,
         string query,
         string searchType,
         int batchSize,
+        string requestedSourceId,
         CancellationToken cancellationToken)
     {
-        var tasks = sources.Select(s => SearchSourcePageAsync(
-            s.Id,
-            query,
-            session.Cursor.GetValueOrDefault(s.Id, 0) + 1,
-            batchSize,
-            searchType,
-            cancellationToken)).ToArray();
+        var tasks = sources.Select(s =>
+        {
+            var script = _scriptSource.GetScript(s.Id);
+            return script?.Kind is LxSourceType.JsonManifest
+                ? SearchJsonSourcePageAsync(
+                    s,
+                    requestedSourceId,
+                    query,
+                    session.Cursor.GetValueOrDefault(s.Id, 0) + 1,
+                    batchSize,
+                    searchType,
+                    cancellationToken)
+                : SearchSourcePageAsync(
+                    s.Id,
+                    query,
+                    session.Cursor.GetValueOrDefault(s.Id, 0) + 1,
+                    batchSize,
+                    searchType,
+                    cancellationToken);
+        }).ToArray();
         var pages = await Task.WhenAll(tasks);
         cancellationToken.ThrowIfCancellationRequested();
 
         var anyMore = false;
         var seen = new HashSet<string>(session.Buffer.Select(BuildSearchDedupKey), StringComparer.OrdinalIgnoreCase);
 
-        foreach (var srcId in SearchResultSourceOrder)
+        void AppendPage(int index)
         {
-            var idx = sources.FindIndex(s => string.Equals(s.Id, srcId, StringComparison.OrdinalIgnoreCase));
-            if (idx < 0) continue;
-            var page = pages[idx];
-
-            session.Cursor[srcId] = session.Cursor.GetValueOrDefault(srcId, 0) + 1;
-            session.Fetched[srcId] = session.Fetched.GetValueOrDefault(srcId, 0) + page.Items.Count;
+            var source = sources[index];
+            var page = pages[index];
+            session.Cursor[source.Id] = session.Cursor.GetValueOrDefault(source.Id, 0) + 1;
+            session.Fetched[source.Id] = session.Fetched.GetValueOrDefault(source.Id, 0) + page.Items.Count;
 
             if (page.Items.Count >= batchSize) anyMore = true;
-            if (page.TotalItems > 0 && page.TotalItems > session.Fetched[srcId]) anyMore = true;
+            if (page.TotalItems > 0 && page.TotalItems > session.Fetched[source.Id]) anyMore = true;
 
-            foreach (var m in page.Items)
+            foreach (var item in page.Items)
             {
-                if (seen.Add(BuildSearchDedupKey(m)))
-                    session.Buffer.Add(m);
+                if (seen.Add(BuildSearchDedupKey(item)))
+                    session.Buffer.Add(item);
             }
         }
+
+        foreach (var sourceId in SearchResultSourceOrder)
+        {
+            var index = sources.FindIndex(s => string.Equals(s.Id, sourceId, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0) AppendPage(index);
+        }
+
+        // Manifest sources are appended after the built-ins and never remap a song to another platform.
+        for (var index = 0; index < sources.Count; index++)
+        {
+            var script = _scriptSource.GetScript(sources[index].Id);
+            if (script?.Kind is LxSourceType.JsonManifest) AppendPage(index);
+        }
+
         session.HasMore = anyMore;
     }
 
+    private async Task<PagedResult<MusicInfo>> SearchJsonSourcePageAsync(
+        MusicSource source,
+        string requestedSourceId,
+        string query,
+        int page,
+        int pageSize,
+        string searchType,
+        CancellationToken cancellationToken)
+    {
+        var runtime = _scriptSource.GetJsonSource(source.Id);
+        var script = _scriptSource.GetScript(source.Id);
+        if (runtime is null || script?.Kind is not LxSourceType.JsonManifest)
+            return PagedResult<MusicInfo>.Empty(page, pageSize);
+
+        var platforms = string.Equals(requestedSourceId, "all", StringComparison.OrdinalIgnoreCase)
+            ? script.SupportedSources
+            : [requestedSourceId];
+        var results = new List<MusicInfo>();
+        try
+        {
+            foreach (var platform in platforms)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var result = await runtime.SearchAsync(
+                    platform,
+                    query,
+                    page,
+                    pageSize,
+                    searchType,
+                    cancellationToken);
+                results.AddRange(result);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "JSON 音源搜索失败: {SourceId}", source.Id);
+        }
+
+        return new PagedResult<MusicInfo>
+        {
+            CurrentPage = page,
+            PageSize = pageSize,
+            TotalItems = results.Count,
+            HasMore = results.Count >= pageSize,
+            Items = results
+        };
+    }
     /// <summary>搜索会话：累积的全局去重结果 + 每源抓取游标/已抓条数</summary>
     private sealed class SearchSession
     {
@@ -829,11 +920,33 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         {
             try
             {
-                var r = await _scriptEngine.GetLyricAsync(
-                    script,
-                    music,
-                    music.Source,
-                    cancellationToken);
+                LxLyricRaw? r;
+                if (script.Kind is LxSourceType.JsonManifest)
+                {
+                    var jsonSource = _scriptSource.GetJsonSource(script.Id);
+                    var jsonLyric = jsonSource is null
+                        ? null
+                        : await jsonSource.GetLyricAsync(script.SupportedSources.FirstOrDefault(p =>
+                            string.Equals(p, music.Source, StringComparison.OrdinalIgnoreCase))
+                            ?? music.Source,
+                            music,
+                            cancellationToken);
+                    r = jsonLyric is null ? null : new LxLyricRaw
+                    {
+                        Lyric = jsonLyric.Lyric,
+                        Tlyric = jsonLyric.Translation,
+                        Rlyric = jsonLyric.Romanization,
+                        Lxlyric = jsonLyric.LxLyric
+                    };
+                }
+                else
+                {
+                    r = await _scriptEngine.GetLyricAsync(
+                        script,
+                        music,
+                        music.Source,
+                        cancellationToken);
+                }
                 if (r != null && !string.IsNullOrWhiteSpace(r.Lyric)) return r;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -1132,7 +1245,9 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
                 s.Id,
                 s.ScriptUrl,
                 s.Type is SourceType.Custom or SourceType.Local or SourceType.Bundled);
-            if (candidate is null || !await _scriptEngine.TestLoadAsync(candidate, cancellationToken))
+            if (candidate is null
+                || (candidate.Kind is not LxSourceType.JsonManifest
+                && !await _scriptEngine.TestLoadAsync(candidate, cancellationToken)))
                 return new(false, ScriptActivationStatus.ValidationFailed, "脚本无法注册音乐请求处理器，未启用");
 
             var previous = _scriptSource.GetScript(s.Id);
@@ -1211,7 +1326,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             source.Id,
             cancellationToken);
         if (candidate?.RawScript is null
-            || !await _scriptEngine.TestLoadAsync(candidate, cancellationToken))
+            || (candidate.Kind is not LxSourceType.JsonManifest
+                && !await _scriptEngine.TestLoadAsync(candidate, cancellationToken)))
             return false;
 
         var digest = ScriptMusicSource.ComputeSha256(candidate.RawScript);
@@ -1328,6 +1444,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
 
             // 脚本源：Jint 加载校验通过即有效
             var info = _scriptSource.GetScript(s.Id);
+            if (info is { Kind: LxSourceType.JsonManifest, JsonSource: not null })
+                return true;
             if (info != null && await _scriptEngine.TestLoadAsync(info))
                 return true;
 
@@ -1440,7 +1558,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             source.ScriptUrl,
             source.Type is SourceType.Custom or SourceType.Local or SourceType.Bundled);
         return info is not null
-            && await _scriptEngine.TestLoadAsync(info, cancellationToken)
+            && (info.Kind is LxSourceType.JsonManifest
+                || await _scriptEngine.TestLoadAsync(info, cancellationToken))
             && _scriptSource.RegisterVerified(info, source.ContentSha256);
     }
 

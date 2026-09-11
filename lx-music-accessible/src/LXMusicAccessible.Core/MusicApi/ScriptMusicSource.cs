@@ -1,4 +1,4 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,6 +17,7 @@ public class ScriptMusicSource : IDisposable
     private readonly ScriptNetworkClient _networkClient;
     private readonly bool _ownsNetworkClient;
     private readonly Dictionary<string, LxScriptInfo> _scripts = new();
+    private readonly Dictionary<string, JsonMusicSource> _jsonSources = new();
 
     public string? LastFailureCode { get; private set; }
 
@@ -184,6 +185,10 @@ public class ScriptMusicSource : IDisposable
         }
 
         _scripts[info.Id] = info;
+        if (info.Kind is LxSourceType.JsonManifest && info.JsonSource is not null)
+            _jsonSources[info.Id] = new JsonMusicSource(info.JsonSource, _networkClient, _logger);
+        else
+            _jsonSources.Remove(info.Id);
         _logger.LogInformation("已注册验证脚本: {Name} v{Version} SHA256={Sha256}",
             info.Name, info.Version, actual);
         return true;
@@ -347,6 +352,12 @@ public class ScriptMusicSource : IDisposable
         if (!_scripts.TryGetValue(scriptId, out var script))
             return null;
         LastFailureCode = null;
+        if (script.Kind is LxSourceType.JsonManifest)
+        {
+            return _jsonSources.TryGetValue(scriptId, out var jsonSource)
+                ? await jsonSource.GetPlayUrlAsync(source, songId, quality, cancellationToken)
+                : null;
+        }
 
         // 无法明确识别 URL 模式的脚本（如 POST 型接口/混淆源），不走正则快路径，交由 Jint 执行真实脚本
         if (script.UrlPattern == LxUrlPattern.None) return null;
@@ -404,9 +415,20 @@ public class ScriptMusicSource : IDisposable
     /// <summary>获取指定脚本源</summary>
     public LxScriptInfo? GetScript(string id) => _scripts.TryGetValue(id, out var s) ? s : null;
 
+    public JsonMusicSource? GetJsonSource(string id) =>
+        _jsonSources.TryGetValue(id, out var source) ? source : null;
+
     /// <summary>移除</summary>
-    public void Remove(string id) { _scripts.Remove(id); }
-    public void Clear() { _scripts.Clear(); }
+    public void Remove(string id)
+    {
+        _scripts.Remove(id);
+        _jsonSources.Remove(id);
+    }
+    public void Clear()
+    {
+        _scripts.Clear();
+        _jsonSources.Clear();
+    }
     public void Dispose()
     {
         if (_ownsNetworkClient) _networkClient.Dispose();
