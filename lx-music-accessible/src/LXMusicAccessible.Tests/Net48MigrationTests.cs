@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using Xunit;
 
 namespace LXMusicAccessible.Tests;
@@ -27,6 +28,17 @@ public sealed class Net48MigrationTests
 
         Assert.Contains("<TargetFramework>net48</TargetFramework>", text);
         Assert.DoesNotContain("<UseWPF>true</UseWPF>", text);
+    }
+
+    [Fact]
+    public void Net48_core_binds_to_system_text_json_assembly_version_available_to_net8_hosts()
+    {
+        var corePath = Path.Combine(SourceDirectory(), "LXMusicAccessible.Core", "bin", "Release", "net48", "LXMusicAccessible.Core.dll");
+        Assert.True(File.Exists(corePath), $"Build Core Release first: {corePath}");
+
+        var references = Assembly.LoadFrom(corePath).GetReferencedAssemblies();
+        var reference = Assert.Single(references, item => item.Name == "System.Text.Json");
+        Assert.Equal(new Version(8, 0, 0, 0), reference.Version);
     }
 
     [Fact]
