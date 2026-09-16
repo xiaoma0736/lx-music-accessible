@@ -1,5 +1,4 @@
-using System.Windows.Input;
-using LXMusicAccessible.App;
+
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -21,13 +20,13 @@ public sealed class Issue49HotkeyTests
 
         Assert.False(voice.IsGlobal);
         Assert.True(voice.IsEnabled);
-        Assert.Equal(Key.F5, voice.Key);
-        Assert.Equal(ModifierKeys.Shift, voice.Modifiers);
+        Assert.Equal(PlatformKey.F5, voice.Key);
+        Assert.Equal(PlatformModifiers.Shift, voice.Modifiers);
 
         Assert.False(lyrics.IsGlobal);
         Assert.True(lyrics.IsEnabled);
-        Assert.Equal(Key.F6, lyrics.Key);
-        Assert.Equal(ModifierKeys.Shift, lyrics.Modifiers);
+        Assert.Equal(PlatformKey.F6, lyrics.Key);
+        Assert.Equal(PlatformModifiers.Shift, lyrics.Modifiers);
     }
 
     [Fact]
@@ -41,16 +40,16 @@ public sealed class Issue49HotkeyTests
                 {
                     ActionId = HotkeyActions.PlayPause,
                     Name = "播放/暂停",
-                    Key = Key.F5,
-                    Modifiers = ModifierKeys.Shift,
+                    Key = PlatformKey.F5,
+                    Modifiers = PlatformModifiers.Shift,
                     IsGlobal = false
                 },
                 new Hotkey
                 {
                     ActionId = HotkeyActions.Stop,
                     Name = "停止",
-                    Key = Key.F6,
-                    Modifiers = ModifierKeys.Shift,
+                    Key = PlatformKey.F6,
+                    Modifiers = PlatformModifiers.Shift,
                     IsGlobal = false
                 }
             ]
@@ -58,11 +57,11 @@ public sealed class Issue49HotkeyTests
 
         var voice = Hotkey(loaded, HotkeyActions.ToggleVoiceAnnouncement);
         var lyrics = Hotkey(loaded, HotkeyActions.ToggleLyricAnnouncement);
-        Assert.Equal(Key.None, voice.Key);
-        Assert.Equal(ModifierKeys.None, voice.Modifiers);
+        Assert.Equal(PlatformKey.None, voice.Key);
+        Assert.Equal(PlatformModifiers.None, voice.Modifiers);
         Assert.False(voice.IsEnabled);
-        Assert.Equal(Key.None, lyrics.Key);
-        Assert.Equal(ModifierKeys.None, lyrics.Modifiers);
+        Assert.Equal(PlatformKey.None, lyrics.Key);
+        Assert.Equal(PlatformModifiers.None, lyrics.Modifiers);
         Assert.False(lyrics.IsEnabled);
     }
 
@@ -76,13 +75,13 @@ public sealed class Issue49HotkeyTests
         var voiceResult = await workflow.ReplaceHotkeyAsync(
             HotkeyActions.ToggleVoiceAnnouncement,
             isGlobal: false,
-            Key.F5,
-            ModifierKeys.Control | ModifierKeys.Alt);
+            PlatformKey.F5,
+            PlatformModifiers.Control | PlatformModifiers.Alt);
         var lyricResult = await workflow.ReplaceHotkeyAsync(
             HotkeyActions.ToggleLyricAnnouncement,
             isGlobal: false,
-            Key.F6,
-            ModifierKeys.Control | ModifierKeys.Alt);
+            PlatformKey.F6,
+            PlatformModifiers.Control | PlatformModifiers.Alt);
         Assert.Equal(HotkeyEditStatus.Applied, voiceResult.Status);
         Assert.Equal(HotkeyEditStatus.Applied, lyricResult.Status);
         Assert.True((await workflow.SaveAsync(workflow.Current)).Succeeded);
@@ -90,10 +89,10 @@ public sealed class Issue49HotkeyTests
         var restarted = await LoadAsync(store.Saved[^1]);
         var restoredVoice = Hotkey(restarted, HotkeyActions.ToggleVoiceAnnouncement);
         var restoredLyrics = Hotkey(restarted, HotkeyActions.ToggleLyricAnnouncement);
-        Assert.Equal(Key.F5, restoredVoice.Key);
-        Assert.Equal(ModifierKeys.Control | ModifierKeys.Alt, restoredVoice.Modifiers);
-        Assert.Equal(Key.F6, restoredLyrics.Key);
-        Assert.Equal(ModifierKeys.Control | ModifierKeys.Alt, restoredLyrics.Modifiers);
+        Assert.Equal(PlatformKey.F5, restoredVoice.Key);
+        Assert.Equal(PlatformModifiers.Control | PlatformModifiers.Alt, restoredVoice.Modifiers);
+        Assert.Equal(PlatformKey.F6, restoredLyrics.Key);
+        Assert.Equal(PlatformModifiers.Control | PlatformModifiers.Alt, restoredLyrics.Modifiers);
 
     }
 
@@ -163,7 +162,7 @@ public sealed class Issue49HotkeyTests
     private sealed class RecordingHotkeyAdapter : IGlobalHotkeyAdapter
     {
         public int LastRegisterError { get; private set; }
-        public bool Register(IntPtr windowHandle, int id, Key key, ModifierKeys modifiers) => true;
+        public bool Register(IntPtr windowHandle, int id, PlatformKey key, PlatformModifiers modifiers) => true;
         public bool Unregister(IntPtr windowHandle, int id) => true;
     }
 

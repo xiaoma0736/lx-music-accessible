@@ -11,7 +11,7 @@ public sealed class ManualSourceSwitchGatewayTests
     [Fact]
     public async Task Builtin_discovery_includes_every_enabled_platform_for_cross_source_switching()
     {
-        await using var host = await TestApplicationHost.StartAsync();
+        using var host = await TestApplicationHost.StartAsync();
         var service = host.Services.GetRequiredService<MusicSourceService>();
         var target = new MusicInfo
         {

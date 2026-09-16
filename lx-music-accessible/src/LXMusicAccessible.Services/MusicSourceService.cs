@@ -829,7 +829,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             // 无 audio 类型时读前 4 字节看音频魔数
             try
             {
-                await using var s = await resp.Content.ReadAsStreamAsync(cts.Token);
+                using var s = await resp.Content.ReadAsStreamAsync();
                 var buf = new byte[4];
                 var n = await s.ReadAsync(buf, 0, 4, cts.Token);
                 if (n >= 3)
@@ -868,7 +868,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         lock (_scriptHealthGate)
         {
             if (!_scriptHealth.TryGetValue(id, out var h)) return false;
-            return h.DegradedUntilTick > 0 && Environment.TickCount64 < h.DegradedUntilTick;
+            return h.DegradedUntilTick > 0 && FrameworkCompatibility.CurrentTickMs < h.DegradedUntilTick;
         }
     }
 
@@ -883,7 +883,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             }
             h.ConsecutiveFailures++;
             h.DegradedUntilTick = h.ConsecutiveFailures >= 2
-                ? (long)(Environment.TickCount64 + TimeSpan.FromMinutes(5).TotalMilliseconds)
+                ? (long)(FrameworkCompatibility.CurrentTickMs + TimeSpan.FromMinutes(5).TotalMilliseconds)
                 : 0;
         }
     }
@@ -1060,7 +1060,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
 
     public IReadOnlyList<ManualSourceInterface> GetPlaybackInterfaces(MusicInfo target)
     {
-        ArgumentNullException.ThrowIfNull(target);
+        FrameworkCompatibility.ThrowIfNull(target);
         if (string.IsNullOrWhiteSpace(target.Source)) return [];
 
         var interfaces = new List<ManualSourceInterface>();
@@ -1101,7 +1101,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         string sourceId,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(target);
+        FrameworkCompatibility.ThrowIfNull(target);
         cancellationToken.ThrowIfCancellationRequested();
         if (!_apiMap.TryGetValue(sourceId, out var api))
         {
@@ -1136,7 +1136,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         string quality,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(candidate);
+        FrameworkCompatibility.ThrowIfNull(candidate);
         if (string.IsNullOrWhiteSpace(quality)) return null;
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -1569,9 +1569,13 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
 
     private static (string source, string cleanId) ParseSourceId(string id, string defaultSource)
     {
-        var parts = id.Split('_', 2);
-        if (parts.Length == 2 && parts[0].ToLower() is "qq" or "kg" or "kw" or "migu" or "netease")
-            return (parts[0].ToLower(), parts[1]);
+        var separator = id.IndexOf('_');
+        if (separator > 0)
+        {
+            var source = id.Substring(0, separator).ToLower();
+            if (source is "qq" or "kg" or "kw" or "migu" or "netease")
+                return (source, id.Substring(separator + 1));
+        }
         return (defaultSource, id);
     }
 
@@ -1581,8 +1585,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
     private static bool HasHttpScriptUrl(MusicSource source)
     {
         return Uri.TryCreate(source.ScriptUrl, UriKind.Absolute, out var url)
-            && (url.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
-                || url.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase));
+            && (string.Equals(url.Scheme, "http", StringComparison.Ordinal)
+                || string.Equals(url.Scheme, "https", StringComparison.Ordinal));
     }
 
     private bool IsOfficialBuiltIn(MusicSource source) =>
@@ -1590,39 +1594,5 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
 
     private sealed record SubscriptionSource(string Id, string Url);
 
-    private sealed record SourceSnapshot(
-        string Name,
-        string Version,
-        string ScriptUrl,
-        string? ScriptContent,
-        bool IsEnabled,
-        SourceType Type,
-        ScriptTrustState TrustState,
-        string? ContentSha256,
-        DateTime LastUpdateDate)
-    {
-        internal static SourceSnapshot Capture(MusicSource source) => new(
-            source.Name,
-            source.Version,
-            source.ScriptUrl,
-            source.ScriptContent,
-            source.IsEnabled,
-            source.Type,
-            source.TrustState,
-            source.ContentSha256,
-            source.LastUpdateDate);
 
-        internal void Restore(MusicSource source)
-        {
-            source.Name = Name;
-            source.Version = Version;
-            source.ScriptUrl = ScriptUrl;
-            source.ScriptContent = ScriptContent;
-            source.IsEnabled = IsEnabled;
-            source.Type = Type;
-            source.TrustState = TrustState;
-            source.ContentSha256 = ContentSha256;
-            source.LastUpdateDate = LastUpdateDate;
-        }
-    }
 }

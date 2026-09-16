@@ -460,7 +460,7 @@ public class QqPlaylistProvider : IPlaylistImportProvider
     private static string ExtractUin(string cookieHeader)
     {
         string? fallback = null;
-        foreach (var part in cookieHeader.Split(';', StringSplitOptions.TrimEntries))
+        foreach (var part in cookieHeader.SplitTrimmed(';'))
         {
             var eq = part.IndexOf('=');
             if (eq <= 0) continue;
@@ -478,7 +478,7 @@ public class QqPlaylistProvider : IPlaylistImportProvider
 
     private static string ExtractEuin(string cookieHeader)
     {
-        foreach (var part in cookieHeader.Split(';', StringSplitOptions.TrimEntries))
+        foreach (var part in cookieHeader.SplitTrimmed(';'))
         {
             var eq = part.IndexOf('=');
             if (eq <= 0) continue;
@@ -490,7 +490,7 @@ public class QqPlaylistProvider : IPlaylistImportProvider
 
     private static bool HasNonEmptyValue(string cookieHeader, string name)
     {
-        foreach (var part in cookieHeader.Split(';', StringSplitOptions.TrimEntries))
+        foreach (var part in cookieHeader.SplitTrimmed(';'))
         {
             var eq = part.IndexOf('=');
             if (eq <= 0) continue;

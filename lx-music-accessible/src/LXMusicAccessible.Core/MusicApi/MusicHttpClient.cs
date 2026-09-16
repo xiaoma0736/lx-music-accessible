@@ -32,7 +32,7 @@ public class MusicHttpClient : IDisposable
         CookieContainer? cookieContainer = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        ArgumentNullException.ThrowIfNull(handler);
+        FrameworkCompatibility.ThrowIfNull(handler);
         _cookieContainer = cookieContainer ?? new CookieContainer();
         _httpClient = new HttpClient(handler);
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
@@ -83,7 +83,7 @@ public class MusicHttpClient : IDisposable
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var content = await response.Content.ReadAsStringAsync();
             _logger.LogInformation("GET请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(fullUrl), content.Length);
             return content;
         }
@@ -122,7 +122,7 @@ public class MusicHttpClient : IDisposable
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var content = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<T>(content, _jsonOptions);
             
             _logger.LogInformation("GET请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(url), content.Length);
@@ -170,7 +170,7 @@ public class MusicHttpClient : IDisposable
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var content = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<T>(content, _jsonOptions);
             
             _logger.LogInformation("POST请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(url), content.Length);
@@ -214,7 +214,7 @@ public class MusicHttpClient : IDisposable
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var content = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<T>(content, _jsonOptions);
             
             _logger.LogInformation("POST表单请求成功: {Endpoint}, 返回数据长度: {Length}", GetSafeEndpoint(url), content.Length);
@@ -254,7 +254,7 @@ public class MusicHttpClient : IDisposable
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var content = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -292,7 +292,7 @@ public class MusicHttpClient : IDisposable
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var content = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -329,7 +329,7 @@ public class MusicHttpClient : IDisposable
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var content = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -365,7 +365,7 @@ public class MusicHttpClient : IDisposable
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var content = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -400,7 +400,7 @@ public class MusicHttpClient : IDisposable
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var content = await response.Content.ReadAsStringAsync();
             return JsonSerializer.Deserialize<T>(content, _jsonOptions);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -430,7 +430,7 @@ public class MusicHttpClient : IDisposable
         if (uri == null || string.IsNullOrWhiteSpace(cookieHeader)) return;
         try
         {
-            var parts = cookieHeader.Split(';', StringSplitOptions.TrimEntries);
+            var parts = cookieHeader.SplitTrimmed(';');
             foreach (var part in parts)
             {
                 if (string.IsNullOrEmpty(part) || !part.Contains('=')) continue;

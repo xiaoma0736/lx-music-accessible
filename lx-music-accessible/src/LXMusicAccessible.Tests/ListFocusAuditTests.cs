@@ -62,7 +62,7 @@ public sealed class ListFocusAuditTests
             {
                 SearchResults = [new() { Id = "song-1", Title = "第一首", Artist = "歌手" }]
             };
-            await using var host = await TestApplicationHost.StartAsync(services =>
+            using var host = await TestApplicationHost.StartAsync(services =>
             {
                 services.Replace(ServiceDescriptor.Singleton<IMusicBrowseSource>(source));
             });
@@ -100,7 +100,7 @@ public sealed class ListFocusAuditTests
         await RunOnStaThreadAsync(async () =>
         {
             var source = new ControlledBrowseSource { SearchResults = [] };
-            await using var host = await TestApplicationHost.StartAsync(services =>
+            using var host = await TestApplicationHost.StartAsync(services =>
             {
                 services.Replace(ServiceDescriptor.Singleton<IMusicBrowseSource>(source));
             });
@@ -135,7 +135,7 @@ public sealed class ListFocusAuditTests
                 DelaySearch = true,
                 SearchResults = [new() { Id = "song-1", Title = "第一首" }]
             };
-            await using var host = await TestApplicationHost.StartAsync(services =>
+            using var host = await TestApplicationHost.StartAsync(services =>
             {
                 services.Replace(ServiceDescriptor.Singleton<IMusicBrowseSource>(source));
             });
@@ -151,7 +151,7 @@ public sealed class ListFocusAuditTests
                 PumpUntil(window.Dispatcher, () => source.SearchStarted.Task.IsCompleted);
 
                 Assert.True(window.SearchClearButton.Focus());
-                source.ReleaseSearch.SetResult();
+                source.ReleaseSearch.SetResult(null);
                 PumpUntil(window.Dispatcher, () => window.SearchResultsList.Items.Count == 1);
 
                 Assert.Same(window.SearchClearButton, Keyboard.FocusedElement);
@@ -194,7 +194,7 @@ public sealed class ListFocusAuditTests
         await RunOnStaThreadAsync(async () =>
         {
             var source = new ControlledBrowseSource();
-            await using var host = await TestApplicationHost.StartAsync(services =>
+            using var host = await TestApplicationHost.StartAsync(services =>
             {
                 services.Replace(ServiceDescriptor.Singleton<IMusicBrowseSource>(source));
             });
@@ -303,7 +303,7 @@ public sealed class ListFocusAuditTests
 
     private static Task RunOnStaThreadAsync(Func<Task> action)
     {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             var dispatcher = Dispatcher.CurrentDispatcher;
@@ -313,7 +313,7 @@ public sealed class ListFocusAuditTests
                 try
                 {
                     await action();
-                    completion.SetResult();
+                    completion.SetResult(null);
                 }
                 catch (Exception exception)
                 {
@@ -337,9 +337,9 @@ public sealed class ListFocusAuditTests
             [new() { Id = "song-1", Title = "第一首", Artist = "歌手" }];
         public bool DelaySearch { get; init; }
         public int OperationCount { get; private set; }
-        public TaskCompletionSource SearchStarted { get; } =
+        public TaskCompletionSource<object?> SearchStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource ReleaseSearch { get; } =
+        public TaskCompletionSource<object?> ReleaseSearch { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public async Task<PagedResult<MusicInfo>> SearchAsync(
@@ -351,7 +351,7 @@ public sealed class ListFocusAuditTests
             CancellationToken cancellationToken)
         {
             OperationCount++;
-            SearchStarted.TrySetResult();
+            SearchStarted.TrySetResult(null);
             if (DelaySearch) await ReleaseSearch.Task.WaitAsync(cancellationToken);
             return new PagedResult<MusicInfo>
             {

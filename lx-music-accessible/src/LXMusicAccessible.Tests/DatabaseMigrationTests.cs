@@ -60,13 +60,13 @@ public sealed class DatabaseMigrationTests
         Assert.NotNull(first.BackupPath);
         Assert.True(File.Exists(first.BackupPath));
 
-        await using (var backup = await OpenAsync(first.BackupPath!, foreignKeys: false))
+        using (var backup = await OpenAsync(first.BackupPath!, foreignKeys: false))
         {
             Assert.Equal(0, await backup.QuerySingleAsync<int>("PRAGMA user_version"));
             Assert.Equal(2, await backup.QuerySingleAsync<int>("SELECT COUNT(*) FROM PlaylistItems"));
         }
 
-        await using (var connection = await OpenAsync(fixture.DatabasePath, foreignKeys: true))
+        using (var connection = await OpenAsync(fixture.DatabasePath, foreignKeys: true))
         {
             Assert.Equal(1, await connection.QuerySingleAsync<int>("PRAGMA foreign_keys"));
             Assert.Equal(1, await connection.QuerySingleAsync<int>("PRAGMA user_version"));
@@ -103,7 +103,7 @@ public sealed class DatabaseMigrationTests
         Assert.NotNull(failed.BackupPath);
         Assert.True(File.Exists(failed.BackupPath));
 
-        await using (var restored = await OpenAsync(fixture.DatabasePath, foreignKeys: false))
+        using (var restored = await OpenAsync(fixture.DatabasePath, foreignKeys: false))
         {
             Assert.Equal(0, await restored.QuerySingleAsync<int>("PRAGMA user_version"));
             Assert.Equal(1, await restored.QuerySingleAsync<int>(
@@ -145,7 +145,7 @@ public sealed class DatabaseMigrationTests
 
     private static async Task CreateLegacyDatabaseAsync(string databasePath, bool addFailureTrigger)
     {
-        await using var connection = await OpenAsync(databasePath, foreignKeys: false);
+        using var connection = await OpenAsync(databasePath, foreignKeys: false);
         await connection.ExecuteAsync(@"
             CREATE TABLE Playlists (
                 Id TEXT PRIMARY KEY,
@@ -195,7 +195,7 @@ public sealed class DatabaseMigrationTests
 
     private static async Task AssertDatabaseIntegrityAsync(string databasePath)
     {
-        await using var connection = await OpenAsync(databasePath, foreignKeys: true);
+        using var connection = await OpenAsync(databasePath, foreignKeys: true);
         Assert.Equal(1, await connection.QuerySingleAsync<int>("PRAGMA foreign_keys"));
         Assert.Empty(await connection.QueryAsync<string>("PRAGMA foreign_key_check"));
     }
@@ -218,7 +218,8 @@ public sealed class DatabaseMigrationTests
 
         public TemporaryDatabaseDirectory()
         {
-            Path = Directory.CreateTempSubdirectory(Prefix).FullName;
+            this.Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Prefix + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(this.Path);
         }
 
         public string Path { get; }
@@ -232,7 +233,7 @@ public sealed class DatabaseMigrationTests
 
             var tempRoot = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath());
             var fullPath = System.IO.Path.GetFullPath(Path);
-            var relative = System.IO.Path.GetRelativePath(tempRoot, fullPath);
+            var relative = FrameworkCompatibility.GetRelativePath(tempRoot, fullPath);
             if (relative == "."
                 || relative.StartsWith("..", StringComparison.Ordinal)
                 || System.IO.Path.IsPathRooted(relative)

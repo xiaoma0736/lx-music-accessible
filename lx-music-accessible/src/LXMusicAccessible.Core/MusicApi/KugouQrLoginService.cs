@@ -156,7 +156,7 @@ public class KugouQrLoginService
         var ps = string.Concat(p.OrderBy(kv => kv.Key, StringComparer.Ordinal)
             .Select(kv => $"{kv.Key}={kv.Value}"));
         var input = WebSalt + ps + WebSalt;
-        return Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(input))).ToLower();
+        return FrameworkCompatibility.ToHexString(FrameworkCompatibility.Md5HashData(Encoding.UTF8.GetBytes(input))).ToLower();
     }
 
     private static string GetString(JsonElement el, string name) =>
@@ -175,7 +175,7 @@ public class KugouQrLoginService
     private static string GenerateMid()
     {
         var guid = Guid.NewGuid().ToString();
-        var md5Hex = Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(guid))).ToLower();
+        var md5Hex = FrameworkCompatibility.ToHexString(FrameworkCompatibility.Md5HashData(Encoding.UTF8.GetBytes(guid))).ToLower();
         return BigInteger.Parse("0" + md5Hex, NumberStyles.HexNumber).ToString();
     }
 

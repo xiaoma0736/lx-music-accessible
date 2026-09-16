@@ -15,12 +15,12 @@ public sealed class SqliteRuntimeTests(ITestOutputHelper output)
     [Fact]
     public async Task Bundled_runtime_is_patched_and_database_smoke_passes()
     {
-        await using var app = await TestApplicationHost.StartAsync();
-        await using var connection = new SqliteConnection(
+        using var app = await TestApplicationHost.StartAsync();
+        using var connection = new SqliteConnection(
             $"Data Source={Path.Combine(app.DataDirectory, "lxmusic.db")}");
         await connection.OpenAsync();
 
-        await using var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = "SELECT sqlite_version()";
         var versionText = Assert.IsType<string>(await command.ExecuteScalarAsync());
         Assert.True(Version.TryParse(versionText, out var version),

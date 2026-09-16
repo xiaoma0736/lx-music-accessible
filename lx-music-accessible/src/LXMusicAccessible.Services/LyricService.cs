@@ -115,7 +115,7 @@ public class LyricService : ILyricService
     {
         var lines = new List<LyricLine>();
         var tMap = ParseTranslate(raw.Tlyric);
-        foreach (var line in raw.Lyric.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var line in raw.Lyric.SplitTrimmed('\n'))
         {
             var trimmed = line.Trim();
             var matches = System.Text.RegularExpressions.Regex.Matches(
@@ -147,7 +147,7 @@ public class LyricService : ILyricService
     {
         var map = new Dictionary<int, string>();
         if (string.IsNullOrWhiteSpace(tLrc)) return map;
-        foreach (var line in tLrc.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var line in tLrc.SplitTrimmed('\n'))
         {
             var trimmed = line.Trim();
             var matches = System.Text.RegularExpressions.Regex.Matches(

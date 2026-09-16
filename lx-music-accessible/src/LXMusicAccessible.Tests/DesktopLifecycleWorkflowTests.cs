@@ -104,7 +104,7 @@ public sealed class DesktopLifecycleWorkflowTests
     {
         var desktop = new RecordingDesktopIntegration();
 
-        await using (var app = await TestApplicationHost.StartAsync(services =>
+        using (var app = await TestApplicationHost.StartAsync(services =>
         {
             services.Replace(ServiceDescriptor.Singleton<IDesktopIntegration>(_ => desktop));
         }))

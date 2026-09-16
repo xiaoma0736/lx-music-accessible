@@ -299,7 +299,7 @@ public sealed class JsonMusicSource(
 
     private static List<JsonPathSegment>? ParsePath(string path)
     {
-        if (!path.StartsWith('$')) return null;
+        if (!path.StartsWith("$", StringComparison.Ordinal)) return null;
         var segments = new List<JsonPathSegment>();
         var index = 1;
         while (index < path.Length)

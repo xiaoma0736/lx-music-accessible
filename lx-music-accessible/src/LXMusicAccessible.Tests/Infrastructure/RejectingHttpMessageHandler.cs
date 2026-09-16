@@ -19,9 +19,9 @@ internal sealed class RejectingHttpMessageHandler : HttpMessageHandler
 
     public void Register(HttpMethod method, Uri uri, Func<HttpResponseMessage> responseFactory)
     {
-        ArgumentNullException.ThrowIfNull(method);
-        ArgumentNullException.ThrowIfNull(uri);
-        ArgumentNullException.ThrowIfNull(responseFactory);
+        if (method is null) throw new ArgumentNullException(nameof(method));
+        if (uri is null) throw new ArgumentNullException(nameof(uri));
+        if (responseFactory is null) throw new ArgumentNullException(nameof(responseFactory));
         lock (_gate)
         {
             _responses[(method.Method, uri.AbsoluteUri)] = _ => Task.FromResult(responseFactory());
@@ -33,9 +33,9 @@ internal sealed class RejectingHttpMessageHandler : HttpMessageHandler
         Uri uri,
         Func<CancellationToken, Task<HttpResponseMessage>> responseFactory)
     {
-        ArgumentNullException.ThrowIfNull(method);
-        ArgumentNullException.ThrowIfNull(uri);
-        ArgumentNullException.ThrowIfNull(responseFactory);
+        if (method is null) throw new ArgumentNullException(nameof(method));
+        if (uri is null) throw new ArgumentNullException(nameof(uri));
+        if (responseFactory is null) throw new ArgumentNullException(nameof(responseFactory));
         lock (_gate) _responses[(method.Method, uri.AbsoluteUri)] = responseFactory;
     }
 

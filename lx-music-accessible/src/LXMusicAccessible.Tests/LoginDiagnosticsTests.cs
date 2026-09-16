@@ -45,7 +45,7 @@ public sealed class LoginDiagnosticsTests
     [Fact]
     public void Report_in_temporary_directory_contains_only_safe_metadata_and_can_be_deleted()
     {
-        var directory = Directory.CreateTempSubdirectory("LXMusicAccessible.LoginDiagnostics-").FullName;
+        var directory = Path.Combine(Path.GetTempPath(), "LXMusicAccessible.LoginDiagnostics-" + Guid.NewGuid().ToString("N"));
         try
         {
             var path = LoginDiagnosticReportStore.Write(directory, "qq", Credentials,

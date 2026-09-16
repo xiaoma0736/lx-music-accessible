@@ -439,7 +439,7 @@ public sealed class ManualSourceSwitchWindowTests
     {
         await RunOnStaThreadAsync(async () =>
         {
-            await using var host = await TestApplicationHost.StartAsync();
+            using var host = await TestApplicationHost.StartAsync();
             var mainWindow = host.Services.GetRequiredService<MainWindow>();
             var menu = mainWindow.BuildSongContextMenu(new ListBox());
 
@@ -672,7 +672,7 @@ public sealed class ManualSourceSwitchWindowTests
 
     private static Task RunOnStaThreadAsync(Func<Task> action)
     {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(async () =>
         {
             Exception? failure = null;
@@ -681,7 +681,7 @@ public sealed class ManualSourceSwitchWindowTests
             finally
             {
                 Dispatcher.FromThread(Thread.CurrentThread)?.InvokeShutdown();
-                if (failure is null) completion.SetResult();
+                if (failure is null) completion.SetResult(null);
                 else completion.SetException(failure);
             }
         });
@@ -692,14 +692,14 @@ public sealed class ManualSourceSwitchWindowTests
 
     private static Task RunOnStaThreadAsync(Action action)
     {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             Exception? failure = null;
             try { action(); }
             catch (Exception exception) { failure = exception; }
             finally { Dispatcher.CurrentDispatcher.InvokeShutdown(); }
-            if (failure is null) completion.SetResult();
+            if (failure is null) completion.SetResult(null);
             else completion.SetException(failure);
         });
         thread.SetApartmentState(ApartmentState.STA);
@@ -724,7 +724,7 @@ public sealed class ManualSourceSwitchWindowTests
 
     private sealed class CancelRecordingWorkflow : IManualSourceDiscoveryWorkflow
     {
-        private readonly TaskCompletionSource _cancelled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<object?> _cancelled = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public bool WasCancelled { get; private set; }
 
@@ -739,7 +739,7 @@ public sealed class ManualSourceSwitchWindowTests
             catch (OperationCanceledException)
             {
                 WasCancelled = true;
-                _cancelled.TrySetResult();
+                _cancelled.TrySetResult(null);
                 throw;
             }
             return ManualSourceDiscoveryResult.Success([]);

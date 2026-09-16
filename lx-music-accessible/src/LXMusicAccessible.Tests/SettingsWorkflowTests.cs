@@ -1,6 +1,6 @@
 using System.IO;
 using System.Text.Json;
-using System.Windows.Input;
+
 using LXMusicAccessible.Data;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Services;
@@ -170,15 +170,15 @@ public sealed class SettingsWorkflowTests
         var result = await workflow.ReplaceHotkeyAsync(
             HotkeyActions.PlayPause,
             isGlobal: true,
-            Key.F5,
-            ModifierKeys.None);
+            PlatformKey.F5,
+            PlatformModifiers.None);
 
         Assert.Equal(HotkeyEditStatus.Conflict, result.Status);
         Assert.Equal(before.Version, result.State.Version);
         Assert.Equal(2, result.Conflicts.Count);
-        Assert.Equal(Key.Home, workflow.GetHotkeys().Single(item =>
+        Assert.Equal(PlatformKey.Home, workflow.GetHotkeys().Single(item =>
             item.ActionId == HotkeyActions.PlayPause && item.IsGlobal).Key);
-        Assert.Equal(Key.F5, workflow.GetHotkeys().Single(item =>
+        Assert.Equal(PlatformKey.F5, workflow.GetHotkeys().Single(item =>
             item.ActionId == HotkeyActions.PlayPause && !item.IsGlobal).Key);
         Assert.Empty(native.Operations);
     }
@@ -186,7 +186,7 @@ public sealed class SettingsWorkflowTests
     [Fact]
     public async Task Ctrl_1_through_8_are_reserved_for_window_switching()
     {
-        foreach (var key in new[] { Key.D1, Key.D2, Key.D3, Key.D4, Key.D5, Key.D6, Key.D7, Key.D8 })
+        foreach (var key in new[] { PlatformKey.D1, PlatformKey.D2, PlatformKey.D3, PlatformKey.D4, PlatformKey.D5, PlatformKey.D6, PlatformKey.D7, PlatformKey.D8 })
         {
             var workflow = CreateWorkflow(new RecordingSettingsStore(), new RecordingHotkeyAdapter());
             await workflow.LoadAsync(IntPtr.Zero);
@@ -194,7 +194,7 @@ public sealed class SettingsWorkflowTests
                 HotkeyActions.PlayPause,
                 isGlobal: false,
                 key,
-                ModifierKeys.Control);
+                PlatformModifiers.Control);
             Assert.Equal(HotkeyEditStatus.Invalid, result.Status);
         }
 
@@ -203,8 +203,8 @@ public sealed class SettingsWorkflowTests
         var released = await releasedWorkflow.ReplaceHotkeyAsync(
             HotkeyActions.PlayPause,
             isGlobal: false,
-            Key.D4,
-            ModifierKeys.Alt);
+            PlatformKey.D4,
+            PlatformModifiers.Alt);
         Assert.Equal(HotkeyEditStatus.Applied, released.Status);
     }
 
@@ -216,20 +216,20 @@ public sealed class SettingsWorkflowTests
         await workflow.LoadAsync(new IntPtr(7));
         var before = workflow.GetHotkeys();
         var oldRegistered = native.Registered.ToDictionary(pair => pair.Key, pair => pair.Value);
-        native.FailNext(Key.P, ModifierKeys.Control | ModifierKeys.Alt);
+        native.FailNext(PlatformKey.P, PlatformModifiers.Control | PlatformModifiers.Alt);
 
         var result = await workflow.ReplaceHotkeyAsync(
             HotkeyActions.Next,
             isGlobal: true,
-            Key.P,
-            ModifierKeys.Control | ModifierKeys.Alt);
+            PlatformKey.P,
+            PlatformModifiers.Control | PlatformModifiers.Alt);
 
         Assert.Equal(HotkeyEditStatus.RegistrationFailed, result.Status);
         Assert.Equal(oldRegistered, native.Registered);
         Assert.Equal(
             before.Select(Binding),
             workflow.GetHotkeys().Select(Binding));
-        Assert.Equal(Key.PageDown, workflow.GetHotkeys().Single(item =>
+        Assert.Equal(PlatformKey.PageDown, workflow.GetHotkeys().Single(item =>
             item.ActionId == HotkeyActions.Next && item.IsGlobal).Key);
     }
 
@@ -240,20 +240,20 @@ public sealed class SettingsWorkflowTests
         var workflow = CreateWorkflow(new RecordingSettingsStore(), native);
         await workflow.LoadAsync(new IntPtr(8));
         native.Fail(
-            (Key.P, ModifierKeys.Control | ModifierKeys.Alt),
-            (Key.PageDown, ModifierKeys.Control | ModifierKeys.Alt));
+            (PlatformKey.P, PlatformModifiers.Control | PlatformModifiers.Alt),
+            (PlatformKey.PageDown, PlatformModifiers.Control | PlatformModifiers.Alt));
 
         var result = await workflow.ReplaceHotkeyAsync(
             HotkeyActions.Next,
             isGlobal: true,
-            Key.P,
-            ModifierKeys.Control | ModifierKeys.Alt);
+            PlatformKey.P,
+            PlatformModifiers.Control | PlatformModifiers.Alt);
 
         Assert.Equal(HotkeyEditStatus.RollbackFailed, result.Status);
         Assert.DoesNotContain(
             native.Registered.Values,
-            binding => binding == $"{Key.P}|{ModifierKeys.Control | ModifierKeys.Alt}");
-        Assert.Equal(Key.PageDown, workflow.GetHotkeys().Single(item =>
+            binding => binding == $"{PlatformKey.P}|{PlatformModifiers.Control | PlatformModifiers.Alt}");
+        Assert.Equal(PlatformKey.PageDown, workflow.GetHotkeys().Single(item =>
             item.ActionId == HotkeyActions.Next && item.IsGlobal).Key);
     }
 
@@ -261,7 +261,7 @@ public sealed class SettingsWorkflowTests
     public async Task Local_edit_does_not_touch_native_registrations_or_inherit_unrelated_global_failure()
     {
         var native = new RecordingHotkeyAdapter();
-        native.Fail((Key.Right, ModifierKeys.Control));
+        native.Fail((PlatformKey.Right, PlatformModifiers.Control));
         var workflow = CreateWorkflow(new RecordingSettingsStore(), native);
         await workflow.LoadAsync(new IntPtr(9));
         var operationsBefore = native.Operations.Count;
@@ -307,7 +307,7 @@ public sealed class SettingsWorkflowTests
     [Fact]
     public async Task Real_sqlite_restart_restores_settings_and_hotkeys_without_creating_main_window()
     {
-        var directory = Directory.CreateTempSubdirectory("LXMusicAccessible.Settings-").FullName;
+        var directory = Path.Combine(Path.GetTempPath(), "LXMusicAccessible.Settings-" + Guid.NewGuid().ToString("N"));
         try
         {
             var initializer = new DatabaseInitializer(
@@ -328,8 +328,8 @@ public sealed class SettingsWorkflowTests
             var hotkey = await first.ReplaceHotkeyAsync(
                 HotkeyActions.Next,
                 isGlobal: false,
-                Key.F12,
-                ModifierKeys.Shift);
+                PlatformKey.F12,
+                PlatformModifiers.Shift);
             Assert.True(hotkey.Applied);
             Assert.True((await first.SaveAsync(edited)).Succeeded);
 
@@ -345,8 +345,8 @@ public sealed class SettingsWorkflowTests
             Assert.Equal(string.Empty, restored.Settings.DownloadPath);
             var restoredHotkey = restored.Settings.CustomHotkeys.Single(item =>
                 item.ActionId == HotkeyActions.Next && !item.IsGlobal);
-            Assert.Equal(Key.F12, restoredHotkey.Key);
-            Assert.Equal(ModifierKeys.Shift, restoredHotkey.Modifiers);
+            Assert.Equal(PlatformKey.F12, restoredHotkey.Key);
+            Assert.Equal(PlatformModifiers.Shift, restoredHotkey.Modifiers);
         }
         finally
         {
@@ -406,16 +406,16 @@ public sealed class SettingsWorkflowTests
         var loaded = await workflow.LoadAsync(IntPtr.Zero);
         var globals = loaded.Settings.CustomHotkeys.Where(item => item.IsGlobal).ToDictionary(item => item.ActionId);
 
-        Assert.Equal(Key.Home, globals[HotkeyActions.PlayPause].Key);
-        Assert.Equal(ModifierKeys.Control | ModifierKeys.Alt, globals[HotkeyActions.PlayPause].Modifiers);
-        Assert.Equal(Key.End, globals[HotkeyActions.Stop].Key);
-        Assert.Equal(Key.PageUp, globals[HotkeyActions.Previous].Key);
-        Assert.Equal(Key.PageDown, globals[HotkeyActions.Next].Key);
-        Assert.Equal(Key.Left, globals[HotkeyActions.Rewind].Key);
-        Assert.Equal(Key.Right, globals[HotkeyActions.Forward].Key);
-        Assert.Equal(Key.Up, globals[HotkeyActions.VolumeUp].Key);
-        Assert.Equal(Key.Down, globals[HotkeyActions.VolumeDown].Key);
-        Assert.Equal(8, globals.Values.Count(item => item.IsEnabled && item.Key != Key.None));
+        Assert.Equal(PlatformKey.Home, globals[HotkeyActions.PlayPause].Key);
+        Assert.Equal(PlatformModifiers.Control | PlatformModifiers.Alt, globals[HotkeyActions.PlayPause].Modifiers);
+        Assert.Equal(PlatformKey.End, globals[HotkeyActions.Stop].Key);
+        Assert.Equal(PlatformKey.PageUp, globals[HotkeyActions.Previous].Key);
+        Assert.Equal(PlatformKey.PageDown, globals[HotkeyActions.Next].Key);
+        Assert.Equal(PlatformKey.Left, globals[HotkeyActions.Rewind].Key);
+        Assert.Equal(PlatformKey.Right, globals[HotkeyActions.Forward].Key);
+        Assert.Equal(PlatformKey.Up, globals[HotkeyActions.VolumeUp].Key);
+        Assert.Equal(PlatformKey.Down, globals[HotkeyActions.VolumeDown].Key);
+        Assert.Equal(8, globals.Values.Count(item => item.IsEnabled && item.Key != PlatformKey.None));
         Assert.All(
             new[]
             {
@@ -425,7 +425,7 @@ public sealed class SettingsWorkflowTests
             },
             actionId =>
             {
-                Assert.Equal(Key.None, globals[actionId].Key);
+                Assert.Equal(PlatformKey.None, globals[actionId].Key);
                 Assert.False(globals[actionId].IsEnabled);
             });
     }
@@ -443,8 +443,8 @@ public sealed class SettingsWorkflowTests
                     {
                         ActionId = HotkeyActions.Next,
                         Name = "Next",
-                        Key = Key.F12,
-                        Modifiers = ModifierKeys.Shift,
+                        Key = PlatformKey.F12,
+                        Modifiers = PlatformModifiers.Shift,
                         IsGlobal = false
                     }
                 ]
@@ -454,9 +454,9 @@ public sealed class SettingsWorkflowTests
         var loaded = await workflow.LoadAsync(IntPtr.Zero);
 
         Assert.Equal(2, loaded.Settings.HotkeySchemaVersion);
-        Assert.Equal(Key.PageDown, loaded.Settings.CustomHotkeys.Single(item =>
+        Assert.Equal(PlatformKey.PageDown, loaded.Settings.CustomHotkeys.Single(item =>
             item.ActionId == HotkeyActions.Next && item.IsGlobal).Key);
-        Assert.Equal(Key.F12, loaded.Settings.CustomHotkeys.Single(item =>
+        Assert.Equal(PlatformKey.F12, loaded.Settings.CustomHotkeys.Single(item =>
             item.ActionId == HotkeyActions.Next && !item.IsGlobal).Key);
 
         var edited = workflow.Edit(_ => { });
@@ -472,8 +472,8 @@ public sealed class SettingsWorkflowTests
         var edited = await workflow.ReplaceHotkeyAsync(
             HotkeyActions.PlayPause,
             isGlobal: true,
-            Key.P,
-            ModifierKeys.Control);
+            PlatformKey.P,
+            PlatformModifiers.Control);
         Assert.True(edited.Applied);
 
         var store = new RecordingSettingsStore { Loaded = edited.State.Settings };
@@ -481,7 +481,7 @@ public sealed class SettingsWorkflowTests
         var restored = await restarted.LoadAsync(IntPtr.Zero);
 
         Assert.Equal(2, restored.Settings.HotkeySchemaVersion);
-        Assert.Equal(Key.P, restored.Settings.CustomHotkeys.Single(item =>
+        Assert.Equal(PlatformKey.P, restored.Settings.CustomHotkeys.Single(item =>
             item.ActionId == HotkeyActions.PlayPause && item.IsGlobal).Key);
     }
 
@@ -510,14 +510,14 @@ public sealed class SettingsWorkflowTests
 
     private sealed class RecordingSettingsStore : ISettingsStore
     {
-        private readonly TaskCompletionSource _release = new(
+        private readonly TaskCompletionSource<object?> _release = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
         private int _saveCount;
 
         public UserSettings? Loaded { get; set; }
         public bool BlockFirstSave { get; set; }
         public List<UserSettings> Saved { get; } = new();
-        public TaskCompletionSource FirstSaveStarted { get; } = new(
+        public TaskCompletionSource<object?> FirstSaveStarted { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<UserSettings?> LoadAsync(CancellationToken cancellationToken)
@@ -532,25 +532,25 @@ public sealed class SettingsWorkflowTests
             Saved.Add(settings);
             if (ordinal == 1)
             {
-                FirstSaveStarted.TrySetResult();
+                FirstSaveStarted.TrySetResult(null);
                 if (BlockFirstSave) await _release.Task.WaitAsync(cancellationToken);
             }
         }
 
-        public void ReleaseFirstSave() => _release.TrySetResult();
+        public void ReleaseFirstSave() => _release.TrySetResult(null);
     }
 
     private sealed class RecordingHotkeyAdapter : IGlobalHotkeyAdapter
     {
         public int LastRegisterError { get; private set; }
 
-        private (Key Key, ModifierKeys Modifiers)? _failNext;
-        private readonly HashSet<(Key Key, ModifierKeys Modifiers)> _fail = new();
+        private (PlatformKey Key, PlatformModifiers Modifiers)? _failNext;
+        private readonly HashSet<(PlatformKey Key, PlatformModifiers Modifiers)> _fail = new();
 
         public Dictionary<int, string> Registered { get; } = new();
         public List<string> Operations { get; } = new();
 
-        public bool Register(IntPtr windowHandle, int id, Key key, ModifierKeys modifiers)
+        public bool Register(IntPtr windowHandle, int id, PlatformKey key, PlatformModifiers modifiers)
         {
             Operations.Add($"register:{id}:{key}:{modifiers}");
             if (_failNext == (key, modifiers) || _fail.Contains((key, modifiers)))
@@ -569,10 +569,10 @@ public sealed class SettingsWorkflowTests
             return true;
         }
 
-        public void FailNext(Key key, ModifierKeys modifiers) =>
+        public void FailNext(PlatformKey key, PlatformModifiers modifiers) =>
             _failNext = (key, modifiers);
 
-        public void Fail(params (Key Key, ModifierKeys Modifiers)[] bindings) =>
+        public void Fail(params (PlatformKey Key, PlatformModifiers Modifiers)[] bindings) =>
             _fail.UnionWith(bindings);
     }
 }

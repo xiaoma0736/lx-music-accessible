@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Windows.Input;
 using LXMusicAccessible.Data;
 using LXMusicAccessible.Models;
 using Microsoft.Extensions.Logging;
@@ -163,7 +162,7 @@ public sealed class SettingsWorkflow
     {
         try
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(selectedParent);
+            FrameworkCompatibility.ThrowIfNullOrWhiteSpace(selectedParent);
             var current = Path.GetFullPath(AppDataPaths.ResolveDataDir());
             var parent = Path.GetFullPath(selectedParent.Trim());
             var candidate = Path.GetFullPath(Path.Combine(parent, AppDataPaths.DefaultDirName));
@@ -233,7 +232,7 @@ public sealed class SettingsWorkflow
 
     public SettingsEditResult Edit(Action<UserSettings> edit)
     {
-        ArgumentNullException.ThrowIfNull(edit);
+        FrameworkCompatibility.ThrowIfNull(edit);
         SettingsEditState basis;
         SettingsEditState current;
         lock (_stateGate)
@@ -260,8 +259,8 @@ public sealed class SettingsWorkflow
     public Task<HotkeyEditResult> ReplaceHotkeyAsync(
         string actionId,
         bool isGlobal,
-        Key key,
-        ModifierKeys modifiers,
+        PlatformKey key,
+        PlatformModifiers modifiers,
         CancellationToken cancellationToken = default) =>
         ApplyHotkeyAsync(
             () => _hotkeys.Replace(actionId, isGlobal, key, modifiers),
@@ -271,7 +270,7 @@ public sealed class SettingsWorkflow
         string actionId,
         bool isGlobal,
         CancellationToken cancellationToken = default) =>
-        ReplaceHotkeyAsync(actionId, isGlobal, Key.None, ModifierKeys.None, cancellationToken);
+        ReplaceHotkeyAsync(actionId, isGlobal, PlatformKey.None, PlatformModifiers.None, cancellationToken);
 
     public Task<HotkeyEditResult> ResetHotkeysAsync(
         CancellationToken cancellationToken = default) =>
@@ -280,13 +279,13 @@ public sealed class SettingsWorkflow
     public IReadOnlyList<Hotkey> GetHotkeys() => _hotkeys.Snapshot();
 
     public bool IsGlobalHotkeyRegistered(Hotkey hotkey) =>
-        hotkey is null || !hotkey.IsGlobal || !hotkey.IsEnabled || hotkey.Key == Key.None
+        hotkey is null || !hotkey.IsGlobal || !hotkey.IsEnabled || hotkey.Key == PlatformKey.None
         || _hotkeys.IsGlobalRegistered(hotkey.ActionId);
 
-    public Hotkey? MatchFallback(Key key, ModifierKeys modifiers) =>
+    public Hotkey? MatchFallback(PlatformKey key, PlatformModifiers modifiers) =>
         _hotkeys.MatchFallback(key, modifiers);
 
-    public Hotkey? MatchLocalHotkey(Key key, ModifierKeys modifiers) =>
+    public Hotkey? MatchLocalHotkey(PlatformKey key, PlatformModifiers modifiers) =>
         _hotkeys.MatchLocal(key, modifiers);
 
     public void RaiseGlobalHotkey(int id) => _hotkeys.RaiseGlobal(id);
@@ -297,7 +296,7 @@ public sealed class SettingsWorkflow
         SettingsEditState state,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        FrameworkCompatibility.ThrowIfNull(state);
         await _saveGate.WaitAsync(cancellationToken);
         try
         {
@@ -410,7 +409,7 @@ public sealed class SettingsWorkflow
         var mode = settings.DefaultPlayMode ?? (settings.ShuffleMode
             ? PlayMode.Shuffle
             : settings.LoopMode ? PlayMode.Loop : PlayMode.Sequential);
-        if (!Enum.IsDefined(mode)) mode = PlayMode.Sequential;
+        if (!Enum.IsDefined(typeof(PlayMode), mode)) mode = PlayMode.Sequential;
         settings.DefaultPlayMode = mode;
         settings.ShuffleMode = mode == PlayMode.Shuffle;
         settings.LoopMode = mode is PlayMode.Loop or PlayMode.SingleLoop;
@@ -429,10 +428,10 @@ public sealed class SettingsWorkflow
         if (settings.WindowWidth < 320 || settings.WindowHeight < 240)
             errors.Add("窗口尺寸无效。");
         if (!string.IsNullOrWhiteSpace(settings.DownloadPath)
-            && !Path.IsPathFullyQualified(settings.DownloadPath))
+            && !FrameworkCompatibility.IsPathFullyQualified(settings.DownloadPath))
             errors.Add("下载目录必须是绝对路径。");
         if (!string.IsNullOrWhiteSpace(settings.ThirdPartyPlayerPath)
-            && !Path.IsPathFullyQualified(settings.ThirdPartyPlayerPath))
+            && !FrameworkCompatibility.IsPathFullyQualified(settings.ThirdPartyPlayerPath))
             errors.Add("第三方播放器路径必须是绝对路径。");
         if (settings.AccessibilitySettings.AnnouncementRate is < 0.5 or > 2)
             errors.Add("朗读语速必须在 0.5 到 2 之间。");

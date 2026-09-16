@@ -16,7 +16,7 @@ public sealed class ApplicationShutdownTests
     public async Task Concurrent_requests_capture_quiesce_persist_and_release_exactly_once_in_order()
     {
         var events = new List<string>();
-        var persistGate = new TaskCompletionSource(
+        var persistGate = new TaskCompletionSource<object?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var participant = new RecordingParticipant(events, persistGate.Task);
         var feedback = new RecordingFeedback();
@@ -37,7 +37,7 @@ public sealed class ApplicationShutdownTests
         Assert.Equal(new[] { "capture-block", "background-stop", "persist" }, events);
         Assert.DoesNotContain("host-stop", events);
 
-        persistGate.SetResult();
+        persistGate.SetResult(null);
         var result = await first;
 
         Assert.Equal(ShutdownStatus.Completed, result.Status);
@@ -106,7 +106,7 @@ public sealed class ApplicationShutdownTests
     [Fact]
     public async Task Persisted_settings_hotkeys_playback_and_sources_are_readable_after_restart()
     {
-        var directory = Directory.CreateTempSubdirectory("LXMusicAccessible.Shutdown-").FullName;
+        var directory = Path.Combine(Path.GetTempPath(), "LXMusicAccessible.Shutdown-" + Guid.NewGuid().ToString("N"));
         try
         {
             var initializer = new DatabaseInitializer(
@@ -250,7 +250,7 @@ public sealed class ApplicationShutdownTests
         public int CaptureCount { get; private set; }
         public int PersistCount { get; private set; }
         public bool UseCancellation { get; set; }
-        public TaskCompletionSource PersistStarted { get; } = new(
+        public TaskCompletionSource<object?> PersistStarted { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ApplicationShutdownSnapshot CaptureAndBlock()
@@ -266,7 +266,7 @@ public sealed class ApplicationShutdownTests
         {
             PersistCount++;
             events.Add("persist");
-            PersistStarted.TrySetResult();
+            PersistStarted.TrySetResult(null);
             if (UseCancellation)
                 await persistence.WaitAsync(cancellationToken);
             else

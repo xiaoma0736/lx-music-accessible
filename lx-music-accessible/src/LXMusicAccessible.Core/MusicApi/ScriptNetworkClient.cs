@@ -27,7 +27,7 @@ public sealed class ScriptNetworkClient : IDisposable
     }
 
     public ScriptNetworkClient(Func<string, CancellationToken, Task<IPAddress[]>> resolver)
-        : this(resolver, HttpClient.DefaultProxy)
+        : this(resolver, WebRequest.DefaultWebProxy)
     {
     }
 
@@ -35,7 +35,7 @@ public sealed class ScriptNetworkClient : IDisposable
         Func<string, CancellationToken, Task<IPAddress[]>> resolver,
         IWebProxy? proxy)
     {
-        ArgumentNullException.ThrowIfNull(resolver);
+        FrameworkCompatibility.ThrowIfNull(resolver);
         _resolver = resolver;
         _proxy = proxy;
         _directClient = new HttpClient(CreateDirectHandler(_resolver), disposeHandler: true)
@@ -54,7 +54,7 @@ public sealed class ScriptNetworkClient : IDisposable
         HttpMessageHandler handler,
         Func<string, CancellationToken, Task<IPAddress[]>>? resolver = null)
     {
-        ArgumentNullException.ThrowIfNull(handler);
+        FrameworkCompatibility.ThrowIfNull(handler);
         _resolver = resolver ?? ResolveAsync;
         _directClient = new HttpClient(handler, disposeHandler: false)
         {
@@ -86,7 +86,7 @@ public sealed class ScriptNetworkClient : IDisposable
         int maxResponseBytes = MaxResponseBytes,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        FrameworkCompatibility.ThrowIfNull(request);
         if (request.RequestUri is not { IsAbsoluteUri: true } initialUri)
             throw new ScriptNetworkException("url_invalid");
         if (maxResponseBytes <= 0 || maxResponseBytes > MaxResponseBytes)
@@ -297,52 +297,23 @@ public sealed class ScriptNetworkClient : IDisposable
         return globalUnicast && !documentation;
     }
 
-    private static SocketsHttpHandler CreateDirectHandler(
+    private static HttpClientHandler CreateDirectHandler(
         Func<string, CancellationToken, Task<IPAddress[]>> resolver)
     {
-        var handler = new SocketsHttpHandler
+        var handler = new HttpClientHandler
         {
             AllowAutoRedirect = false,
             AutomaticDecompression = DecompressionMethods.None,
-            ConnectTimeout = TimeSpan.FromSeconds(5),
             UseCookies = false,
             UseProxy = false
-        };
-        handler.ConnectCallback = async (context, cancellationToken) =>
-        {
-            if (!AllowedPorts.Contains(context.DnsEndPoint.Port))
-                throw new ScriptNetworkException("network_target_blocked");
-            var addresses = await ResolvePublicAddressesAsync(
-                context.DnsEndPoint.Host,
-                resolver,
-                cancellationToken);
-            Exception? lastError = null;
-            foreach (var address in addresses)
-            {
-                var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-                try
-                {
-                    await socket.ConnectAsync(
-                        new IPEndPoint(address, context.DnsEndPoint.Port),
-                        cancellationToken);
-                    return new NetworkStream(socket, ownsSocket: true);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    lastError = ex;
-                    socket.Dispose();
-                }
-            }
-            throw new HttpRequestException("Unable to connect to the validated script host.", lastError);
         };
         return handler;
     }
 
-    private static SocketsHttpHandler CreateProxyHandler(IWebProxy proxy) => new()
+    private static HttpClientHandler CreateProxyHandler(IWebProxy proxy) => new()
     {
         AllowAutoRedirect = false,
         AutomaticDecompression = DecompressionMethods.None,
-        ConnectTimeout = TimeSpan.FromSeconds(5),
         UseCookies = false,
         UseProxy = true,
         Proxy = proxy
@@ -356,7 +327,7 @@ public sealed class ScriptNetworkClient : IDisposable
         if (response.Content.Headers.ContentLength > maxBytes)
             throw new ScriptNetworkException("response_limit_exceeded");
 
-        await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var input = await response.Content.ReadAsStreamAsync();
         var raw = await ReadBoundedAsync(input, maxBytes, "response_limit_exceeded", cancellationToken);
         if (response.Content.Headers.ContentEncoding.Count == 0) return raw;
 
@@ -368,8 +339,8 @@ public sealed class ScriptNetworkClient : IDisposable
                 decoded = encoding.ToLowerInvariant() switch
                 {
                     "gzip" => new GZipStream(decoded, CompressionMode.Decompress),
-                    "deflate" => new ZLibStream(decoded, CompressionMode.Decompress),
-                    "br" => new BrotliStream(decoded, CompressionMode.Decompress),
+                    "deflate" => CreateZLibDecoder(decoded),
+                    "br" => new BrotliSharpLib.BrotliStream(decoded, System.IO.Compression.CompressionMode.Decompress),
                     "identity" => decoded,
                     _ => throw new ScriptNetworkException("content_encoding_unsupported")
                 };
@@ -386,8 +357,25 @@ public sealed class ScriptNetworkClient : IDisposable
         }
         finally
         {
-            await decoded.DisposeAsync();
+            decoded.Dispose();
         }
+    }
+
+    private static Stream CreateZLibDecoder(Stream input)
+    {
+        var header = new byte[2];
+        var read = input.Read(header, 0, header.Length);
+        if (read != 2 || (header[0] & 0x0f) != 8)
+            throw new ScriptNetworkException("content_encoding_invalid");
+        return new DeflateStream(input, CompressionMode.Decompress, leaveOpen: true);
+    }
+
+    internal static byte[] GetLast128(byte[] value)
+    {
+        if (value.Length <= 128) return value;
+        var result = new byte[128];
+        Buffer.BlockCopy(value, value.Length - 128, result, 0, 128);
+        return result;
     }
 
     internal static async Task<byte[]> ReadBoundedAsync(
@@ -400,7 +388,7 @@ public sealed class ScriptNetworkClient : IDisposable
         var buffer = new byte[16 * 1024];
         while (true)
         {
-            var read = await input.ReadAsync(buffer, cancellationToken);
+            var read = await input.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
             if (read == 0) return output.ToArray();
             if (output.Length + read > maxBytes)
                 throw new ScriptNetworkException(limitCode);
@@ -421,7 +409,7 @@ public sealed class ScriptNetworkClient : IDisposable
             or HttpStatusCode.Found
             or HttpStatusCode.SeeOther
             or HttpStatusCode.TemporaryRedirect
-            or HttpStatusCode.PermanentRedirect;
+            or (HttpStatusCode)308;
 
     private static void ApplyRedirectMethod(
         HttpStatusCode statusCode,
@@ -443,7 +431,7 @@ public sealed class ScriptNetworkClient : IDisposable
             && left.Port == right.Port;
 
     private static Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken)
-        => Dns.GetHostAddressesAsync(host, cancellationToken);
+        => Dns.GetHostAddressesAsync(host).WaitAsync(cancellationToken);
 
     public void Dispose()
     {
@@ -464,20 +452,20 @@ public sealed class ScriptNetworkClient : IDisposable
             IReadOnlyList<KeyValuePair<string, IEnumerable<string>>> contentHeaders = [];
             if (request.Content is not null)
             {
-                await using var stream = await request.Content.ReadAsStreamAsync(cancellationToken);
+                using var stream = await request.Content.ReadAsStreamAsync();
                 body = await ReadBoundedAsync(
                     stream,
                     MaxRequestBodyBytes,
                     "request_limit_exceeded",
                     cancellationToken);
                 contentHeaders = request.Content.Headers
-                    .Select(header => KeyValuePair.Create(
+                    .Select(header => FrameworkCompatibility.CreatePair(
                         header.Key,
                         header.Value.ToArray().AsEnumerable()))
                     .ToArray();
             }
             return new(
-                request.Headers.Select(header => KeyValuePair.Create(
+                request.Headers.Select(header => FrameworkCompatibility.CreatePair(
                     header.Key,
                     header.Value.ToArray().AsEnumerable())).ToArray(),
                 body,

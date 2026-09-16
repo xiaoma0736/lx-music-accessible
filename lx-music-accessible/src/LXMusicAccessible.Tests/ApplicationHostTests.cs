@@ -20,7 +20,7 @@ public sealed class ApplicationHostTests
     [Fact]
     public async Task Host_validates_singletons_and_creates_accessible_secondary_windows()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
 
         Assert.Same(
             app.Services.GetRequiredService<IDataService>(),
@@ -132,10 +132,10 @@ public sealed class ApplicationHostTests
     {
         string dataDirectory;
 
-        await using (var app = await TestApplicationHost.StartAsync())
+        using (var app = await TestApplicationHost.StartAsync())
         {
             dataDirectory = app.DataDirectory;
-            var relativeToTemp = Path.GetRelativePath(Path.GetTempPath(), dataDirectory);
+            var relativeToTemp = FrameworkCompatibility.GetRelativePath(Path.GetTempPath(), dataDirectory);
             Assert.False(relativeToTemp.StartsWith("..", StringComparison.Ordinal));
             Assert.False(Path.IsPathRooted(relativeToTemp));
             Assert.True(File.Exists(Path.Combine(dataDirectory, "lxmusic.db")));
@@ -189,7 +189,7 @@ public sealed class ApplicationHostTests
     [Fact]
     public async Task Unknown_http_requests_are_blocked()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var client = app.Services.GetRequiredService<MusicHttpClient>();
         var registeredUri = new Uri("https://fixture.invalid/registered");
         app.HttpHandler.RegisterText(HttpMethod.Get, registeredUri, "fixture response");
@@ -204,7 +204,7 @@ public sealed class ApplicationHostTests
 
     private static Task RunOnStaThreadAsync(Action action)
     {
-        var completion = new TaskCompletionSource(
+        var completion = new TaskCompletionSource<object?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
@@ -218,7 +218,7 @@ public sealed class ApplicationHostTests
                 failure = exception;
             }
             finally { System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeShutdown(); }
-            if (failure is null) completion.SetResult();
+            if (failure is null) completion.SetResult(null);
             else completion.SetException(failure);
         });
         thread.SetApartmentState(ApartmentState.STA);

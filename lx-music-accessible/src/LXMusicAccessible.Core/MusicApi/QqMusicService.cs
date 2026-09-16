@@ -917,9 +917,9 @@ public class QqMusicService : IMusicApi
     /// <summary>生成 QQ 移动端搜索会话 ID（模仿官方客户端 searchID 生成算法，仅为随机大数）</summary>
     private static string GetSearchId()
     {
-        var e = Random.Shared.Next(1, 21);
+        var e = FrameworkCompatibility.SharedRandom.Next(1, 21);
         var t = e * 18014398509481984L;
-        var n = Random.Shared.Next(0, 4194305) * 4294967296L;
+        var n = FrameworkCompatibility.SharedRandom.Next(0, 4194305) * 4294967296L;
         var r = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % (24L * 60 * 60 * 1000);
         return (t + n + r).ToString();
     }
@@ -929,8 +929,8 @@ public class QqMusicService : IMusicApi
     {
         const string hex = "0123456789abcdef";
         const string q36Chars = "0123456789abcdefghijklmnopqrstuvwxyz";
-        var q16 = new string(Enumerable.Range(0, 16).Select(_ => hex[Random.Shared.Next(hex.Length)]).ToArray());
-        var q36 = new string(Enumerable.Range(0, 36).Select(_ => q36Chars[Random.Shared.Next(q36Chars.Length)]).ToArray());
+        var q16 = new string(Enumerable.Range(0, 16).Select(_ => hex[FrameworkCompatibility.SharedRandom.Next(hex.Length)]).ToArray());
+        var q36 = new string(Enumerable.Range(0, 36).Select(_ => q36Chars[FrameworkCompatibility.SharedRandom.Next(q36Chars.Length)]).ToArray());
         return (q16, q36);
     }
 
@@ -982,7 +982,7 @@ public class QqMusicService : IMusicApi
         if (string.IsNullOrWhiteSpace(lrcContent)) return null;
 
         var lines = new List<LyricLine>();
-        foreach (var line in lrcContent.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var line in lrcContent.SplitTrimmed('\n'))
         {
             var match = System.Text.RegularExpressions.Regex.Match(line.Trim(), @"^\[(\d{2}):(\d{2})(?:\.(\d+))?\](.*)");
             if (match.Success)

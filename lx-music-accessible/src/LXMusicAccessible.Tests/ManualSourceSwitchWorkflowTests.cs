@@ -114,7 +114,7 @@ public sealed class ManualSourceSwitchWorkflowTests
         using var cancellation = new CancellationTokenSource();
 
         var query = workflow.DiscoverAsync(Target, cancellation.Token);
-        await cancellation.CancelAsync();
+        await cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => query);
         Assert.True(gateway.SearchCancellationObserved);

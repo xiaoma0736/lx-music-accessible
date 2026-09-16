@@ -95,7 +95,7 @@ public static class AppDataPaths
     /// <summary>Creates a dedicated owned child beneath a user-selected parent directory.</summary>
     public static OwnedAppDataDirectory CreateOwnedDataDirectory(string selectedParent)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(selectedParent);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(selectedParent);
         var target = Path.GetFullPath(Path.Combine(selectedParent, DefaultDirName));
         var current = ResolveDataDir();
 
@@ -124,7 +124,7 @@ public static class AppDataPaths
         var temporaryPath = pointerPath + ".tmp";
         var pointer = new DataDirectoryPointer(PointerSchemaVersion, owned.Path, owned.OwnershipId);
         File.WriteAllText(temporaryPath, JsonSerializer.Serialize(pointer));
-        File.Move(temporaryPath, pointerPath, overwrite: true);
+        FrameworkCompatibility.Move(temporaryPath, pointerPath, overwrite: true);
     }
 
     /// <summary>Safely cleans every currently known owned data directory.</summary>
@@ -255,7 +255,7 @@ public static class AppDataPaths
         var record = new DataDirectoryPointer(PointerSchemaVersion, Path.GetFullPath(DefaultDataDir), ownershipId);
         var temporaryPath = DefaultOwnershipFilePath + ".tmp";
         File.WriteAllText(temporaryPath, JsonSerializer.Serialize(record));
-        File.Move(temporaryPath, DefaultOwnershipFilePath, overwrite: true);
+        FrameworkCompatibility.Move(temporaryPath, DefaultOwnershipFilePath, true);
     }
 
     private static bool TryReadDefaultOwnership(out OwnedAppDataDirectory ownedDirectory)
@@ -315,7 +315,7 @@ public static class AppDataPaths
     }
 
     private static StringComparison PathComparison =>
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        FrameworkCompatibility.IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     private sealed record DataDirectoryPointer(int SchemaVersion, string Path, Guid OwnershipId);
 }

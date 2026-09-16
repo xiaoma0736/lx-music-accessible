@@ -286,7 +286,7 @@ public sealed class ToolWindowCoordinatorTests
 
     private static Task RunOnStaThreadAsync(Action action)
     {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             Exception? failure = null;
@@ -302,7 +302,7 @@ public sealed class ToolWindowCoordinatorTests
             {
                 Dispatcher.CurrentDispatcher.InvokeShutdown();
             }
-            if (failure is null) completion.SetResult();
+            if (failure is null) completion.SetResult(null);
             else completion.SetException(failure);
         });
         thread.SetApartmentState(ApartmentState.STA);

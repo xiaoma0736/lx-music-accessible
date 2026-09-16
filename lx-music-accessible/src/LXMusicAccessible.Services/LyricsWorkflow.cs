@@ -162,7 +162,7 @@ public sealed class LyricsWorkflow : IDisposable
             if (offsets is not null)
             {
                 foreach (var (key, value) in offsets)
-                    _offsets[key] = Math.Clamp(value, -30000, 30000);
+                    _offsets[key] = FrameworkCompatibility.Clamp(value, -30000, 30000);
             }
 
             var offset = _activeMusicKey is not null && _offsets.TryGetValue(_activeMusicKey, out var saved)
@@ -189,8 +189,8 @@ public sealed class LyricsWorkflow : IDisposable
 
     public async Task<bool> LoadAsync(MusicInfo music)
     {
-        ArgumentNullException.ThrowIfNull(music);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        FrameworkCompatibility.ThrowIfNull(music);
+        if (_disposed) throw new ObjectDisposedException(nameof(LyricsWorkflow));
 
         var key = MusicKey(music);
         LyricsState loading;
@@ -293,7 +293,7 @@ public sealed class LyricsWorkflow : IDisposable
         LyricsState? changed;
         lock (_gate)
         {
-            _announceBlockedUntilTick = Environment.TickCount64 + (long)SeekAnnouncementDelay.TotalMilliseconds;
+            _announceBlockedUntilTick = FrameworkCompatibility.CurrentTickMs + (long)SeekAnnouncementDelay.TotalMilliseconds;
             _announceAfterSeek = true;
             changed = SynchronizePositionLocked(position);
         }
@@ -306,7 +306,7 @@ public sealed class LyricsWorkflow : IDisposable
         IReadOnlyDictionary<string, int> snapshot;
         lock (_gate)
         {
-            var offset = Math.Clamp(_state.OffsetMilliseconds + deltaMilliseconds, -30000, 30000);
+            var offset = FrameworkCompatibility.Clamp(_state.OffsetMilliseconds + deltaMilliseconds, -30000, 30000);
             if (_activeMusicKey is not null) _offsets[_activeMusicKey] = offset;
             var position = SameMusic(_state.Music, _playback.CurrentMusic)
                 ? _audio.Position
@@ -437,7 +437,7 @@ public sealed class LyricsWorkflow : IDisposable
     {
         if (_speechSuppressed || !_playback.IsPlaying) return null;
         var blockOver = _announceBlockedUntilTick <= 0
-            || Environment.TickCount64 >= _announceBlockedUntilTick;
+            || FrameworkCompatibility.CurrentTickMs >= _announceBlockedUntilTick;
         if (_announceAfterSeek)
         {
             if (!blockOver) return null;
@@ -533,7 +533,7 @@ public sealed class LyricsWorkflow : IDisposable
         CancellationToken cancellationToken)
     {
         var edit = settingsWorkflow.Edit(settings =>
-            settings.LyricOffsets = new Dictionary<string, int>(offsets, StringComparer.OrdinalIgnoreCase));
+            settings.LyricOffsets = offsets.ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase));
         if (!edit.Accepted)
             throw new InvalidOperationException(string.Join(" ", edit.Errors));
         var saved = await settingsWorkflow.SaveAsync(edit.State, cancellationToken);

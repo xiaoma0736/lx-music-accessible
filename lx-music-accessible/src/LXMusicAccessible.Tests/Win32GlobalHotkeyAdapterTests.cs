@@ -1,4 +1,4 @@
-using System.Windows.Input;
+
 using LXMusicAccessible.Services;
 using Xunit;
 
@@ -11,7 +11,7 @@ public sealed class Win32GlobalHotkeyAdapterTests
     {
         var adapter = new Win32GlobalHotkeyAdapter();
 
-        var registered = adapter.Register(IntPtr.Zero, 1, Key.None, ModifierKeys.None);
+        var registered = adapter.Register(IntPtr.Zero, 1, PlatformKey.None, PlatformModifiers.None);
 
         Assert.False(registered);
         Assert.NotEqual(0, adapter.LastRegisterError);

@@ -52,11 +52,11 @@ public partial class HotkeyConflictDialog : Window
     private static string Format(Hotkey h)
     {
         var parts = new List<string>();
-        if ((h.Modifiers & ModifierKeys.Control) != 0) parts.Add("Ctrl");
-        if ((h.Modifiers & ModifierKeys.Alt) != 0) parts.Add("Alt");
-        if ((h.Modifiers & ModifierKeys.Shift) != 0) parts.Add("Shift");
-        if ((h.Modifiers & ModifierKeys.Windows) != 0) parts.Add("Win");
-        parts.Add(h.Key == Key.Space ? "空格" : h.Key.ToString());
+        if (((PlatformModifiers)h.Modifiers & PlatformModifiers.Control) != 0) parts.Add("Ctrl");
+        if (((PlatformModifiers)h.Modifiers & PlatformModifiers.Alt) != 0) parts.Add("Alt");
+        if (((PlatformModifiers)h.Modifiers & PlatformModifiers.Shift) != 0) parts.Add("Shift");
+        if (((PlatformModifiers)h.Modifiers & PlatformModifiers.Windows) != 0) parts.Add("Win");
+        parts.Add((PlatformKey)h.Key == PlatformKey.Space ? "空格" : h.Key.ToString());
         return string.Join("+", parts);
     }
 }

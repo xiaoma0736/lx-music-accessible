@@ -687,7 +687,7 @@ public class MiguMusicService : IMusicApi
     {
         if (string.IsNullOrWhiteSpace(content)) return null;
         var lines = new List<LyricLine>();
-        foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var line in content.SplitTrimmed('\n'))
         {
             var m = System.Text.RegularExpressions.Regex.Match(line.Trim(), @"^\[(\d{2}):(\d{2})(?:\.(\d+))?\](.*)");
             if (m.Success)

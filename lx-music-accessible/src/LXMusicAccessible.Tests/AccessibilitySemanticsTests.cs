@@ -572,14 +572,14 @@ public sealed partial class AccessibilitySemanticsTests
 
     private static Task RunOnStaThreadAsync(Action action)
     {
-        var completion = new TaskCompletionSource(
+        var completion = new TaskCompletionSource<object?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             try
             {
                 action();
-                completion.SetResult();
+                completion.SetResult(null);
             }
             catch (Exception exception)
             {

@@ -301,7 +301,7 @@ public sealed class PlaylistImportWindowTests
                 window.LoadPlaylistsBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpUntil(window.Dispatcher, () => service.PlaylistsStarted.Task.IsCompleted);
                 Assert.True(window.LogoutBtn.Focus());
-                service.ReleasePlaylists.SetResult();
+                service.ReleasePlaylists.SetResult(null);
                 PumpUntil(window.Dispatcher, () => window.MyPlaylistsList.Items.Count == 1);
 
                 Assert.Same(window.LogoutBtn, Keyboard.FocusedElement);
@@ -356,7 +356,7 @@ public sealed class PlaylistImportWindowTests
                 Assert.Equal("正在取消", AutomationProperties.GetItemStatus(window.ImportStatusText));
                 Assert.Contains("正在取消", announcer.Messages);
 
-                service.ReleaseBatch.SetResult();
+                service.ReleaseBatch.SetResult(null);
                 PumpUntil(window.Dispatcher, () => !window.IsVisible);
                 Assert.True(service.CancellationObserved);
             }
@@ -614,14 +614,14 @@ public sealed class PlaylistImportWindowTests
 
     private static Task RunOnStaThreadAsync(Action action)
     {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             Exception? failure = null;
             try { action(); }
             catch (Exception exception) { failure = exception; }
             finally { Dispatcher.CurrentDispatcher.InvokeShutdown(); }
-            if (failure is null) completion.SetResult();
+            if (failure is null) completion.SetResult(null);
             else completion.SetException(failure);
         });
         thread.SetApartmentState(ApartmentState.STA);
@@ -693,13 +693,13 @@ public sealed class PlaylistImportWindowTests
         public int OperationCount { get; private set; }
         public int CookieLoginCount { get; private set; }
         public bool CancellationObserved { get; private set; }
-        public TaskCompletionSource BatchStarted { get; } =
+        public TaskCompletionSource<object?> BatchStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource ReleaseBatch { get; } =
+        public TaskCompletionSource<object?> ReleaseBatch { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource PlaylistsStarted { get; } =
+        public TaskCompletionSource<object?> PlaylistsStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource ReleasePlaylists { get; } =
+        public TaskCompletionSource<object?> ReleasePlaylists { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public IReadOnlyList<IPlaylistImportProvider> Providers => [];
         public IPlaylistImportProvider? GetProvider(string platformId) => null;
@@ -722,7 +722,7 @@ public sealed class PlaylistImportWindowTests
         public async Task<List<RemotePlaylist>> GetMyPlaylistsAsync(string platformId)
         {
             OperationCount++;
-            PlaylistsStarted.TrySetResult();
+            PlaylistsStarted.TrySetResult(null);
             if (DelayPlaylists) await ReleasePlaylists.Task;
             if (EmptyPlaylists) return [];
             return
@@ -748,7 +748,7 @@ public sealed class PlaylistImportWindowTests
             CancellationToken cancellationToken = default)
         {
             OperationCount++;
-            BatchStarted.SetResult();
+            BatchStarted.SetResult(null);
             if (DelayBatch) await ReleaseBatch.Task;
             announce?.Invoke("正在导入歌单一");
             if (BatchFailure is not null) throw BatchFailure;

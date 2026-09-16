@@ -29,11 +29,11 @@ public sealed record ManualSourceOption(
         string quality,
         string displayLabel)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(sourceId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
-        ArgumentException.ThrowIfNullOrWhiteSpace(platform);
-        ArgumentNullException.ThrowIfNull(candidate);
-        ArgumentException.ThrowIfNullOrWhiteSpace(quality);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(sourceId);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(sourceName);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(platform);
+        FrameworkCompatibility.ThrowIfNull(candidate);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(quality);
         var label = string.IsNullOrWhiteSpace(displayLabel)
             ? $"{sourceName}，{quality}，{candidate.Title}，{candidate.Artist}"
             : displayLabel.Trim();
@@ -140,7 +140,7 @@ public sealed class ManualSourceDiscoveryWorkflow(
         MusicInfo target,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(target);
+        FrameworkCompatibility.ThrowIfNull(target);
         using var timeout = new CancellationTokenSource(
             budget ?? DefaultBudget);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
@@ -175,9 +175,9 @@ public sealed class ManualSourceDiscoveryWorkflow(
         ManualSourcePlaybackRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.Target);
-        ArgumentNullException.ThrowIfNull(request.Option);
+        FrameworkCompatibility.ThrowIfNull(request);
+        FrameworkCompatibility.ThrowIfNull(request.Target);
+        FrameworkCompatibility.ThrowIfNull(request.Option);
         if (!MusicSearchMatcher.IsSameSong(request.Option.Candidate, request.Target))
         {
             return new(

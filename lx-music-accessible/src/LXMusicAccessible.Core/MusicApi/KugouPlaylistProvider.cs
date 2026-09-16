@@ -323,13 +323,13 @@ public class KugouPlaylistProvider : IPlaylistImportProvider
             .Select(kv => kv.Value is string s ? $"{kv.Key}={s}" : $"{kv.Key}={kv.Value}");
         var paramsStr = string.Concat(sorted);
         var input = SignatureSalt + paramsStr + data + SignatureSalt;
-        return Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(input))).ToLower();
+        return FrameworkCompatibility.ToHexString(FrameworkCompatibility.Md5HashData(Encoding.UTF8.GetBytes(input))).ToLower();
     }
 
     private static string GenerateMid()
     {
         var guid = Guid.NewGuid().ToString();
-        var md5Hex = Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(guid))).ToLower();
+        var md5Hex = FrameworkCompatibility.ToHexString(FrameworkCompatibility.Md5HashData(Encoding.UTF8.GetBytes(guid))).ToLower();
         var big = BigInteger.Parse("0" + md5Hex, NumberStyles.HexNumber);
         return big.ToString();
     }
@@ -440,7 +440,7 @@ public class KugouPlaylistProvider : IPlaylistImportProvider
 
     private static string ExtractValue(string cookieHeader, string key)
     {
-        foreach (var part in cookieHeader.Split(';', StringSplitOptions.TrimEntries))
+        foreach (var part in cookieHeader.SplitTrimmed(';'))
         {
             var eq = part.IndexOf('=');
             if (eq <= 0) continue;

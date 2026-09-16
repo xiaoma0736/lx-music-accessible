@@ -25,7 +25,7 @@ public sealed class PlaybackRecoveryAndPlaybackInfoTests
         audio.QualitiesByUrl["320k-song"] = "320k";
         audio.QualitiesByUrl["128k-song"] = "128k";
         var sources = new RecoverySourceAdapter();
-        await using var fixture = await PlaybackFixture.StartAsync(audio, sources);
+        using var fixture = await PlaybackFixture.StartAsync(audio, sources);
         var music = NetworkSong("song");
 
         var result = await fixture.Player.PlayAsync(new(
@@ -52,7 +52,7 @@ public sealed class PlaybackRecoveryAndPlaybackInfoTests
         var sources = new RecoverySourceAdapter();
         sources.AddAlternative("b", NetworkSong("song", "b"), "good-b");
         sources.AddAlternative("b", ApproximateSong("near-b", "b"), "near-b-url");
-        await using var fixture = await PlaybackFixture.StartAsync(audio, sources);
+        using var fixture = await PlaybackFixture.StartAsync(audio, sources);
         var music = NetworkSong("song");
 
         var result = await fixture.Player.PlayAsync(new([music], music, "320k"));
@@ -76,7 +76,7 @@ public sealed class PlaybackRecoveryAndPlaybackInfoTests
         audio.FailuresByUrl.UnionWith(["320k-song", "128k-song"]);
         var sources = new RecoverySourceAdapter();
         sources.AddAlternative("b", ApproximateSong("near-b", "b"), "near-b-url");
-        await using var fixture = await PlaybackFixture.StartAsync(audio, sources);
+        using var fixture = await PlaybackFixture.StartAsync(audio, sources);
         var music = NetworkSong("song");
 
         var result = await fixture.Player.PlayAsync(new([music], music, "320k"));
@@ -96,7 +96,7 @@ public sealed class PlaybackRecoveryAndPlaybackInfoTests
         var audio = new RecoveryAudioPlayer();
         audio.FailuresByUrl.UnionWith(["320k-song", "128k-song"]);
         var sources = new RecoverySourceAdapter();
-        await using var fixture = await PlaybackFixture.StartAsync(audio, sources);
+        using var fixture = await PlaybackFixture.StartAsync(audio, sources);
         var music = NetworkSong("song");
 
         var result = await fixture.Player.PlayAsync(new(
@@ -120,7 +120,7 @@ public sealed class PlaybackRecoveryAndPlaybackInfoTests
             DefaultActualQuality = "128k"
         };
         var sources = new RecoverySourceAdapter();
-        await using var fixture = await PlaybackFixture.StartAsync(audio, sources);
+        using var fixture = await PlaybackFixture.StartAsync(audio, sources);
         var music = NetworkSong("song");
         var window = await fixture.CreateMainWindowAsync();
         try

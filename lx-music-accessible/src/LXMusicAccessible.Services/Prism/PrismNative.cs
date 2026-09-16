@@ -93,7 +93,11 @@ internal static class PrismNative
     internal static string PtrToUtf8(IntPtr ptr)
     {
         if (ptr == IntPtr.Zero) return "";
-        return Marshal.PtrToStringUTF8(ptr) ?? "";
+        var length = 0;
+        while (Marshal.ReadByte(ptr, length) != 0) length++;
+        var bytes = new byte[length];
+        Marshal.Copy(ptr, bytes, 0, length);
+        return System.Text.Encoding.UTF8.GetString(bytes);
     }
 
     /// <summary>错误码 → 可读文本</summary>
@@ -108,5 +112,20 @@ internal static class PrismNative
         {
             return $"Error {error}";
         }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr LoadLibrary(string fileName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool FreeLibrary(IntPtr library);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+    private static extern IntPtr GetProcAddress(IntPtr library, string name);
+
+    private static bool TryGetExport(IntPtr library, string name, out IntPtr address)
+    {
+        address = GetProcAddress(library, name);
+        return address != IntPtr.Zero;
     }
 }

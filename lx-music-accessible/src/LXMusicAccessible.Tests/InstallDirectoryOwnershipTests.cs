@@ -211,7 +211,7 @@ public sealed class InstallDirectoryOwnershipTests
     private sealed class TemporaryDirectory : IDisposable
     {
         public TemporaryDirectory() =>
-            Path = Directory.CreateTempSubdirectory("LXMusicAccessible.T10-").FullName;
+            Path = Path.Combine(Path.GetTempPath(), "LXMusicAccessible.T10-" + Guid.NewGuid().ToString("N"));
 
         public string Path { get; }
 

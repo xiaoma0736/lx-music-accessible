@@ -55,7 +55,7 @@ public class DatabaseInitializer
 
             if (previousVersion < CurrentSchemaVersion)
             {
-                await using var migrationConnection = await OpenMigrationConnectionAsync(dbFilePath);
+                using var migrationConnection = await OpenMigrationConnectionAsync(dbFilePath);
                 await InitializeSchemaAsync(migrationConnection);
                 orphansRemoved = await NormalizePlaylistItemsAsync(migrationConnection);
                 await migrationConnection.ExecuteAsync($"PRAGMA user_version = {CurrentSchemaVersion}");
@@ -64,7 +64,7 @@ public class DatabaseInitializer
             }
             else
             {
-                await using var connection = await SqliteDatabaseConnection.OpenAsync(dbFilePath);
+                using var connection = await SqliteDatabaseConnection.OpenAsync(dbFilePath);
                 await VerifyIntegrityAsync(connection);
             }
 
@@ -216,15 +216,15 @@ public class DatabaseInitializer
 
     private static async Task<int> ReadSchemaVersionAsync(string dbFilePath)
     {
-        await using var connection = await SqliteDatabaseConnection.OpenAsync(dbFilePath);
+        using var connection = await SqliteDatabaseConnection.OpenAsync(dbFilePath);
         return await connection.QuerySingleAsync<int>("PRAGMA user_version");
     }
 
     private static async Task<string> CreateBackupAsync(string dbFilePath, int previousVersion)
     {
         var backupPath = $"{dbFilePath}.pre-v{previousVersion}-{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.bak";
-        await using var source = await SqliteDatabaseConnection.OpenAsync(dbFilePath);
-        await using var destination = await SqliteDatabaseConnection.OpenAsync(backupPath);
+        using var source = await SqliteDatabaseConnection.OpenAsync(dbFilePath);
+        using var destination = await SqliteDatabaseConnection.OpenAsync(backupPath);
         source.BackupDatabase(destination);
         return backupPath;
     }
@@ -485,7 +485,7 @@ internal static class SqliteDatabaseConnection
         }
         catch
         {
-            await connection.DisposeAsync();
+            connection.Dispose();
             throw;
         }
     }
@@ -538,7 +538,7 @@ public class DataService : IDataService
         }
         catch
         {
-            return tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            return tags.SplitTrimmed(',').Select(item => item.Trim()).Where(item => item.Length > 0).ToList();
         }
     }
 
@@ -550,14 +550,14 @@ public class DataService : IDataService
         IEnumerable<MusicInfo> songs,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(playlist);
-        ArgumentNullException.ThrowIfNull(songs);
+        FrameworkCompatibility.ThrowIfNull(playlist);
+        FrameworkCompatibility.ThrowIfNull(songs);
         if (string.IsNullOrWhiteSpace(playlist.Id))
             throw new ArgumentException("Playlist Id is required.", nameof(playlist));
 
         cancellationToken.ThrowIfCancellationRequested();
-        await using var connection = await GetConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        using var connection = await GetConnectionAsync(cancellationToken);
+        using var transaction = connection.BeginTransaction();
         try
         {
             await connection.ExecuteAsync(new CommandDefinition(
@@ -616,14 +616,14 @@ public class DataService : IDataService
                 await WritePlaylistItemBatchAsync(connection, transaction, batch, cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();
-            await transaction.CommitAsync(cancellationToken);
+            transaction.Commit();
             return new PlaylistSnapshotReplacement(imported, skipped);
         }
         catch
         {
             try
             {
-                await transaction.RollbackAsync(CancellationToken.None);
+                transaction.Rollback();
             }
             catch (Exception rollbackException)
             {
@@ -780,7 +780,7 @@ public class DataService : IDataService
         
         try
         {
-            return JsonSerializer.Deserialize<UserSettings>(result);
+            return JsonSerializer.Deserialize<UserSettings>(result ?? string.Empty);
         }
         catch (Exception ex)
         {
@@ -796,7 +796,7 @@ public class DataService : IDataService
         _logger.LogInformation("保存音源");
         
         using var connection = await GetConnectionAsync(cancellationToken);
-        using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        using var transaction = connection.BeginTransaction();
         try
         {
             var parameters = new Dictionary<string, object>();
@@ -847,11 +847,11 @@ public class DataService : IDataService
                         source.ContentSha256
                     }, transaction, cancellationToken: cancellationToken));
             }
-            await transaction.CommitAsync(cancellationToken);
+            transaction.Commit();
         }
         catch
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            transaction.Rollback();
             throw;
         }
     }
@@ -1040,12 +1040,12 @@ public class DataService : IDataService
         IEnumerable<MusicInfo> songs,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(songs);
+        FrameworkCompatibility.ThrowIfNull(songs);
         if (string.IsNullOrWhiteSpace(playlistId)) return default;
 
         cancellationToken.ThrowIfCancellationRequested();
-        await using var connection = await GetConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        using var connection = await GetConnectionAsync(cancellationToken);
+        using var transaction = connection.BeginTransaction();
         try
         {
             var existing = (await connection.QueryAsync<PlaylistItemIndex>(new CommandDefinition(@"
@@ -1107,7 +1107,7 @@ public class DataService : IDataService
                 await WritePlaylistItemBatchAsync(connection, transaction, batch, cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();
-            await transaction.CommitAsync(cancellationToken);
+            transaction.Commit();
             _logger.LogInformation(
                 "Added {AddedCount} songs to playlist {PlaylistId}; skipped {SkippedCount} duplicates",
                 added,
@@ -1119,7 +1119,7 @@ public class DataService : IDataService
         {
             try
             {
-                await transaction.RollbackAsync(CancellationToken.None);
+                transaction.Rollback();
             }
             catch (Exception rollbackException)
             {

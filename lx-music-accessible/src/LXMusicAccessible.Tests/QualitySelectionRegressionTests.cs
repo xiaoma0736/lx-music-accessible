@@ -33,7 +33,7 @@ public sealed class QualitySelectionRegressionTests
     [Fact]
     public async Task Download_skips_an_earlier_script_that_does_not_support_the_requested_quality()
     {
-        await using var host = await TestApplicationHost.StartAsync();
+        using var host = await TestApplicationHost.StartAsync();
         host.HttpHandler.RegisterText(HttpMethod.Get, LowResolve, ResolverBody(LowAudio));
         host.HttpHandler.RegisterText(HttpMethod.Get, HighResolve, ResolverBody(HighAudio));
         host.HttpHandler.Register(HttpMethod.Get, LowAudio, () => AudioResponse("128k"));
@@ -66,14 +66,14 @@ public sealed class QualitySelectionRegressionTests
         Assert.DoesNotContain(
             host.HttpHandler.Requests,
             request => request == (HttpMethod.Get.Method, LowResolve.AbsoluteUri));
-        Assert.Contains("fixture-quality=320k", await File.ReadAllTextAsync(task.SavePath!));
+        Assert.Contains("fixture-quality=320k", await Task.Run(() => File.ReadAllText(task.SavePath!)));
     }
 
     [Fact]
     public async Task Playback_rejects_a_stale_low_quality_direct_url_and_resolves_the_selected_quality()
     {
         var audio = new QualityAwareAudioPlayer();
-        await using var host = await TestApplicationHost.StartAsync(services =>
+        using var host = await TestApplicationHost.StartAsync(services =>
             services.Replace(ServiceDescriptor.Singleton<IAudioPlayer>(audio)));
         host.HttpHandler.RegisterText(HttpMethod.Get, LowResolve, ResolverBody(LowAudio));
         host.HttpHandler.RegisterText(HttpMethod.Get, HighResolve, ResolverBody(HighAudio));
@@ -109,7 +109,7 @@ public sealed class QualitySelectionRegressionTests
     [Fact]
     public async Task Download_preserves_every_production_quality_from_script_token_to_media_bytes()
     {
-        await using var host = await TestApplicationHost.StartAsync();
+        using var host = await TestApplicationHost.StartAsync();
         RegisterQualityMatrix(host);
         var data = host.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([
@@ -141,7 +141,7 @@ public sealed class QualitySelectionRegressionTests
             Assert.True(File.Exists(task.SavePath));
             Assert.Contains(
                 $"fixture-quality={quality}",
-                Encoding.UTF8.GetString(await File.ReadAllBytesAsync(task.SavePath!)),
+                Encoding.UTF8.GetString(await Task.Run(() => File.ReadAllBytes(task.SavePath!))),
                 StringComparison.Ordinal);
         }
     }
@@ -150,7 +150,7 @@ public sealed class QualitySelectionRegressionTests
     public async Task Playback_preserves_every_production_quality_through_resolution_and_audio_seam()
     {
         var audio = new QualityAwareAudioPlayer();
-        await using var host = await TestApplicationHost.StartAsync(services =>
+        using var host = await TestApplicationHost.StartAsync(services =>
             services.Replace(ServiceDescriptor.Singleton<IAudioPlayer>(audio)));
         RegisterQualityMatrix(host);
         var data = host.Services.GetRequiredService<IDataService>();

@@ -96,7 +96,7 @@ public class ScriptMusicSource : IDisposable
         try
         {
             _logger.LogInformation("暂存本地音源脚本: {Path}", filePath);
-            await using var stream = new FileStream(
+            using var stream = new FileStream(
                 filePath,
                 FileMode.Open,
                 FileAccess.Read,
@@ -162,7 +162,7 @@ public class ScriptMusicSource : IDisposable
         string sourceId,
         CancellationToken cancellationToken = default)
     {
-        await using var stream = typeof(ScriptMusicSource).Assembly.GetManifestResourceStream(resourceName);
+        using var stream = typeof(ScriptMusicSource).Assembly.GetManifestResourceStream(resourceName);
         if (stream is null) return null;
         var bytes = await ScriptNetworkClient.ReadBoundedAsync(
             stream,
@@ -195,7 +195,7 @@ public class ScriptMusicSource : IDisposable
     }
 
     public static string ComputeSha256(string content)
-        => Convert.ToHexString(SHA256.HashData(
+        => FrameworkCompatibility.ToHexString(FrameworkCompatibility.HashData(
             Encoding.UTF8.GetBytes(content.ReplaceLineEndings("\n")))).ToLowerInvariant();
 
     // ================================================================
@@ -271,7 +271,7 @@ public class ScriptMusicSource : IDisposable
         {
             // 带引号 & 不带引号的键名兼容
             var keys = Regex.Matches(qualityBlock, @"""?(\w+)""?\s*:");
-            info.SupportedSources = keys.Select(m => MapSourceId(m.Groups[1].Value)).Where(s => s != null && s != "github" && s != "git").Select(s => s!).Distinct().ToList();
+            info.SupportedSources = keys.Cast<System.Text.RegularExpressions.Match>().Select(m => MapSourceId(m.Groups[1].Value)).Where(s => s != null && s != "github" && s != "git").Select(s => s!).Distinct().ToList();
         }
 
         // 5. 提取 URL 模式 —— 找到 handleGetMusicUrl 中的请求URL模式

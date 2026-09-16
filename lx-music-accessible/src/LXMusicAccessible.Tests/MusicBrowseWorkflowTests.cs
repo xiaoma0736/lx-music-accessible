@@ -15,7 +15,7 @@ public sealed class MusicBrowseWorkflowTests
     [Fact]
     public async Task Public_selection_commands_are_local_and_keep_focus()
     {
-        await using var app = await StartBrowseHostAsync();
+        using var app = await StartBrowseHostAsync();
         var workflow = app.Services.GetRequiredService<MusicBrowseWorkflow>();
 
         var selections = new[]
@@ -39,7 +39,7 @@ public sealed class MusicBrowseWorkflowTests
     [Fact]
     public async Task Each_explicit_activation_sends_one_request_and_returns_focus_policy()
     {
-        await using var app = await StartBrowseHostAsync();
+        using var app = await StartBrowseHostAsync();
         var workflow = app.Services.GetRequiredService<MusicBrowseWorkflow>();
         RegisterOk(app.HttpHandler,
             "categories/netease",
@@ -81,7 +81,7 @@ public sealed class MusicBrowseWorkflowTests
     [Fact]
     public async Task Rapid_selection_discards_late_old_response_and_only_latest_completes()
     {
-        await using var app = await StartBrowseHostAsync();
+        using var app = await StartBrowseHostAsync();
         var workflow = app.Services.GetRequiredService<MusicBrowseWorkflow>();
         var firstStarted = NewSignal();
         var releaseFirst = NewSignal();
@@ -89,7 +89,7 @@ public sealed class MusicBrowseWorkflowTests
         var secondUri = BrowseUri("playlists/netease/second");
         app.HttpHandler.RegisterAsync(HttpMethod.Get, firstUri, async _ =>
         {
-            firstStarted.TrySetResult();
+            firstStarted.TrySetResult(null);
             await releaseFirst.Task;
             return Ok();
         });
@@ -101,7 +101,7 @@ public sealed class MusicBrowseWorkflowTests
 
         var selection = workflow.SelectCategory(Category("second", "新分类"));
         var latestActivation = workflow.ActivateCategoryAsync();
-        releaseFirst.TrySetResult();
+        releaseFirst.TrySetResult(null);
 
         var oldResult = await oldActivation;
         var latestResult = await latestActivation;
@@ -121,7 +121,7 @@ public sealed class MusicBrowseWorkflowTests
     [Fact]
     public async Task Production_adapter_cancels_the_inflight_http_request_when_selection_changes()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var workflow = app.Services.GetRequiredService<MusicBrowseWorkflow>();
         var started = NewSignal();
         var cancelled = NewSignal();
@@ -130,8 +130,8 @@ public sealed class MusicBrowseWorkflowTests
             new Uri("https://music.163.com/weapi/playlist/catalogue"),
             async cancellationToken =>
             {
-                using var registration = cancellationToken.Register(() => cancelled.TrySetResult());
-                started.TrySetResult();
+                using var registration = cancellationToken.Register(() => cancelled.TrySetResult(null));
+                started.TrySetResult(null);
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
                 return Ok();
             });
@@ -150,7 +150,7 @@ public sealed class MusicBrowseWorkflowTests
     [Fact]
     public async Task Current_failure_uses_the_shared_busy_and_error_announcements()
     {
-        await using var app = await StartBrowseHostAsync();
+        using var app = await StartBrowseHostAsync();
         var workflow = app.Services.GetRequiredService<MusicBrowseWorkflow>();
         app.HttpHandler.RegisterAsync(
             HttpMethod.Get,
@@ -233,7 +233,7 @@ public sealed class MusicBrowseWorkflowTests
     private static Playlist Playlist(string id, string name) => new() { Id = id, Name = name };
     private static Ranking Ranking(string id, string name) => new() { Id = id, Name = name, Source = "netease" };
 
-    private static TaskCompletionSource NewSignal() =>
+    private static TaskCompletionSource<object?> NewSignal() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private static string FindRepositoryRoot()

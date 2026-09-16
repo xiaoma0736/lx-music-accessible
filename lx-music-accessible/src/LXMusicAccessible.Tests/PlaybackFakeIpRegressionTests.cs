@@ -65,7 +65,7 @@ public sealed class PlaybackFakeIpRegressionTests
             };
         });
         var audio = new TimedAudioPlayer();
-        await using var host = await TestApplicationHost.StartAsync(services =>
+        using var host = await TestApplicationHost.StartAsync(services =>
         {
             services.Replace(ServiceDescriptor.Singleton(new ScriptNetworkClient(
                 handler,
@@ -107,10 +107,10 @@ public sealed class PlaybackFakeIpRegressionTests
     [Fact]
     public async Task System_proxy_only_profile_reaches_audio_instead_of_failing_all_candidates()
     {
-        await using var proxy = new FixedResponseProxy(AudioUri.AbsoluteUri);
+        using var proxy = new FixedResponseProxy(AudioUri.AbsoluteUri);
         using var proxyScope = new DefaultProxyScope(proxy.Uri);
         var audio = new TimedAudioPlayer();
-        await using var host = await TestApplicationHost.StartAsync(services =>
+        using var host = await TestApplicationHost.StartAsync(services =>
         {
             services.Replace(ServiceDescriptor.Singleton(new ScriptNetworkClient(
                 ResolveOnlyThroughProxyAsync)));
@@ -146,7 +146,7 @@ public sealed class PlaybackFakeIpRegressionTests
     [Fact]
     public async Task System_proxy_does_not_forward_a_hostname_that_resolves_private()
     {
-        await using var proxy = new FixedResponseProxy("blocked");
+        using var proxy = new FixedResponseProxy("blocked");
         using var proxyScope = new DefaultProxyScope(proxy.Uri);
         using var client = new ScriptNetworkClient((_, cancellationToken) =>
         {
@@ -165,7 +165,7 @@ public sealed class PlaybackFakeIpRegressionTests
     [Fact]
     public async Task System_proxy_does_not_forward_a_private_literal()
     {
-        await using var proxy = new FixedResponseProxy("blocked");
+        using var proxy = new FixedResponseProxy("blocked");
         using var proxyScope = new DefaultProxyScope(proxy.Uri);
         using var client = new ScriptNetworkClient(ResolveOnlyThroughProxyAsync);
         using var request = new HttpRequestMessage(HttpMethod.Get, "http://10.0.0.8/value");
@@ -180,7 +180,7 @@ public sealed class PlaybackFakeIpRegressionTests
     [Fact]
     public async Task System_proxy_supports_remote_dns_across_a_public_CDN_redirect()
     {
-        await using var proxy = new FixedResponseProxy(
+        using var proxy = new FixedResponseProxy(
             AudioUri.AbsoluteUri,
             ProxyRedirectUri,
             ProxyCdnUri);
@@ -378,14 +378,14 @@ public sealed class PlaybackFakeIpRegressionTests
 
     private sealed class DefaultProxyScope : IDisposable
     {
-        private readonly IWebProxy _original = HttpClient.DefaultProxy;
+        private readonly IWebProxy _original = WebRequest.DefaultWebProxy;
 
         public DefaultProxyScope(Uri proxyUri)
         {
-            HttpClient.DefaultProxy = new WebProxy(proxyUri) { BypassProxyOnLocal = false };
+            WebRequest.DefaultWebProxy = new WebProxy(proxyUri) { BypassProxyOnLocal = false };
         }
 
-        public void Dispose() => HttpClient.DefaultProxy = _original;
+        public void Dispose() => WebRequest.DefaultWebProxy = _original;
     }
 }
 

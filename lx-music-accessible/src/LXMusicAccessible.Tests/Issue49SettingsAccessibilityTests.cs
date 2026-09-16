@@ -222,14 +222,14 @@ public sealed class Issue49SettingsAccessibilityTests
 
     private static Task RunOnStaThreadAsync(Action action)
     {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             Exception? failure = null;
             try { action(); }
             catch (Exception exception) { failure = exception; }
             finally { Dispatcher.CurrentDispatcher.InvokeShutdown(); }
-            if (failure is null) completion.SetResult();
+            if (failure is null) completion.SetResult(null);
             else completion.SetException(failure);
         });
         thread.SetApartmentState(ApartmentState.STA);

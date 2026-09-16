@@ -389,7 +389,7 @@ public partial class SettingsWindow : Window
                 IsGlobal = hotkey.IsGlobal,
                 IsEnabled = hotkey.IsEnabled,
                 ShortcutText = FormatHotkey(hotkey),
-                HasConflict = hotkey.IsGlobal && hotkey.IsEnabled && hotkey.Key != Key.None
+                HasConflict = hotkey.IsGlobal && hotkey.IsEnabled && (PlatformKey)hotkey.Key != PlatformKey.None
                     && !_settings.IsGlobalHotkeyRegistered(hotkey)
             });
         }
@@ -400,24 +400,24 @@ public partial class SettingsWindow : Window
 
     private static string FormatHotkey(Hotkey hotkey)
     {
-        if (!hotkey.IsEnabled || hotkey.Key == Key.None) return "未设置";
+        if (!hotkey.IsEnabled || (PlatformKey)hotkey.Key == PlatformKey.None) return "未设置";
         var parts = new List<string>();
-        if ((hotkey.Modifiers & ModifierKeys.Control) != 0) parts.Add("Ctrl");
-        if ((hotkey.Modifiers & ModifierKeys.Alt) != 0) parts.Add("Alt");
-        if ((hotkey.Modifiers & ModifierKeys.Shift) != 0) parts.Add("Shift");
-        if ((hotkey.Modifiers & ModifierKeys.Windows) != 0) parts.Add("Win");
-        parts.Add(hotkey.Key switch
+        if (((PlatformModifiers)hotkey.Modifiers & PlatformModifiers.Control) != 0) parts.Add("Ctrl");
+        if (((PlatformModifiers)hotkey.Modifiers & PlatformModifiers.Alt) != 0) parts.Add("Alt");
+        if (((PlatformModifiers)hotkey.Modifiers & PlatformModifiers.Shift) != 0) parts.Add("Shift");
+        if (((PlatformModifiers)hotkey.Modifiers & PlatformModifiers.Windows) != 0) parts.Add("Win");
+        parts.Add(((PlatformKey)hotkey.Key) switch
         {
-            Key.Space => "空格",
-            Key.Left => "左方向键",
-            Key.Right => "右方向键",
-            Key.Up => "上方向键",
-            Key.Down => "下方向键",
-            Key.MediaPlayPause => "播放媒体键",
-            Key.MediaStop => "停止媒体键",
-            Key.MediaNextTrack => "下一曲媒体键",
-            Key.MediaPreviousTrack => "上一曲媒体键",
-            _ => hotkey.Key.ToString()
+            PlatformKey.Space => "空格",
+            PlatformKey.Left => "左方向键",
+            PlatformKey.Right => "右方向键",
+            PlatformKey.Up => "上方向键",
+            PlatformKey.Down => "下方向键",
+            PlatformKey.MediaPlayPause => "播放媒体键",
+            PlatformKey.MediaStop => "停止媒体键",
+            PlatformKey.MediaNextTrack => "下一曲媒体键",
+            PlatformKey.MediaPreviousTrack => "上一曲媒体键",
+            _ => ((Key)hotkey.Key).ToString()
         });
         return string.Join("+", parts);
     }
@@ -480,7 +480,7 @@ public partial class SettingsWindow : Window
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl
             or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin) return;
-        var result = await _settings.ReplaceHotkeyAsync(item.ActionId, item.IsGlobal, key, Keyboard.Modifiers);
+        var result = await _settings.ReplaceHotkeyAsync(item.ActionId, item.IsGlobal, (PlatformKey)key, (PlatformModifiers)Keyboard.Modifiers);
         _recording = null;
         UpdateInputSuppression();
         var saved = _settings.GetHotkeys().First(hotkey =>

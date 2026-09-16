@@ -142,7 +142,7 @@ public sealed class SavedPlaylistWorkflow(
 
     public async Task<SavedPlaylistResult> AddSongsAsync(IEnumerable<MusicInfo> songs)
     {
-        ArgumentNullException.ThrowIfNull(songs);
+        FrameworkCompatibility.ThrowIfNull(songs);
         var candidates = songs
             .Where(song => song is not null
                 && !string.Equals(song.Source, "Local", StringComparison.OrdinalIgnoreCase))
@@ -164,7 +164,7 @@ public sealed class SavedPlaylistWorkflow(
 
     public async Task<SavedPlaylistResult> RemoveSongAsync(MusicInfo music)
     {
-        ArgumentNullException.ThrowIfNull(music);
+        FrameworkCompatibility.ThrowIfNull(music);
         var selected = SelectedOrNull();
         if (selected is null) return Failure("请先选择在线歌单");
         await data.RemoveSongFromPlaylistAsync(selected.Id, music);
@@ -183,7 +183,7 @@ public sealed class SavedPlaylistWorkflow(
 
     public async Task<SavedPlaylistResult> CollectRemoteAsync(RemotePlaylistFavorite request)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        FrameworkCompatibility.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.RemoteId))
             return Failure("无法收藏该歌单");
         var existing = (await data.GetFavoritePlaylistsAsync(false)).FirstOrDefault(item =>

@@ -1,7 +1,6 @@
 ﻿using LXMusicAccessible.Models;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Audio;
-using System.Windows.Input;
 
 namespace LXMusicAccessible.Services;
 

@@ -543,17 +543,17 @@ public partial class MainWindow : Window
 
     private bool TryExecuteFallbackHotkey(Key key, ModifierKeys modifiers)
     {
-        var hotkey = _settingsWorkflow.MatchFallback(key, modifiers);
+        var hotkey = _settingsWorkflow.MatchFallback((PlatformKey)key, (PlatformModifiers)modifiers);
         if (hotkey is null) return false;
-        if (!IsNumpadOriginHotkey(hotkey.Key)) ExecuteHotkeyAction(hotkey.ActionId);
+        if (!IsNumpadOriginHotkey((Key)hotkey.Key)) ExecuteHotkeyAction(hotkey.ActionId);
         return true;
     }
 
     private bool TryExecuteLocalHotkey(Key key, ModifierKeys modifiers)
     {
-        var hotkey = _settingsWorkflow.MatchLocalHotkey(key, modifiers);
+        var hotkey = _settingsWorkflow.MatchLocalHotkey((PlatformKey)key, (PlatformModifiers)modifiers);
         if (hotkey is null) return false;
-        if (!IsNumpadOriginHotkey(hotkey.Key)) ExecuteHotkeyAction(hotkey.ActionId);
+        if (!IsNumpadOriginHotkey((Key)hotkey.Key)) ExecuteHotkeyAction(hotkey.ActionId);
         return true;
     }
 
@@ -1605,9 +1605,9 @@ public partial class MainWindow : Window
     {
         var mods = Keyboard.Modifiers;
         var effectiveKey = e.Key == Key.System ? e.SystemKey : e.Key;
-        var localHotkey = _settingsWorkflow.MatchLocalHotkey(effectiveKey, mods);
+        var localHotkey = _settingsWorkflow.MatchLocalHotkey((PlatformKey)effectiveKey, (PlatformModifiers)mods);
         if (localHotkey == null) return false;
-        if (!IsNumpadOriginHotkey(localHotkey.Key))
+        if (!IsNumpadOriginHotkey((Key)localHotkey.Key))
             ExecuteHotkeyAction(localHotkey.ActionId);
         return true;
     }
@@ -2699,7 +2699,7 @@ public partial class MainWindow : Window
         if (_settingsInputSuppressed) return;
         // 修复：NumLock 关闭时小键盘 4/6/2/8 会作为方向键上报（NVDA 桌面布局下常见），
         // 全局热键是方向键组合时，若由物理小键盘触发则忽略，避免误触发。
-        if (IsNumpadOriginHotkey(e.Hotkey.Key)) return;
+        if (IsNumpadOriginHotkey((Key)e.Hotkey.Key)) return;
         Dispatcher.BeginInvoke(new Action(() => ExecuteHotkeyAction(e.Hotkey.ActionId)),
             System.Windows.Threading.DispatcherPriority.Input);
     }

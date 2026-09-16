@@ -227,7 +227,7 @@ public class PlaylistImportService : IPlaylistImportService
         Action<string>? announce = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(remotes);
+        FrameworkCompatibility.ThrowIfNull(remotes);
         var results = new List<PlaylistImportResult>(remotes.Count);
         foreach (var remote in remotes)
         {

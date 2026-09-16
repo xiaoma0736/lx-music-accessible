@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Windows.Input;
 using LXMusicAccessible.Models;
 using Microsoft.Extensions.Logging;
 
@@ -9,7 +8,7 @@ internal interface IGlobalHotkeyAdapter
 {
     int LastRegisterError { get; }
 
-    bool Register(IntPtr windowHandle, int id, Key key, ModifierKeys modifiers);
+    bool Register(IntPtr windowHandle, int id, PlatformKey key, PlatformModifiers modifiers);
     bool Unregister(IntPtr windowHandle, int id);
 }
 
@@ -29,14 +28,14 @@ internal sealed class Win32GlobalHotkeyAdapter : IGlobalHotkeyAdapter
 
     public int LastRegisterError { get; private set; }
 
-    public bool Register(IntPtr windowHandle, int id, Key key, ModifierKeys modifiers)
+    public bool Register(IntPtr windowHandle, int id, PlatformKey key, PlatformModifiers modifiers)
     {
         LastRegisterError = 0;
         var registered = RegisterHotKey(
             windowHandle,
             id,
             ToFlags(modifiers) | ModNoRepeat,
-            (uint)KeyInterop.VirtualKeyFromKey(key));
+            (uint)key);
         if (!registered)
             LastRegisterError = Marshal.GetLastWin32Error();
         return registered;
@@ -44,13 +43,13 @@ internal sealed class Win32GlobalHotkeyAdapter : IGlobalHotkeyAdapter
 
     public bool Unregister(IntPtr windowHandle, int id) => UnregisterHotKey(windowHandle, id);
 
-    private static uint ToFlags(ModifierKeys modifiers)
+    private static uint ToFlags(PlatformModifiers modifiers)
     {
         uint flags = 0;
-        if ((modifiers & ModifierKeys.Alt) != 0) flags |= ModAlt;
-        if ((modifiers & ModifierKeys.Control) != 0) flags |= ModControl;
-        if ((modifiers & ModifierKeys.Shift) != 0) flags |= ModShift;
-        if ((modifiers & ModifierKeys.Windows) != 0) flags |= ModWindows;
+        if ((modifiers & PlatformModifiers.Alt) != 0) flags |= ModAlt;
+        if ((modifiers & PlatformModifiers.Control) != 0) flags |= ModControl;
+        if ((modifiers & PlatformModifiers.Shift) != 0) flags |= ModShift;
+        if ((modifiers & PlatformModifiers.Windows) != 0) flags |= ModWindows;
         return flags;
     }
 }
@@ -141,8 +140,8 @@ internal sealed class HotkeyManagerService
     internal HotkeyApplyResult Replace(
         string actionId,
         bool isGlobal,
-        Key key,
-        ModifierKeys modifiers)
+        PlatformKey key,
+        PlatformModifiers modifiers)
     {
         var candidate = Snapshot().Select(Clone).ToList();
         var target = candidate.FirstOrDefault(item =>
@@ -152,14 +151,14 @@ internal sealed class HotkeyManagerService
 
         if (target.Key == key
             && target.Modifiers == modifiers
-            && target.IsEnabled == (key != Key.None))
+            && target.IsEnabled == (key != PlatformKey.None))
         {
             return Result(HotkeyApplyStatus.Unchanged, candidate);
         }
 
         target.Key = key;
-        target.Modifiers = key == Key.None ? ModifierKeys.None : modifiers;
-        target.IsEnabled = key != Key.None;
+        target.Modifiers = key == PlatformKey.None ? PlatformModifiers.None : modifiers;
+        target.IsEnabled = key != PlatformKey.None;
         return TryApply(candidate);
     }
 
@@ -171,11 +170,11 @@ internal sealed class HotkeyManagerService
         _windowHandle == IntPtr.Zero
         || _registered.Values.Any(item => item.ActionId == actionId && item.IsGlobal);
 
-    internal Hotkey? MatchFallback(Key key, ModifierKeys modifiers)
+    internal Hotkey? MatchFallback(PlatformKey key, PlatformModifiers modifiers)
     {
         foreach (var hotkey in _hotkeys)
         {
-            if (!hotkey.IsEnabled || !hotkey.IsGlobal || hotkey.Key == Key.None) continue;
+            if (!hotkey.IsEnabled || !hotkey.IsGlobal || hotkey.Key == PlatformKey.None) continue;
             if (hotkey.Key != key || hotkey.Modifiers != modifiers) continue;
             if (_registered.Values.Any(item => SameIdentity(item, hotkey))) continue;
             return Clone(hotkey);
@@ -183,7 +182,7 @@ internal sealed class HotkeyManagerService
         return null;
     }
 
-    internal Hotkey? MatchLocal(Key key, ModifierKeys modifiers)
+    internal Hotkey? MatchLocal(PlatformKey key, PlatformModifiers modifiers)
     {
         var match = _hotkeys.FirstOrDefault(item =>
             item.IsEnabled
@@ -253,7 +252,7 @@ internal sealed class HotkeyManagerService
             return HotkeyApplyStatus.RegistrationFailed;
         _registered.Remove(id);
 
-        if (!candidate.IsEnabled || candidate.Key == Key.None)
+        if (!candidate.IsEnabled || candidate.Key == PlatformKey.None)
             return HotkeyApplyStatus.Applied;
 
         if (_native.Register(_windowHandle, id, candidate.Key, candidate.Modifiers))
@@ -342,9 +341,9 @@ internal sealed class HotkeyManagerService
     {
         var invalid = candidate.Where(item =>
             item.IsEnabled
-            && (item.Key == Key.None
+            && (item.Key == PlatformKey.None
                 || IsModifier(item.Key)
-                || (!AllowsNoModifier(item.Key) && item.Modifiers == ModifierKeys.None)
+                || (!AllowsNoModifier(item.Key) && item.Modifiers == PlatformModifiers.None)
                 || IsReserved(item.Key, item.Modifiers)))
             .Select(Clone)
             .ToArray();
@@ -352,7 +351,7 @@ internal sealed class HotkeyManagerService
             return new(HotkeyApplyStatus.Invalid, candidate.Select(Clone).ToArray(), invalid);
 
         var conflicts = candidate
-            .Where(item => item.IsEnabled && item.Key != Key.None)
+            .Where(item => item.IsEnabled && item.Key != PlatformKey.None)
             .GroupBy(item => (item.Key, item.Modifiers))
             .Where(group => group.Count() > 1)
             .SelectMany(group => group)
@@ -377,8 +376,8 @@ internal sealed class HotkeyManagerService
             {
                 if (IsBindingUsed(result.Concat(provided), fallback))
                 {
-                    fallback.Key = Key.None;
-                    fallback.Modifiers = ModifierKeys.None;
+                    fallback.Key = PlatformKey.None;
+                    fallback.Modifiers = PlatformModifiers.None;
                     fallback.IsEnabled = false;
                 }
                 result.Add(fallback);
@@ -393,55 +392,55 @@ internal sealed class HotkeyManagerService
         foreach (var hotkey in result.Where(item => !item.IsGlobal))
         {
             if (hotkey.ActionId == HotkeyActions.Forward
-                && hotkey.Key == Key.F7
-                && hotkey.Modifiers == ModifierKeys.None)
-                hotkey.Key = Key.F8;
+                && hotkey.Key == PlatformKey.F7
+                && hotkey.Modifiers == PlatformModifiers.None)
+                hotkey.Key = PlatformKey.F8;
             else if (hotkey.ActionId == HotkeyActions.Rewind
-                     && hotkey.Key == Key.F8
-                     && hotkey.Modifiers == ModifierKeys.None)
-                hotkey.Key = Key.F7;
+                     && hotkey.Key == PlatformKey.F8
+                     && hotkey.Modifiers == PlatformModifiers.None)
+                hotkey.Key = PlatformKey.F7;
         }
         return result;
     }
 
     private static List<Hotkey> BuildDefaults()
     {
-        var globals = new (string Id, string Name, Key Key, ModifierKeys Modifiers)[]
+        var globals = new (string Id, string Name, PlatformKey Key, PlatformModifiers Modifiers)[]
         {
-            (HotkeyActions.PlayPause, "播放/暂停", Key.Home, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.Stop, "停止", Key.End, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.Previous, "上一首", Key.PageUp, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.Next, "下一首", Key.PageDown, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.Rewind, "快退", Key.Left, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.Forward, "快进", Key.Right, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.TogglePlayMode, "播放模式", Key.None, ModifierKeys.None),
-            (HotkeyActions.Download, "下载", Key.None, ModifierKeys.None),
-            (HotkeyActions.VolumeUp, "音量加", Key.Up, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.VolumeDown, "音量减", Key.Down, ModifierKeys.Control | ModifierKeys.Alt),
-            (HotkeyActions.SwitchNextOutputDevice, "下一个播放设备", Key.None, ModifierKeys.None),
-            (HotkeyActions.SwitchPreviousOutputDevice, "上一个播放设备", Key.None, ModifierKeys.None),
-            (HotkeyActions.LyricDelay, "歌词延后", Key.None, ModifierKeys.None),
-            (HotkeyActions.LyricAdvance, "歌词提前", Key.None, ModifierKeys.None),
-            (HotkeyActions.ToggleWindow, "隐藏/显示窗口", Key.None, ModifierKeys.None)
+            (HotkeyActions.PlayPause, "播放/暂停", PlatformKey.Home, PlatformModifiers.Control | PlatformModifiers.Alt),
+            (HotkeyActions.Stop, "停止", PlatformKey.End, PlatformModifiers.Control | PlatformModifiers.Alt),
+            (HotkeyActions.Previous, "上一首", PlatformKey.PageUp, PlatformModifiers.Control | PlatformModifiers.Alt),
+            (HotkeyActions.Next, "下一首", PlatformKey.PageDown, PlatformModifiers.Control | PlatformModifiers.Alt),
+            (HotkeyActions.Rewind, "快退", PlatformKey.Left, PlatformModifiers.Control | PlatformModifiers.Alt),
+            (HotkeyActions.Forward, "快进", PlatformKey.Right, PlatformModifiers.Control | PlatformModifiers.Alt),
+            (HotkeyActions.TogglePlayMode, "播放模式", PlatformKey.None, PlatformModifiers.None),
+            (HotkeyActions.Download, "下载", PlatformKey.None, PlatformModifiers.None),
+            (HotkeyActions.VolumeUp, "音量加", PlatformKey.Up, PlatformModifiers.Control | PlatformModifiers.Alt),
+            (HotkeyActions.VolumeDown, "音量减", PlatformKey.Down, PlatformModifiers.Control | PlatformModifiers.Alt),
+            (HotkeyActions.SwitchNextOutputDevice, "下一个播放设备", PlatformKey.None, PlatformModifiers.None),
+            (HotkeyActions.SwitchPreviousOutputDevice, "上一个播放设备", PlatformKey.None, PlatformModifiers.None),
+            (HotkeyActions.LyricDelay, "歌词延后", PlatformKey.None, PlatformModifiers.None),
+            (HotkeyActions.LyricAdvance, "歌词提前", PlatformKey.None, PlatformModifiers.None),
+            (HotkeyActions.ToggleWindow, "隐藏/显示窗口", PlatformKey.None, PlatformModifiers.None)
         };
-        var locals = new (string Id, string Name, Key Key, ModifierKeys Modifiers)[]
+        var locals = new (string Id, string Name, PlatformKey Key, PlatformModifiers Modifiers)[]
         {
-            (HotkeyActions.PlayPause, "播放/暂停", Key.F5, ModifierKeys.None),
-            (HotkeyActions.Stop, "停止", Key.F6, ModifierKeys.None),
-            (HotkeyActions.Previous, "上一首", Key.F3, ModifierKeys.None),
-            (HotkeyActions.Next, "下一首", Key.F4, ModifierKeys.None),
-            (HotkeyActions.Rewind, "快退", Key.F7, ModifierKeys.None),
-            (HotkeyActions.Forward, "快进", Key.F8, ModifierKeys.None),
-            (HotkeyActions.VolumeDown, "音量减", Key.F9, ModifierKeys.None),
-            (HotkeyActions.VolumeUp, "音量加", Key.F10, ModifierKeys.None),
-            (HotkeyActions.SwitchPreviousOutputDevice, "上一个播放设备", Key.F11, ModifierKeys.None),
-            (HotkeyActions.SwitchNextOutputDevice, "下一个播放设备", Key.F12, ModifierKeys.None),
-            (HotkeyActions.LyricDelay, "歌词延后", Key.F7, ModifierKeys.Shift),
-            (HotkeyActions.LyricAdvance, "歌词提前", Key.F8, ModifierKeys.Shift),
-            (HotkeyActions.TogglePlayMode, "播放模式", Key.F1, ModifierKeys.None),
-            (HotkeyActions.Download, "下载", Key.F2, ModifierKeys.None),
-            (HotkeyActions.ToggleVoiceAnnouncement, "语音朗读提示开关", Key.F5, ModifierKeys.Shift),
-            (HotkeyActions.ToggleLyricAnnouncement, "语音朗读歌词开关", Key.F6, ModifierKeys.Shift)
+            (HotkeyActions.PlayPause, "播放/暂停", PlatformKey.F5, PlatformModifiers.None),
+            (HotkeyActions.Stop, "停止", PlatformKey.F6, PlatformModifiers.None),
+            (HotkeyActions.Previous, "上一首", PlatformKey.F3, PlatformModifiers.None),
+            (HotkeyActions.Next, "下一首", PlatformKey.F4, PlatformModifiers.None),
+            (HotkeyActions.Rewind, "快退", PlatformKey.F7, PlatformModifiers.None),
+            (HotkeyActions.Forward, "快进", PlatformKey.F8, PlatformModifiers.None),
+            (HotkeyActions.VolumeDown, "音量减", PlatformKey.F9, PlatformModifiers.None),
+            (HotkeyActions.VolumeUp, "音量加", PlatformKey.F10, PlatformModifiers.None),
+            (HotkeyActions.SwitchPreviousOutputDevice, "上一个播放设备", PlatformKey.F11, PlatformModifiers.None),
+            (HotkeyActions.SwitchNextOutputDevice, "下一个播放设备", PlatformKey.F12, PlatformModifiers.None),
+            (HotkeyActions.LyricDelay, "歌词延后", PlatformKey.F7, PlatformModifiers.Shift),
+            (HotkeyActions.LyricAdvance, "歌词提前", PlatformKey.F8, PlatformModifiers.Shift),
+            (HotkeyActions.TogglePlayMode, "播放模式", PlatformKey.F1, PlatformModifiers.None),
+            (HotkeyActions.Download, "下载", PlatformKey.F2, PlatformModifiers.None),
+            (HotkeyActions.ToggleVoiceAnnouncement, "语音朗读提示开关", PlatformKey.F5, PlatformModifiers.Shift),
+            (HotkeyActions.ToggleLyricAnnouncement, "语音朗读歌词开关", PlatformKey.F6, PlatformModifiers.Shift)
         };
         return globals.Select(item => New(item, true))
             .Concat(locals.Select(item => New(item, false)))
@@ -450,12 +449,12 @@ internal sealed class HotkeyManagerService
 
     private static bool IsBindingUsed(IEnumerable<Hotkey> hotkeys, Hotkey candidate) =>
         hotkeys.Any(item => item.IsEnabled
-            && item.Key != Key.None
+            && item.Key != PlatformKey.None
             && item.Key == candidate.Key
             && item.Modifiers == candidate.Modifiers);
 
     private static Hotkey New(
-        (string Id, string Name, Key Key, ModifierKeys Modifiers) item,
+        (string Id, string Name, PlatformKey Key, PlatformModifiers Modifiers) item,
         bool global) => new()
     {
         Id = item.Id,
@@ -464,7 +463,7 @@ internal sealed class HotkeyManagerService
         Key = item.Key,
         Modifiers = item.Modifiers,
         IsGlobal = global,
-        IsEnabled = item.Key != Key.None
+        IsEnabled = item.Key != PlatformKey.None
     };
 
     private static IEnumerable<(Hotkey Hotkey, int Id)> EnabledGlobals(
@@ -472,11 +471,11 @@ internal sealed class HotkeyManagerService
         hotkeys.Select((hotkey, id) => (hotkey, id))
             .Where(item => item.hotkey.IsGlobal
                            && item.hotkey.IsEnabled
-                           && item.hotkey.Key != Key.None);
+                           && item.hotkey.Key != PlatformKey.None);
 
     private static bool SameBindings(IReadOnlyList<Hotkey> left, IReadOnlyList<Hotkey> right) =>
         left.Count == right.Count
-        && left.Zip(right).All(pair => SameBinding(pair.First, pair.Second));
+        && left.Zip(right, (first, second) => (first, second)).All(pair => SameBinding(pair.first, pair.second));
 
     private static bool SameBinding(Hotkey left, Hotkey right) =>
         SameIdentity(left, right)
@@ -487,21 +486,21 @@ internal sealed class HotkeyManagerService
     private static bool SameIdentity(Hotkey left, Hotkey right) =>
         left.ActionId == right.ActionId && left.IsGlobal == right.IsGlobal;
 
-    private static bool AllowsNoModifier(Key key) =>
-        key is >= Key.F1 and <= Key.F12
-            or Key.MediaPlayPause
-            or Key.MediaStop
-            or Key.MediaNextTrack
-            or Key.MediaPreviousTrack;
+    private static bool AllowsNoModifier(PlatformKey key) =>
+        key is >= PlatformKey.F1 and <= PlatformKey.F12
+            or PlatformKey.MediaPlayPause
+            or PlatformKey.MediaStop
+            or PlatformKey.MediaNextTrack
+            or PlatformKey.MediaPreviousTrack;
 
-    private static bool IsModifier(Key key) =>
-        key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl
-            or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin;
+    private static bool IsModifier(PlatformKey key) =>
+        key is PlatformKey.LeftShift or PlatformKey.RightShift or PlatformKey.LeftCtrl or PlatformKey.RightCtrl
+            or PlatformKey.LeftAlt or PlatformKey.RightAlt or PlatformKey.LWin or PlatformKey.RWin;
 
-    private static bool IsReserved(Key key, ModifierKeys modifiers) =>
-        modifiers == ModifierKeys.Control && key is >= Key.D1 and <= Key.D8
-        || modifiers == ModifierKeys.Control && key is Key.F or Key.R
-        || modifiers == ModifierKeys.Alt && key is Key.M or Key.C or Key.L or Key.S or Key.R;
+    private static bool IsReserved(PlatformKey key, PlatformModifiers modifiers) =>
+        modifiers == PlatformModifiers.Control && key is >= PlatformKey.D1 and <= PlatformKey.D8
+        || modifiers == PlatformModifiers.Control && key is PlatformKey.F or PlatformKey.R
+        || modifiers == PlatformModifiers.Alt && key is PlatformKey.M or PlatformKey.C or PlatformKey.L or PlatformKey.S or PlatformKey.R;
 
     private static Hotkey Clone(Hotkey hotkey) => new()
     {

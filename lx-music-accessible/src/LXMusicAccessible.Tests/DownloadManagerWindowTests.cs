@@ -45,7 +45,7 @@ public sealed class DownloadManagerWindowTests
     [Fact]
     public async Task Empty_task_list_is_the_initial_focus_and_exposes_a_concise_empty_state()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var factory = app.Services.GetRequiredService<ApplicationWindowFactory>();
 
         await RunOnStaThreadAsync(() =>
@@ -77,7 +77,7 @@ public sealed class DownloadManagerWindowTests
     [Fact]
     public async Task Closing_keeps_tasks_while_explicit_commands_use_current_settings_and_clear_only_terminal_tasks()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var settings = app.Services.GetRequiredService<SettingsWorkflow>();
         await settings.LoadAsync(IntPtr.Zero);
         settings.Edit(value => value.DownloadPath = @"C:\Music");
@@ -145,7 +145,7 @@ public sealed class DownloadManagerWindowTests
     [Fact]
     public async Task Playback_hotkeys_are_delegated_but_editable_text_suppresses_them()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var factory = app.Services.GetRequiredService<ApplicationWindowFactory>();
         var routed = 0;
 
@@ -195,14 +195,14 @@ public sealed class DownloadManagerWindowTests
 
     private static Task RunOnStaThreadAsync(Action action)
     {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             Exception? failure = null;
             try { action(); }
             catch (Exception exception) { failure = exception; }
             finally { Dispatcher.CurrentDispatcher.InvokeShutdown(); }
-            if (failure is null) completion.SetResult();
+            if (failure is null) completion.SetResult(null);
             else completion.SetException(failure);
         });
         thread.SetApartmentState(ApartmentState.STA);

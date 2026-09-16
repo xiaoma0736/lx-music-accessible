@@ -49,8 +49,8 @@ public static class InstallDirectoryOwnership
 
     public static string ResolveTargetDirectory(string parentDirectory)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(parentDirectory);
-        if (!Path.IsPathFullyQualified(parentDirectory))
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(parentDirectory);
+        if (!FrameworkCompatibility.IsPathFullyQualified(parentDirectory))
             throw new InvalidOperationException("The install parent must be an absolute path.");
 
         var parent = Normalize(parentDirectory);
@@ -67,7 +67,7 @@ public static class InstallDirectoryOwnership
 
     public static OwnedInstallDirectory InstallFromZip(Stream payload, string parentDirectory)
     {
-        ArgumentNullException.ThrowIfNull(payload);
+        FrameworkCompatibility.ThrowIfNull(payload);
         var target = ResolveTargetDirectory(parentDirectory);
         var targetExisted = Directory.Exists(target);
         OwnedInstallDirectory? previous = null;
@@ -170,7 +170,7 @@ public static class InstallDirectoryOwnership
         ownedDirectory = default!;
         try
         {
-            if (!Path.IsPathFullyQualified(directory)) return false;
+            if (!FrameworkCompatibility.IsPathFullyQualified(directory)) return false;
             var target = Normalize(directory);
             if (ValidateTarget(target) != InstallDirectoryRefusal.None) return false;
 
@@ -228,7 +228,7 @@ public static class InstallDirectoryOwnership
         string target;
         try
         {
-            if (!Path.IsPathFullyQualified(directory))
+            if (!FrameworkCompatibility.IsPathFullyQualified(directory))
                 return Refused(InstallDirectoryRefusal.ProtectedPath);
             target = Normalize(directory);
         }
@@ -303,7 +303,7 @@ public static class InstallDirectoryOwnership
     {
         try
         {
-            if (!Path.IsPathFullyQualified(directory)) return InstallDirectoryRefusal.ProtectedPath;
+            if (!FrameworkCompatibility.IsPathFullyQualified(directory)) return InstallDirectoryRefusal.ProtectedPath;
             return ValidateTarget(Normalize(directory));
         }
         catch (Exception ex) when (IsFileSystemOrFormatException(ex))
@@ -366,7 +366,7 @@ public static class InstallDirectoryOwnership
     {
         var normalized = path.Replace('/', Path.DirectorySeparatorChar);
         if (string.IsNullOrWhiteSpace(normalized)
-            || Path.IsPathFullyQualified(normalized)
+            || FrameworkCompatibility.IsPathFullyQualified(normalized)
             || normalized.Split(Path.DirectorySeparatorChar).Any(part => part is "" or "." or ".."))
         {
             throw new InvalidDataException($"Unsafe payload path: {path}");
@@ -409,7 +409,7 @@ public static class InstallDirectoryOwnership
     private static string Sha256(string path)
     {
         using var stream = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        return FrameworkCompatibility.ToHexString(FrameworkCompatibility.HashData(stream)).ToLowerInvariant();
     }
 
     private static void DeleteObsoleteKnownFiles(
@@ -474,7 +474,7 @@ public static class InstallDirectoryOwnership
             }
             catch (Exception ex) when (IsFileSystemOrFormatException(ex))
             {
-                failures?.Add($"{Path.GetRelativePath(target, directory!)}: {ex.GetType().Name}");
+                failures?.Add($"{FrameworkCompatibility.GetRelativePath(target, directory!)}: {ex.GetType().Name}");
             }
         }
     }
@@ -501,7 +501,7 @@ public static class InstallDirectoryOwnership
         try
         {
             WriteJsonNew(temporary, value);
-            File.Move(temporary, path, overwrite: true);
+            FrameworkCompatibility.Move(temporary, path, true);
         }
         finally
         {
@@ -536,7 +536,7 @@ public static class InstallDirectoryOwnership
 
     private static string Normalize(string path)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(path);
         var fullPath = Path.GetFullPath(path);
         var root = Path.GetPathRoot(fullPath);
         return string.Equals(fullPath, root, PathComparison) ? fullPath : TrimEnd(fullPath);
@@ -547,7 +547,7 @@ public static class InstallDirectoryOwnership
 
     private static bool IsAncestor(string possibleAncestor, string path)
     {
-        var relative = Path.GetRelativePath(TrimEnd(possibleAncestor), TrimEnd(path));
+        var relative = FrameworkCompatibility.GetRelativePath(TrimEnd(possibleAncestor), TrimEnd(path));
         return relative != "."
             && !relative.StartsWith(".." + Path.DirectorySeparatorChar, PathComparison)
             && !string.Equals(relative, "..", PathComparison)
@@ -555,10 +555,10 @@ public static class InstallDirectoryOwnership
     }
 
     private static StringComparison PathComparison =>
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        FrameworkCompatibility.IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     private static StringComparer PathComparer =>
-        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        FrameworkCompatibility.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
     private static InstallCleanupResult Accepted() =>
         new(true, InstallDirectoryRefusal.None, Array.Empty<string>(), false);

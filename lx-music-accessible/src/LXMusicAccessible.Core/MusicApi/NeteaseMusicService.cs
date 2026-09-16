@@ -537,7 +537,7 @@ public class NeteaseMusicService : IMusicApi
         var lines = new List<LyricLine>();
         var tMap = ParseTranslateLrc(tLrc);
 
-        foreach (var line in lrc.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var line in lrc.SplitTrimmed('\n'))
         {
             var m = System.Text.RegularExpressions.Regex.Match(line.Trim(), @"^\[(\d{2}):(\d{2})(?:\.(\d+))?\](.*)");
             if (!m.Success) continue;
@@ -559,7 +559,7 @@ public class NeteaseMusicService : IMusicApi
     {
         var map = new Dictionary<int, string>();
         if (string.IsNullOrWhiteSpace(tLrc)) return map;
-        foreach (var line in tLrc.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var line in tLrc.SplitTrimmed('\n'))
         {
             var m = System.Text.RegularExpressions.Regex.Match(line.Trim(), @"^\[(\d{2}):(\d{2})(?:\.(\d+))?\](.*)");
             if (m.Success)

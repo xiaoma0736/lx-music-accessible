@@ -19,7 +19,7 @@ public sealed class MusicPlayerBackgroundTests
     {
         var endpoint = new ContendedRemoteEndpoint(TimeSpan.FromMilliseconds(300));
         var sources = new ContendedPlaybackSources(endpoint);
-        await using var fixture = new PlayerFixture(sources: sources);
+        using var fixture = new PlayerFixture(sources: sources);
         using var lyrics = new LyricsWorkflow(
             NullLogger<LyricsWorkflow>.Instance,
             endpoint,
@@ -45,7 +45,7 @@ public sealed class MusicPlayerBackgroundTests
     [Fact]
     public async Task Sequential_previous_next_and_natural_end_are_observable_through_the_public_seam()
     {
-        await using var fixture = new PlayerFixture();
+        using var fixture = new PlayerFixture();
         var songs = new[] { LocalSong("a"), LocalSong("b"), LocalSong("c") };
         var completed = new List<PlaybackQueueOrigin>();
         fixture.Player.QueueCompleted += (_, args) => completed.Add(args.Origin);
@@ -65,7 +65,7 @@ public sealed class MusicPlayerBackgroundTests
     [Fact]
     public async Task List_loop_wraps_both_directions()
     {
-        await using var fixture = new PlayerFixture();
+        using var fixture = new PlayerFixture();
         var songs = new[] { LocalSong("a"), LocalSong("b") };
         fixture.Player.Mode = PlayMode.Loop;
         await fixture.Player.PlayAsync(new(songs, songs[1]));
@@ -77,7 +77,7 @@ public sealed class MusicPlayerBackgroundTests
     [Fact]
     public async Task Single_loop_replays_current_song_on_natural_end()
     {
-        await using var fixture = new PlayerFixture();
+        using var fixture = new PlayerFixture();
         var songs = new[] { LocalSong("a"), LocalSong("b") };
         fixture.Player.Mode = PlayMode.SingleLoop;
         await fixture.Player.PlayAsync(new(songs, songs[0]));
@@ -92,7 +92,7 @@ public sealed class MusicPlayerBackgroundTests
     [Fact]
     public async Task Shuffle_uses_the_controlled_random_adapter()
     {
-        await using var fixture = new PlayerFixture(random: new FixedRandom(2));
+        using var fixture = new PlayerFixture(random: new FixedRandom(2));
         var songs = new[] { LocalSong("a"), LocalSong("b"), LocalSong("c") };
         fixture.Player.Mode = PlayMode.Shuffle;
         await fixture.Player.PlayAsync(new(songs, songs[0]));
@@ -110,7 +110,7 @@ public sealed class MusicPlayerBackgroundTests
         requested.PlayUrl = "bad-a";
         sources.AddAlternative("b", NetworkSong("match-b", "b"), "bad-b");
         sources.AddAlternative("c", NetworkSong("match-c", "c"), "good-c");
-        await using var fixture = new PlayerFixture(sources: sources);
+        using var fixture = new PlayerFixture(sources: sources);
         fixture.Audio.FailingUrls.UnionWith(["bad-a", "bad-b"]);
 
         var result = await fixture.Player.PlayAsync(new(
@@ -122,7 +122,7 @@ public sealed class MusicPlayerBackgroundTests
         Assert.Equal("c", result.Music?.Source);
         Assert.Equal("bad-a", fixture.Audio.LoadedUrls[0]);
         Assert.Equal("good-c", fixture.Audio.LoadedUrls[^1]);
-        Assert.Equal(new[] { "b", "c" }, sources.SearchedSources.Order());
+        Assert.Equal(new[] { "b", "c" }, sources.SearchedSources.OrderBy(item => item));
         Assert.NotEmpty(sources.ResolvedQualities);
         Assert.Equal("320k", sources.ResolvedQualities.First());
         Assert.All(sources.ResolvedQualities.Skip(1), quality => Assert.Equal("128k", quality));
@@ -137,7 +137,7 @@ public sealed class MusicPlayerBackgroundTests
             ["b", "c", "d"],
             TimeSpan.FromMilliseconds(20),
             playableSource: "a");
-        await using var fixture = new PlayerFixture(sources: sources);
+        using var fixture = new PlayerFixture(sources: sources);
         var requested = NetworkSong("preferred", "a");
 
         var result = await fixture.Player.PlayAsync(new([requested], requested));
@@ -155,7 +155,7 @@ public sealed class MusicPlayerBackgroundTests
             ["b", "c", "d", "e", "f"],
             TimeSpan.FromMilliseconds(60),
             playableSource: "c");
-        await using var fixture = new PlayerFixture(sources: sources);
+        using var fixture = new PlayerFixture(sources: sources);
         var requested = NetworkSong("original", "a");
 
         var result = await fixture.Player.PlayAsync(new([requested], requested));
@@ -174,7 +174,7 @@ public sealed class MusicPlayerBackgroundTests
             ["b", "c", "d", "e", "f"],
             TimeSpan.FromMilliseconds(60),
             playableSource: null);
-        await using var fixture = new PlayerFixture(sources: sources);
+        using var fixture = new PlayerFixture(sources: sources);
         var requested = NetworkSong("original", "a");
         var timer = Stopwatch.StartNew();
 
@@ -195,12 +195,12 @@ public sealed class MusicPlayerBackgroundTests
         var requested = NetworkSong("original", "a");
         foreach (var sourceId in sourceIds)
             sources.AddAlternative(sourceId, NetworkSong($"match-{sourceId}", sourceId), null);
-        await using var fixture = new PlayerFixture(sources: sources);
+        using var fixture = new PlayerFixture(sources: sources);
 
         var result = await fixture.Player.PlayAsync(new([requested], requested));
 
         Assert.Equal(PlaybackResultStatus.Failed, result.Status);
-        Assert.Equal(sourceIds.Take(5).Order(), sources.SearchedSources.Order());
+        Assert.Equal(sourceIds.Take(5).OrderBy(item => item), sources.SearchedSources.OrderBy(item => item));
         var error = Assert.Single(fixture.Announcer.Announcements, item =>
             item.Kind == AnnouncementKind.Error);
         Assert.Contains("已尝试所有可用音源", error.Text);
@@ -209,7 +209,7 @@ public sealed class MusicPlayerBackgroundTests
     [Fact]
     public async Task New_queue_cancels_old_generation_before_it_can_publish_or_advance()
     {
-        await using var fixture = new PlayerFixture(blockedUrl: "old");
+        using var fixture = new PlayerFixture(blockedUrl: "old");
         var oldMusic = LocalSong("old");
         var newMusic = LocalSong("new");
         var oldPlay = fixture.Player.PlayAsync(new([oldMusic], oldMusic));
@@ -230,7 +230,7 @@ public sealed class MusicPlayerBackgroundTests
     {
         var content = new BlockingContent();
         using var http = new HttpClient(new SingleResponseHandler(content));
-        await using var fixture = new PlayerFixture(httpClient: http);
+        using var fixture = new PlayerFixture(httpClient: http);
         var current = LocalSong("current");
         var next = NetworkSong("next", "fixture");
         next.PlayUrl = "https://fixture.invalid/next.mp3";
@@ -269,7 +269,7 @@ public sealed class MusicPlayerBackgroundTests
     private sealed class PlayerFixture : IAsyncDisposable
     {
         private readonly string _directory =
-            Directory.CreateTempSubdirectory("LXMusicAccessible.Player-").FullName;
+            Path.Combine(Path.GetTempPath(), "LXMusicAccessible.Player-" + Guid.NewGuid().ToString("N"));
         private readonly HttpClient _httpClient;
         private readonly MusicPlayerService _implementation;
 
@@ -451,7 +451,7 @@ public sealed class MusicPlayerBackgroundTests
     private sealed class ControlledAudioPlayer(string? blockedUrl = null) : IAudioPlayer
     {
         private readonly Stopwatch _timer = Stopwatch.StartNew();
-        public TaskCompletionSource BlockedLoadStarted { get; } =
+        public TaskCompletionSource<object?> BlockedLoadStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public List<string> LoadedUrls { get; } = [];
         public HashSet<string> FailingUrls { get; } = new(StringComparer.Ordinal);
@@ -470,7 +470,7 @@ public sealed class MusicPlayerBackgroundTests
             LoadedUrls.Add(url);
             if (FailingUrls.Contains(url)) throw new InvalidOperationException("fixture failure");
             if (!string.Equals(url, blockedUrl, StringComparison.Ordinal)) return;
-            BlockedLoadStarted.TrySetResult();
+            BlockedLoadStarted.TrySetResult(null);
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
 
@@ -514,22 +514,16 @@ public sealed class MusicPlayerBackgroundTests
     private sealed class BlockingContent : HttpContent
     {
         private int _disposed;
-        public TaskCompletionSource ReadStarted { get; } =
+        public TaskCompletionSource<object?> ReadStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int DisposeCount { get; private set; }
 
-        protected override Task SerializeToStreamAsync(
-            Stream stream,
-            TransportContext? context) =>
-            SerializeToStreamAsync(stream, context, CancellationToken.None);
-
         protected override async Task SerializeToStreamAsync(
             Stream stream,
-            TransportContext? context,
-            CancellationToken cancellationToken)
+            TransportContext? context)
         {
-            ReadStarted.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            ReadStarted.TrySetResult(null);
+            await Task.Delay(Timeout.InfiniteTimeSpan);
         }
 
         protected override bool TryComputeLength(out long length)

@@ -22,7 +22,7 @@ public sealed class RoutingTtsService : ITtsService, IDisposable
     private string _voiceId = "";
     private double _rate = 1.0;
 
-    private long _lastNvdaCheckTick; // Environment.TickCount64, ms
+    private long _lastNvdaCheckTick; // FrameworkCompatibility.CurrentTickMs, ms
     private bool _lastNvdaState;
     private const long NvdaRecheckIntervalMs = 10000;
 
@@ -99,7 +99,7 @@ public sealed class RoutingTtsService : ITtsService, IDisposable
     /// <summary>NVDA 运行状态（带 10 秒缓存，避免每次朗读都探测命名管道）</summary>
     private bool IsNvdaActive()
     {
-        var now = Environment.TickCount64;
+        var now = FrameworkCompatibility.CurrentTickMs;
         if (now - _lastNvdaCheckTick >= NvdaRecheckIntervalMs)
         {
             _lastNvdaState = ScreenReaderDetector.IsNvdaRunning();
@@ -110,7 +110,7 @@ public sealed class RoutingTtsService : ITtsService, IDisposable
 
     public void SetRate(double rate)
     {
-        _rate = Math.Clamp(rate, 0.5, 1.5);
+        _rate = FrameworkCompatibility.Clamp(rate, 0.5, 1.5);
         _sapi.SetRate(_rate);
         _activeBackend?.SetRate(_rate);
     }

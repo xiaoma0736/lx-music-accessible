@@ -7,7 +7,7 @@ namespace LXMusicAccessible.Services;
 /// cancel, wait, or stop work; task observation, generations, and CTS disposal
 /// remain inside this module.
 /// </summary>
-public sealed class BackgroundWorkHost : IAsyncDisposable
+public sealed class BackgroundWorkHost : IAsyncDisposable, IDisposable
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, WorkItem> _current = new(StringComparer.Ordinal);
@@ -68,6 +68,9 @@ public sealed class BackgroundWorkHost : IAsyncDisposable
         return stopTask.WaitAsync(cancellationToken);
     }
 
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+
     public async ValueTask DisposeAsync()
     {
         await StopAsync();
@@ -76,7 +79,7 @@ public sealed class BackgroundWorkHost : IAsyncDisposable
 
     internal bool TryCommit(WorkItem item, Action commit)
     {
-        ArgumentNullException.ThrowIfNull(commit);
+        FrameworkCompatibility.ThrowIfNull(commit);
         lock (_gate)
         {
             if (_stopping
@@ -94,13 +97,13 @@ public sealed class BackgroundWorkHost : IAsyncDisposable
 
     private Task StartCore(string slot, Func<BackgroundWorkContext, Task> operation)
     {
-        ArgumentNullException.ThrowIfNull(operation);
+        FrameworkCompatibility.ThrowIfNull(operation);
         slot = ValidateSlot(slot);
 
         WorkItem item;
         lock (_gate)
         {
-            ObjectDisposedException.ThrowIf(_stopping, this);
+            if (_stopping) throw new ObjectDisposedException(nameof(BackgroundWorkHost));
             _current.TryGetValue(slot, out var previous);
             previous?.Cancel();
             item = new WorkItem(slot, previous?.Completion.Task ?? Task.CompletedTask);
@@ -145,13 +148,13 @@ public sealed class BackgroundWorkHost : IAsyncDisposable
                 }
             }
             item.DisposeOnce();
-            item.Completion.TrySetResult();
+            item.Completion.TrySetResult(null);
         }
     }
 
     private static string ValidateSlot(string slot)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(slot);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(slot);
         return slot;
     }
 
@@ -163,7 +166,7 @@ public sealed class BackgroundWorkHost : IAsyncDisposable
         internal string Slot { get; } = slot;
         internal CancellationToken Token => _cancellation.Token;
         internal Task Predecessor { get; } = predecessor;
-        internal TaskCompletionSource Completion { get; } =
+        internal TaskCompletionSource<object?> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal Task? ObservedTask { get; set; }
 

@@ -12,7 +12,7 @@ public sealed class SystemProcessLauncher : IProcessLauncher
 {
     public void Start(ProcessStartInfo startInfo)
     {
-        ArgumentNullException.ThrowIfNull(startInfo);
+        FrameworkCompatibility.ThrowIfNull(startInfo);
         Process.Start(startInfo);
     }
 }

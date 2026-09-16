@@ -40,7 +40,7 @@ public sealed class ZdsrSpeechService : ITtsService, IDisposable
                 _logger.LogWarning("争渡读屏 DLL 未找到，ZDSR 后端不可用");
                 return;
             }
-            _lib = NativeLibrary.Load(dllPath);
+            _lib = LoadLibrary(dllPath);
             _initTts = GetProc<InitTtsDelegate>("InitTTS");
             _speak = GetProc<SpeakDelegate>("Speak");
             _getSpeakState = GetProc<GetSpeakStateDelegate>("GetSpeakState");
@@ -97,7 +97,7 @@ public sealed class ZdsrSpeechService : ITtsService, IDisposable
     public void SetRate(double rate)
     {
         // 争渡读屏语速由读屏自身控制，本接口暂不支持；仅记录
-        _rate = Math.Clamp(rate, 0.5, 1.5);
+        _rate = FrameworkCompatibility.Clamp(rate, 0.5, 1.5);
     }
 
     public void SetVoice(string voiceId)
@@ -108,6 +108,21 @@ public sealed class ZdsrSpeechService : ITtsService, IDisposable
     public List<VoiceInfo> GetAvailableVoices() => new();
 
     /// <summary>定位争渡安装目录下的 ZDSRAPI_x64.dll：默认路径优先，其次扫描注册表 Uninstall 键的 InstallLocation</summary>
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr LoadLibrary(string fileName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool FreeLibrary(IntPtr library);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+    private static extern IntPtr GetProcAddress(IntPtr library, string name);
+
+    private static bool TryGetExport(IntPtr library, string name, out IntPtr address)
+    {
+        address = GetProcAddress(library, name);
+        return address != IntPtr.Zero;
+    }
+
     private static string LocateDll()
     {
         if (File.Exists(DefaultDllPath)) return DefaultDllPath;
@@ -150,14 +165,14 @@ public sealed class ZdsrSpeechService : ITtsService, IDisposable
     private T? GetProc<T>(string name) where T : Delegate
     {
         if (_lib == IntPtr.Zero) return null;
-        return NativeLibrary.TryGetExport(_lib, name, out var ptr) ? Marshal.GetDelegateForFunctionPointer<T>(ptr) : null;
+        return TryGetExport(_lib, name, out var ptr) ? Marshal.GetDelegateForFunctionPointer<T>(ptr) : null;
     }
 
     public void Dispose()
     {
         if (_lib != IntPtr.Zero)
         {
-            NativeLibrary.Free(_lib);
+            FreeLibrary(_lib);
             _lib = IntPtr.Zero;
         }
     }

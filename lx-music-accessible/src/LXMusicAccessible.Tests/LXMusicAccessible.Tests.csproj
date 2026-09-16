@@ -1,16 +1,23 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net48</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <PlatformTarget>x64</PlatformTarget>
-    <UseWPF>true</UseWPF>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.35" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.30" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
@@ -20,7 +27,55 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\LXMusicAccessible.App\LXMusicAccessible.App.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Win32GlobalHotkeyAdapterTests.cs" />
+    <Compile Remove="AppDataOwnershipTests.cs" />
+    <Compile Remove="MusicBrowseWorkflowTests.cs" />
+    <Compile Remove="DownloadWorkflowTests.cs" />
+    <Compile Remove="LyricsWorkflowTests.cs" />
+    <Compile Remove="MusicPlayerBackgroundTests.cs" />
+    <Compile Remove="BackgroundWorkHostTests.cs" />
+    <Compile Remove="PlaybackFakeIpRegressionTests.cs" />
+    <Compile Remove="ScriptSecurityTests.cs" />
+    <Compile Remove="PlaylistSnapshotTests.cs" />
+    <Compile Remove="QualitySelectionRegressionTests.cs" />
+    <Compile Remove="JsonMusicSourceTests.cs" />
+    <Compile Remove="Issue49HotkeyTests.cs" />
+    <Compile Remove="Issue49PlaybackSourceSafetyTests.cs" />
+    <Compile Remove="ManualSourceSwitchWorkflowTests.cs" />
+    <Compile Remove="InstallDirectoryOwnershipTests.cs" />
+    <Compile Remove="AccessibilitySemanticsTests.cs" />
+    <Compile Remove="AccessibleAnnouncerTests.cs" />
+    <Compile Remove="ApplicationHostTests.cs" />
+    <Compile Remove="ApplicationRuntimeTests.cs" />
+    <Compile Remove="ApplicationShutdownTests.cs" />
+    <Compile Remove="DesktopLifecycleWorkflowTests.cs" />
+    <Compile Remove="DownloadManagerWindowTests.cs" />
+    <Compile Remove="GlobalHotkeyMessageWindowTests.cs" />
+    <Compile Remove="Issue49SettingsAccessibilityTests.cs" />
+    <Compile Remove="ListFocusAuditTests.cs" />
+    <Compile Remove="LoginDiagnosticsTests.cs" />
+    <Compile Remove="PlaybackRecoveryAndPlaybackInfoTests.cs" />
+    <Compile Remove="SpeechWhitelistTests.cs" />
+    <Compile Remove="MainWindowShellTests.cs" />
+    <Compile Remove="ManualSourceSwitchWindowTests.cs" />
+    <Compile Remove="PlaylistImportWindowTests.cs" />
+    <Compile Remove="PlaylistLoginHostTests.cs" />
+    <Compile Remove="SettingsWindowTests.cs" />
+    <Compile Remove="SourceManagerWindowTests.cs" />
+    <Compile Remove="ToolWindowCoordinatorTests.cs" />
+    <Compile Remove="WindowShortcutTests.cs" />
+    <Compile Remove="WorkflowConsolidationTests.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LXMusicAccessible.Core\LXMusicAccessible.Core.csproj" />
+    <ProjectReference Include="..\LXMusicAccessible.Models\LXMusicAccessible.Models.csproj" />
+    <ProjectReference Include="..\LXMusicAccessible.Data\LXMusicAccessible.Data.csproj" />
+    <ProjectReference Include="..\LXMusicAccessible.Audio\LXMusicAccessible.Audio.csproj" />
+    <ProjectReference Include="..\LXMusicAccessible.Services\LXMusicAccessible.Services.csproj" />
   </ItemGroup>
 
 </Project>

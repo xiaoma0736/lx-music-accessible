@@ -18,7 +18,7 @@ public sealed class LocalSearchHistoryStore
 
     public LocalSearchHistoryStore(string appDataPath)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(appDataPath);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(appDataPath);
         var directory = Path.GetFullPath(appDataPath);
         Directory.CreateDirectory(directory);
 
@@ -33,15 +33,15 @@ public sealed class LocalSearchHistoryStore
 
     public async Task SaveAsync(IReadOnlyList<SearchHistory> history, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(history);
+        FrameworkCompatibility.ThrowIfNull(history);
         var json = JsonSerializer.Serialize(history, _jsonOptions);
-        await File.WriteAllTextAsync(_historyFilePath, json, cancellationToken);
+        await Task.Run(() => File.WriteAllText(_historyFilePath, json), cancellationToken);
     }
 
     public async Task<IReadOnlyList<SearchHistory>> LoadAsync(CancellationToken cancellationToken = default)
     {
         if (!File.Exists(_historyFilePath)) return [];
-        var json = await File.ReadAllTextAsync(_historyFilePath, cancellationToken);
+        var json = await Task.Run(() => File.ReadAllText(_historyFilePath), cancellationToken);
         return JsonSerializer.Deserialize<List<SearchHistory>>(json, _jsonOptions) ?? [];
     }
 

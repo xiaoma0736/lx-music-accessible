@@ -195,7 +195,7 @@ public sealed class AccessibleAnnouncerTests
     [Fact]
     public async Task Recording_adapter_observes_public_guide_workflow_through_the_host_seam()
     {
-        await using var app = await Infrastructure.TestApplicationHost.StartAsync();
+        using var app = await Infrastructure.TestApplicationHost.StartAsync();
 
         await RunOnStaThreadAsync(() =>
         {
@@ -228,10 +228,10 @@ public sealed class AccessibleAnnouncerTests
 
     private static Task RunOnStaThreadAsync(Action action)
     {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
-            try { action(); completion.SetResult(); }
+            try { action(); completion.SetResult(null); }
             catch (Exception exception) { completion.SetException(exception); }
         });
         thread.SetApartmentState(ApartmentState.STA);

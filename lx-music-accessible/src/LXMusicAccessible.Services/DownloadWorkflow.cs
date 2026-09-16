@@ -183,7 +183,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
 
     public void ApplyPreferences(DownloadPreferences preferences)
     {
-        ArgumentNullException.ThrowIfNull(preferences);
+        FrameworkCompatibility.ThrowIfNull(preferences);
         lock (_gate) _preferences = preferences;
     }
 
@@ -191,9 +191,9 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         DownloadRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.Music);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        FrameworkCompatibility.ThrowIfNull(request);
+        FrameworkCompatibility.ThrowIfNull(request.Music);
+        if (_disposed) throw new ObjectDisposedException(nameof(DownloadWorkflow));
 
         var task = new DownloadTask
         {
@@ -218,9 +218,9 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         DownloadListRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.Songs);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        FrameworkCompatibility.ThrowIfNull(request);
+        FrameworkCompatibility.ThrowIfNull(request.Songs);
+        if (_disposed) throw new ObjectDisposedException(nameof(DownloadWorkflow));
 
         var songs = request.Songs.Where(song => song is not null).ToArray();
         var requested = songs.Length;
@@ -334,8 +334,8 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         string? targetDirectory = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(task);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        FrameworkCompatibility.ThrowIfNull(task);
+        if (_disposed) throw new ObjectDisposedException(nameof(DownloadWorkflow));
         DownloadPlan plan;
         lock (_gate)
         {
@@ -421,8 +421,8 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         string quality,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(music);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        FrameworkCompatibility.ThrowIfNull(music);
+        if (_disposed) throw new ObjectDisposedException(nameof(DownloadWorkflow));
         if (string.Equals(music.Source, "Local", StringComparison.OrdinalIgnoreCase))
         {
             return !string.IsNullOrWhiteSpace(music.PlayUrl) && File.Exists(music.PlayUrl)
@@ -460,7 +460,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                             $"实际媒体音质 {actual.Label} 低于请求的 {quality}");
                     var final = Path.Combine(directory, $"lxmusic_ext_{Guid.NewGuid():N}{actual.Extension}");
                     EnsureContained(directory, final);
-                    File.Move(download.Path, final, overwrite: false);
+                    File.Move(download.Path, final);
                     temporary = null;
                     lock (_gate) _externalTemporaryFiles.Add(final);
                     result = new ExternalPlaybackTarget(final);
@@ -498,7 +498,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         ExternalPlaybackRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        FrameworkCompatibility.ThrowIfNull(request);
         var playerPath = Environment.ExpandEnvironmentVariables(
             request.PlayerPath?.Trim().Trim('"').Trim() ?? string.Empty);
         if (string.IsNullOrWhiteSpace(playerPath))
@@ -614,7 +614,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                     directory,
                     announce ? progress =>
                     {
-                        var bucket = Math.Clamp(progress / 25 * 25, 0, 75);
+                        var bucket = FrameworkCompatibility.Clamp(progress / 25 * 25, 0, 75);
                         if (bucket <= 0 || lastAnnouncedProgress >= bucket) return;
                         lastAnnouncedProgress = bucket;
                         SafeAnnounce(new(
@@ -662,7 +662,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                 {
                     directory = EnsureSafeDirectory(directory);
                     EnsureContained(directory, lyricPath);
-                    File.Move(lyricTemporary, lyricPath, overwrite: false);
+                    File.Move(lyricTemporary, lyricPath);
                     lyricTemporary = null;
                     task.LyricPath = lyricPath;
                 }
@@ -784,8 +784,8 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         try
         {
             var total = response.Content.Headers.ContentLength ?? 0;
-            await using var input = await response.Content.ReadAsStreamAsync(timeout.Token);
-            await using var output = new FileStream(
+            using var input = await response.Content.ReadAsStreamAsync();
+            using var output = new FileStream(
                 temporary,
                 FileMode.CreateNew,
                 FileAccess.Write,
@@ -795,9 +795,9 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             var buffer = new byte[81920];
             long read = 0;
             int count;
-            while ((count = await input.ReadAsync(buffer, timeout.Token)) > 0)
+            while ((count = await input.ReadAsync(buffer, 0, buffer.Length, timeout.Token)) > 0)
             {
-                await output.WriteAsync(buffer.AsMemory(0, count), timeout.Token);
+                await output.WriteAsync(buffer, 0, count, timeout.Token);
                 read += count;
                 progress?.Invoke(read, total);
             }
@@ -821,11 +821,10 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             var result = await _source.GetLyricAsync(music, cancellationToken);
             if (result?.Lyric is not { Lines.Count: > 0 } lyric) return null;
             var temporary = CreateTemporaryPath(directory);
-            await File.WriteAllTextAsync(
+            await Task.Run(() => File.WriteAllText(
                 temporary,
                 BuildLrc(lyric),
-                new UTF8Encoding(false),
-                cancellationToken);
+                new UTF8Encoding(false)), cancellationToken);
             return temporary;
         }
         catch (OperationCanceledException) { throw; }
@@ -848,13 +847,13 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     private static string EnsureSafeDirectory(string path)
     {
         string full;
-        try { full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
+        try { full = FrameworkCompatibility.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
             throw new DownloadSafetyException("下载目录无效");
         }
 
-        var root = Path.TrimEndingDirectorySeparator(Path.GetPathRoot(full) ?? string.Empty);
+        var root = FrameworkCompatibility.TrimEndingDirectorySeparator(Path.GetPathRoot(full) ?? string.Empty);
         if (string.IsNullOrWhiteSpace(root) || string.Equals(full, root, StringComparison.OrdinalIgnoreCase))
             throw new DownloadSafetyException("不能将磁盘根目录用作下载目录");
 
@@ -906,7 +905,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
 
     private static bool IsWithin(string root, string candidate)
     {
-        var relative = Path.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(candidate));
+        var relative = FrameworkCompatibility.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(candidate));
         return relative == "."
             || (!Path.IsPathRooted(relative)
                 && !relative.Equals("..", StringComparison.Ordinal)
@@ -915,8 +914,8 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
 
     private static bool SamePath(string left, string right) =>
         string.Equals(
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+            FrameworkCompatibility.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+            FrameworkCompatibility.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
             StringComparison.OrdinalIgnoreCase);
 
     private static void EnsureContained(string directory, string path)
@@ -944,7 +943,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             EnsureContained(directory, candidate);
             try
             {
-                File.Move(temporary, candidate, overwrite: false);
+                File.Move(temporary, candidate);
                 return candidate;
             }
             catch (IOException) when (File.Exists(candidate))
@@ -960,13 +959,13 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         string target,
         CancellationToken cancellationToken)
     {
-        await using var input = new FileStream(
+        using var input = new FileStream(
             source, FileMode.Open, FileAccess.Read, FileShare.Read, 81920,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
-        await using var output = new FileStream(
+        using var output = new FileStream(
             target, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
-        await input.CopyToAsync(output, cancellationToken);
+        await input.CopyToAsync(output, 81920, cancellationToken);
         await output.FlushAsync(cancellationToken);
     }
 
@@ -1032,11 +1031,18 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         };
     }
 
+    private static byte[] GetBytes(byte[] source, int start, int end)
+    {
+        var result = new byte[end - start];
+        Buffer.BlockCopy(source, start, result, 0, result.Length);
+        return result;
+    }
+
     private static AudioFileInfo InspectFlac(string filePath)
     {
-        Span<byte> header = stackalloc byte[26];
+        var header = new byte[26];
         using var stream = File.OpenRead(filePath);
-        if (stream.Read(header) < header.Length || !header[..4].SequenceEqual("fLaC"u8))
+        if (stream.Read(header, 0, header.Length) < header.Length || !GetBytes(header, 0, 4).SequenceEqual(System.Text.Encoding.ASCII.GetBytes("fLaC")))
             return new("flac", ".flac", "flac");
         var blockType = header[4] & 0x7F;
         var blockLength = (header[5] << 16) | (header[6] << 8) | header[7];
@@ -1056,7 +1062,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         const int probeLength = 1024 * 1024;
         using var stream = File.OpenRead(filePath);
         var bytes = new byte[Math.Min(probeLength, checked((int)Math.Min(stream.Length, probeLength)))];
-        var read = stream.Read(bytes);
+        var read = stream.Read(bytes, 0, bytes.Length);
         var start = read >= 10 && bytes.AsSpan(0, 3).SequenceEqual("ID3"u8)
             ? Math.Min(read, 10 + ((bytes[6] & 0x7F) << 21) + ((bytes[7] & 0x7F) << 14)
                 + ((bytes[8] & 0x7F) << 7) + (bytes[9] & 0x7F))
@@ -1081,15 +1087,15 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     private static string? SniffAudioFormat(string filePath)
     {
         using var stream = File.OpenRead(filePath);
-        Span<byte> head = stackalloc byte[16];
-        var read = stream.Read(head);
+        var head = new byte[16];
+        var read = stream.Read(head, 0, head.Length);
         if (read < 4) return null;
-        if (head[..4].SequenceEqual("fLaC"u8)) return "flac";
-        if (head[..4].SequenceEqual("OggS"u8)) return "ogg";
-        if (head[..4].SequenceEqual("RIFF"u8) && read >= 12 && head[8..12].SequenceEqual("WAVE"u8)) return "wav";
-        if (head[..4].SequenceEqual("MAC "u8)) return "ape";
-        if (read >= 8 && head[4..8].SequenceEqual("ftyp"u8)) return "m4a";
-        if (head[..3].SequenceEqual("ID3"u8)) return "mp3";
+        if (GetBytes(head, 0, 4).SequenceEqual(System.Text.Encoding.ASCII.GetBytes("fLaC"))) return "flac";
+        if (GetBytes(head, 0, 4).SequenceEqual(System.Text.Encoding.ASCII.GetBytes("OggS"))) return "ogg";
+        if (GetBytes(head, 0, 4).SequenceEqual(System.Text.Encoding.ASCII.GetBytes("RIFF")) && read >= 12 && GetBytes(head, 8, 12).SequenceEqual(System.Text.Encoding.ASCII.GetBytes("WAVE"))) return "wav";
+        if (GetBytes(head, 0, 4).SequenceEqual(System.Text.Encoding.ASCII.GetBytes("MAC "))) return "ape";
+        if (read >= 8 && GetBytes(head, 4, 8).SequenceEqual(System.Text.Encoding.ASCII.GetBytes("ftyp"))) return "m4a";
+        if (GetBytes(head, 0, 3).SequenceEqual(System.Text.Encoding.ASCII.GetBytes("ID3"))) return "mp3";
         if (head[0] == 0xFF && (head[1] & 0xE0) == 0xE0 && (head[1] & 0x06) != 0) return "mp3";
         if (read >= 8 && head[0] == 0x30 && head[1] == 0x26
             && head[4] == 0xB2 && head[5] == 0x75 && head[6] == 0x8E && head[7] == 0x66) return "wma";

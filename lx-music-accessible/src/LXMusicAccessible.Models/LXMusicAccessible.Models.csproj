@@ -1,11 +1,10 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net48</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>LXMusicAccessible.Models</RootNamespace>
     <AssemblyName>LXMusicAccessible.Models</AssemblyName>
-    <UseWPF>true</UseWPF>
   </PropertyGroup>
 
 </Project>

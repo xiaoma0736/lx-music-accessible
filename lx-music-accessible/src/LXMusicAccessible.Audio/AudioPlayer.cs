@@ -168,7 +168,7 @@ public class AudioPlayer : IAudioPlayer
         }
         set
         {
-            _volume = Math.Clamp(value, 0.0, 1.0);
+            _volume = FrameworkCompatibility.Clamp(value, 0.0, 1.0);
             ApplyVolume();
         }
     }
@@ -469,8 +469,9 @@ public class AudioPlayer : IAudioPlayer
                 HttpCompletionOption.ResponseHeadersRead,
                 timeout.Token);
             response.EnsureSuccessStatusCode();
-            await using var fs = File.Create(_tempFilePath);
-            await response.Content.CopyToAsync(fs, timeout.Token);
+            using var fs = File.Create(_tempFilePath);
+            using var contentStream = await response.Content.ReadAsStreamAsync();
+            await contentStream.CopyToAsync(fs, 81920, timeout.Token);
         }
         catch
         {
@@ -558,7 +559,7 @@ public class AudioPlayer : IAudioPlayer
     /// </summary>
     private void ApplyVolume()
     {
-        var v = Math.Clamp(_volume, 0.0, 1.0);
+        var v = FrameworkCompatibility.Clamp(_volume, 0.0, 1.0);
         if (_stream != 0)
             Bass.ChannelSetAttribute(_stream, ChannelAttribute.Volume, (float)v);
     }

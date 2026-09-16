@@ -318,7 +318,7 @@ public class KuwoPlaylistProvider : IPlaylistImportProvider
 
     private static string ExtractValue(string cookieHeader, string key)
     {
-        foreach (var part in cookieHeader.Split(';', StringSplitOptions.TrimEntries))
+        foreach (var part in cookieHeader.SplitTrimmed(';'))
         {
             var eq = part.IndexOf('=');
             if (eq <= 0) continue;

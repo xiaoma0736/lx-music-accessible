@@ -33,7 +33,7 @@ public sealed class Issue49PlaybackSourceSafetyTests
     [Fact]
     public async Task Script_with_explicit_requested_source_support_resolves_the_song()
     {
-        await using var host = await TestApplicationHost.StartAsync();
+        using var host = await TestApplicationHost.StartAsync();
         host.HttpHandler.Register(HttpMethod.Get, AudioUri, AudioResponse);
         var data = host.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([TrustedSource(ExplicitNeteaseScript)]);
@@ -49,7 +49,7 @@ public sealed class Issue49PlaybackSourceSafetyTests
     [Fact]
     public async Task Fallback_script_with_explicit_requested_source_support_resolves_the_song()
     {
-        await using var host = await TestApplicationHost.StartAsync();
+        using var host = await TestApplicationHost.StartAsync();
         host.HttpHandler.Register(HttpMethod.Get, AudioUri, AudioResponse);
         var data = host.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([TrustedSource(ExplicitNeteaseScript, isDefault: false)]);
@@ -65,7 +65,7 @@ public sealed class Issue49PlaybackSourceSafetyTests
     [Fact]
     public async Task Fallback_script_without_explicit_requested_source_support_is_skipped()
     {
-        await using var host = await TestApplicationHost.StartAsync();
+        using var host = await TestApplicationHost.StartAsync();
         host.HttpHandler.Register(HttpMethod.Get, AudioUri, AudioResponse);
         var data = host.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([TrustedSource(UnknownSupportScript, isDefault: false)]);
@@ -81,7 +81,7 @@ public sealed class Issue49PlaybackSourceSafetyTests
     [Fact]
     public async Task Script_without_explicit_requested_source_support_is_not_used()
     {
-        await using var host = await TestApplicationHost.StartAsync();
+        using var host = await TestApplicationHost.StartAsync();
         host.HttpHandler.Register(HttpMethod.Get, AudioUri, AudioResponse);
         var data = host.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([TrustedSource(UnknownSupportScript)]);

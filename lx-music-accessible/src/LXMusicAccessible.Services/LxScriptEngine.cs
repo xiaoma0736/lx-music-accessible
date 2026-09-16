@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -621,7 +622,7 @@ public class LxScriptEngine
                 {
                     int size = r.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number ? s.GetInt32() : 16;
                     if (size < 0 || size > MaxRandomBytes) return Err("crypto_limit_exceeded");
-                    return Ok(Convert.ToBase64String(RandomNumberGenerator.GetBytes(size)));
+                    return Ok(Convert.ToBase64String(FrameworkCompatibility.GetRandomBytes(size)));
                 }
                 default:
                     return Err("crypto_operation_unsupported");
@@ -650,25 +651,12 @@ public class LxScriptEngine
             switch (op)
             {
                 case "inflate":
-                    using (var inMs = new MemoryStream(data))
-                    using (var z = new System.IO.Compression.ZLibStream(inMs, System.IO.Compression.CompressionMode.Decompress))
-                    using (var outMs = new MemoryStream())
-                    {
-                        CopyToBounded(z, outMs, MaxNativeBufferBytes);
-                        result = outMs.ToArray();
-                    }
+                    result = InflateZLib(data);
                     break;
                 case "deflate":
-                    using (var outMs = new MemoryStream())
-                    {
-                        using (var z = new System.IO.Compression.ZLibStream(outMs, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
-                        {
-                            z.Write(data, 0, data.Length);
-                        }
-                        if (outMs.Length > MaxNativeBufferBytes)
-                            return Err("compression_output_limit_exceeded");
-                        result = outMs.ToArray();
-                    }
+                    result = DeflateZLib(data);
+                    if (result.Length > MaxNativeBufferBytes)
+                        return Err("compression_output_limit_exceeded");
                     break;
                 case "gzip":
                     using (var gzIn = new MemoryStream(data))
@@ -813,10 +801,60 @@ public class LxScriptEngine
             if (value.Length > ((maxBytes + 2) / 3) * 4)
                 throw new ScriptResourceLimitException("crypto_limit_exceeded");
             var buffer = new byte[maxBytes];
-            if (Convert.TryFromBase64String(value, buffer, out var bytesWritten))
-                return buffer[..bytesWritten];
+            var bytes = DecodeBase64Bounded(value, maxBytes);
+            if (bytes.Length > 0)
+                return bytes;
         }
         return Array.Empty<byte>();
+    }
+
+    private static byte[] InflateZLib(byte[] data)
+    {
+        if (data.Length < 3 || (data[0] & 0x0f) != 8) throw new InvalidDataException("invalid zlib header");
+        using var input = new MemoryStream(data, 2, data.Length - 2);
+        using var deflate = new DeflateStream(input, System.IO.Compression.CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        deflate.CopyTo(output, 81920);
+        return output.ToArray();
+    }
+
+    private static byte[] DeflateZLib(byte[] data)
+    {
+        using var output = new MemoryStream();
+        output.WriteByte(0x78);
+        output.WriteByte(0x9c);
+        using (var deflate = new DeflateStream(output, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+            deflate.Write(data, 0, data.Length);
+        uint a = 1, b = 0;
+        foreach (var value in data)
+        {
+            a = (a + value) % 65521;
+            b = (b + a) % 65521;
+        }
+        var checksum = (b << 16) | a;
+        output.Write(BitConverter.GetBytes(checksum), 0, 4);
+        return output.ToArray();
+    }
+
+    private static byte[] DecodeBase64Bounded(string value, int maxBytes)
+    {
+        try
+        {
+            var bytes = Convert.FromBase64String(value);
+            return bytes.Length <= maxBytes ? bytes : Array.Empty<byte>();
+        }
+        catch (FormatException)
+        {
+            return Array.Empty<byte>();
+        }
+    }
+
+    private static byte[] Slice(byte[] value, int start, int? end = null)
+    {
+        var stop = end ?? value.Length;
+        var result = new byte[Math.Max(0, stop - start)];
+        Buffer.BlockCopy(value, start, result, 0, result.Length);
+        return result;
     }
 
     private static string Ok(string b64) => JsonSerializer.Serialize(new { ok = true, b64 });
@@ -833,11 +871,11 @@ public class LxScriptEngine
 
         var keyBytes = key.Length == 0 ? new byte[keyLen] : key;
         if (keyBytes.Length != keyLen)
-            keyBytes = keyBytes.Length > keyLen ? keyBytes[..keyLen] : keyBytes.Concat(new byte[keyLen - keyBytes.Length]).ToArray();
+            keyBytes = keyBytes.Length > keyLen ? Slice(keyBytes, 0, keyLen) : keyBytes.Concat(new byte[keyLen - keyBytes.Length]).ToArray();
 
         var ivBytes = iv.Length == 0 ? new byte[16] : iv;
         if (ivBytes.Length != 16)
-            ivBytes = ivBytes.Length > 16 ? ivBytes[..16] : ivBytes.Concat(new byte[16 - ivBytes.Length]).ToArray();
+            ivBytes = ivBytes.Length > 16 ? Slice(ivBytes, 0, 16) : ivBytes.Concat(new byte[16 - ivBytes.Length]).ToArray();
 
         using var aes = Aes.Create();
         aes.KeySize = keyBits;
@@ -846,11 +884,17 @@ public class LxScriptEngine
         switch (block)
         {
             case "ecb":
-                return encrypt ? aes.EncryptEcb(data, PaddingMode.PKCS7) : aes.DecryptEcb(data, PaddingMode.PKCS7);
+                aes.Mode = CipherMode.ECB;
+                aes.Padding = PaddingMode.PKCS7;
+                return encrypt ? Transform(aes.CreateEncryptor(), data) : Transform(aes.CreateDecryptor(), data);
             case "ctr":
                 return CtrTransform(data, aes, ivBytes);
             case "cfb":
-                return encrypt ? aes.EncryptCfb(data, ivBytes, PaddingMode.PKCS7, 128) : aes.DecryptCfb(data, ivBytes, PaddingMode.PKCS7, 128);
+                aes.Mode = CipherMode.CFB;
+                aes.FeedbackSize = 128;
+                aes.Padding = PaddingMode.PKCS7;
+                aes.IV = ivBytes;
+                return encrypt ? Transform(aes.CreateEncryptor(), data) : Transform(aes.CreateDecryptor(), data);
             default: // cbc
                 using (var t = encrypt ? aes.CreateEncryptor(aes.Key, ivBytes) : aes.CreateDecryptor(aes.Key, ivBytes))
                     return Transform(t, data);
@@ -864,7 +908,7 @@ public class LxScriptEngine
         var outBuf = new byte[data.Length];
         for (int off = 0; off < data.Length; off += 16)
         {
-            var ks = aes.EncryptEcb(counter, PaddingMode.None);
+            aes.Mode = CipherMode.ECB; aes.Padding = PaddingMode.None; var ks = Transform(aes.CreateEncryptor(), counter);
             int n = Math.Min(16, data.Length - off);
             for (int i = 0; i < n; i++)
                 outBuf[off + i] = (byte)(data[off + i] ^ ks[i]);
@@ -889,24 +933,18 @@ public class LxScriptEngine
     /// <summary>RSA 无填充加密（对齐原版：左补零到 128 字节后 raw RSA），兼容任意公钥尺寸</summary>
     private byte[] RsaEncryptNoPadding(byte[] data, string keyPem)
     {
-        using var rsa = RSA.Create();
-        var loaded = false;
-        try { rsa.ImportFromPem(keyPem); loaded = true; }
-        catch (Exception ex) when (ex is ArgumentException or CryptographicException)
+        var parameters = ParseRsaPublicKey(keyPem);
+        if (parameters is null)
         {
-            _logger.LogDebug("RSA PEM key parsing failed: {ErrorType}", ex.GetType().Name);
-        }
-        if (!loaded)
-        {
-            try { rsa.FromXmlString(keyPem); loaded = true; }
+            using var xmlRsa = RSA.Create();
+            try { xmlRsa.FromXmlString(keyPem); parameters = xmlRsa.ExportParameters(false); }
             catch (Exception ex) when (ex is CryptographicException or System.Xml.XmlException)
             {
                 _logger.LogDebug("RSA XML key parsing failed: {ErrorType}", ex.GetType().Name);
             }
         }
-        if (!loaded) throw new InvalidOperationException("invalid rsa key");
-        var p = rsa.ExportParameters(false);
-        if (p.Modulus == null || p.Exponent == null) throw new InvalidOperationException("public key required");
+        if (parameters is not { } p || p.Modulus is null || p.Exponent is null)
+            throw new InvalidOperationException("invalid rsa key");
 
         const int padLen = 128;
         byte[] msg;
@@ -919,15 +957,44 @@ public class LxScriptEngine
         {
             msg = data;
         }
-        var mInt = new System.Numerics.BigInteger(msg, isUnsigned: true, isBigEndian: true);
-        var nInt = new System.Numerics.BigInteger(p.Modulus, isUnsigned: true, isBigEndian: true);
-        var eInt = new System.Numerics.BigInteger(p.Exponent, isUnsigned: true, isBigEndian: true);
+        var mInt = new System.Numerics.BigInteger(msg.Reverse().ToArray());
+        var nInt = new System.Numerics.BigInteger(p.Modulus.Reverse().ToArray());
+        var eInt = new System.Numerics.BigInteger(p.Exponent.Reverse().ToArray());
         if (mInt >= nInt) throw new InvalidOperationException("message too large for rsa key");
         var enc = System.Numerics.BigInteger.ModPow(mInt, eInt, nInt);
-        var be = enc.ToByteArray(isUnsigned: true, isBigEndian: true);
+        var littleEndian = enc.ToByteArray();
+        if (littleEndian.Length > 0 && littleEndian[littleEndian.Length - 1] == 0)
+            littleEndian = Slice(littleEndian, 0, littleEndian.Length - 1);
+        var be = littleEndian.Reverse().ToArray();
         var outBuf = new byte[p.Modulus.Length];
-        Buffer.BlockCopy(be, 0, outBuf, outBuf.Length - be.Length, be.Length);
+        Buffer.BlockCopy(be, 0, outBuf, outBuf.Length - be.Length, Math.Min(be.Length, outBuf.Length));
         return outBuf;
+    }
+
+    private RSAParameters? ParseRsaPublicKey(string keyPem)
+    {
+        try
+        {
+            var body = string.Concat(keyPem
+                .Split('\n')
+                .Select(line => line.Trim())
+                .Where(line => !line.StartsWith("-----", StringComparison.Ordinal)));
+            var bytes = Convert.FromBase64String(body);
+            if (bytes.Length < 3) return null;
+            using var rsa = RSA.Create();
+            var parameters = new RSAParameters
+            {
+                Modulus = Slice(bytes, 0, bytes.Length - 3),
+                Exponent = Slice(bytes, bytes.Length - 3)
+            };
+            rsa.ImportParameters(parameters);
+            return parameters;
+        }
+        catch (Exception ex) when (ex is ArgumentException or FormatException or CryptographicException)
+        {
+            _logger.LogDebug("RSA PEM key parsing failed: {ErrorType}", ex.GetType().Name);
+            return null;
+        }
     }
 
     // ================================================================

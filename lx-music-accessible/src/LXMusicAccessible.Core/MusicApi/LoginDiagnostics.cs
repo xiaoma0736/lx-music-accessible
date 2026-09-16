@@ -122,7 +122,7 @@ public static class LoginDiagnostics
         var entries = new List<CredentialMetadata>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var part in (credentials ?? string.Empty).Split(
-                     new[] { ';', '\r', '\n' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                     new[] { ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
         {
             var separator = part.IndexOf('=');
             if (separator <= 0 && part.StartsWith("Authorization:", StringComparison.OrdinalIgnoreCase))
@@ -144,7 +144,7 @@ public static class LoginDiagnostics
     private static string NormalizeCredentialName(string name)
     {
         var safe = new string(name.Trim().Take(64)
-            .Where(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '.').ToArray());
+            .Where(c => FrameworkCompatibility.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '.').ToArray());
         return safe;
     }
 

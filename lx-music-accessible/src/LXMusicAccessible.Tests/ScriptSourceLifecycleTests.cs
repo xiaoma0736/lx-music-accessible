@@ -68,7 +68,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Saving_sources_removes_sources_missing_from_the_current_list()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
         var first = TrustedSource("first");
         var second = TrustedSource("second");
@@ -84,7 +84,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Deleted_subscription_is_not_readded_on_restart()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([TrustedSource("hyw", SubscriptionUrl)]);
         app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(SubscriptionUrl), UpdatedScript);
@@ -104,7 +104,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Refresh_source_downloads_validates_and_persists_the_remote_script()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
         var url = new Uri("https://fixture.invalid/custom.js");
         await data.SaveMusicSourcesAsync([TrustedSource("custom", url.ToString())]);
@@ -127,7 +127,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Failed_refresh_source_keeps_the_active_version()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
         var url = new Uri("https://fixture.invalid/custom.js");
         await data.SaveMusicSourcesAsync([TrustedSource("custom", url.ToString())]);
@@ -147,7 +147,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Cold_start_keeps_verified_bundled_source_when_subscriptions_are_unavailable()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
 
         await sources.InitializeScriptSourcesAsync();
@@ -169,7 +169,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Cold_start_does_not_import_unconfigured_fixed_subscriptions()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
         app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(SubscriptionUrl), ValidScript);
 
@@ -182,7 +182,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Subscription_update_preserves_an_explicitly_disabled_source()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([
             new MusicSource
@@ -218,7 +218,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Invalid_subscription_update_keeps_the_active_version()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([
             new MusicSource
@@ -254,7 +254,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Oversized_subscription_update_keeps_the_active_version()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([
             new MusicSource
@@ -289,7 +289,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Unconfigured_fixed_subscriptions_are_not_refreshed_on_cold_start()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
         app.HttpHandler.RegisterText(
             HttpMethod.Get,
@@ -307,7 +307,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Existing_subscription_by_id_is_updated_without_a_duplicate()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([
             new MusicSource
@@ -340,7 +340,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Network_import_is_automatically_trusted_enabled_and_persisted()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var sources = app.Services.GetRequiredService<IMusicSourceService>();
         app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(ScriptUrl), ValidScript);
 
@@ -372,7 +372,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Changed_imported_content_is_rejected_without_disrupting_the_active_source()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
         app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(ScriptUrl), ValidScript);
         await sources.InitializeScriptSourcesAsync();
@@ -395,7 +395,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Invalid_import_is_rejected_without_replacing_the_current_trusted_source()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
         app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(ScriptUrl), "/* no request handler */");
         await sources.InitializeScriptSourcesAsync();
@@ -411,7 +411,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Cancelled_network_import_does_not_create_a_staged_source()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var sources = app.Services.GetRequiredService<IMusicSourceService>();
         app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(ScriptUrl), ValidScript);
         using var cancellation = new CancellationTokenSource();
@@ -426,7 +426,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Legacy_script_without_trust_metadata_is_migrated_enabled_without_network()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync(new List<MusicSource>
         {
@@ -463,7 +463,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Explicit_disable_is_preserved_and_enable_command_is_persisted()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
         app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(ScriptUrl), ValidScript);
         var imported = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
@@ -497,10 +497,10 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Local_import_is_automatically_trusted_and_enabled()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
         var scriptPath = Path.Combine(app.DataDirectory, "local-source.js");
-        await File.WriteAllTextAsync(scriptPath, ValidScript);
+        await Task.Run(() => File.WriteAllText(scriptPath, ValidScript));
 
         var imported = Assert.IsType<MusicSource>(await sources.ImportFromFileAsync(scriptPath));
 
@@ -512,7 +512,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Resource_heavy_obfuscated_source_registers_activates_and_reloads()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var scriptSource = app.Services.GetRequiredService<ScriptMusicSource>();
         var scriptEngine = app.Services.GetRequiredService<LxScriptEngine>();
         var staged = Assert.IsType<LxScriptInfo>(scriptSource.StageFromContent(
@@ -559,7 +559,7 @@ public sealed class ScriptSourceLifecycleTests
     [Fact]
     public async Task Persistence_failure_rolls_back_activation_and_keeps_the_trusted_source()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
         app.HttpHandler.RegisterText(HttpMethod.Get, new Uri(ScriptUrl), ValidScript);
         await sources.InitializeScriptSourcesAsync();

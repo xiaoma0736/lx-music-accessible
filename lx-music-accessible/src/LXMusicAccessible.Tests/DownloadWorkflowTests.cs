@@ -15,7 +15,7 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task Success_uses_bounded_progress_and_leaves_only_atomic_final_files()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         var url = harness.Source.Register("success");
         harness.Source.RegisterLyric("success");
         harness.Http.Register(HttpMethod.Get, url, () => AudioResponse(240_000));
@@ -44,7 +44,7 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task Cancellation_removes_the_partial_file_and_reports_cancelled()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         var url = harness.Source.Register("cancel");
         var stream = new BlockingReadStream();
         harness.Http.Register(HttpMethod.Get, url, () =>
@@ -73,7 +73,7 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task Clear_completed_removes_every_terminal_task_and_preserves_active_downloads()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         var completedUrl = harness.Source.Register("completed");
         harness.Http.Register(HttpMethod.Get, completedUrl, () => AudioResponse(64));
         var completed = await harness.Workflow.DownloadAsync(new(
@@ -129,7 +129,7 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task Network_failure_removes_temporary_files_and_can_be_retried()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         harness.Source.SetQualities("128k", "320k");
         var url = harness.Source.Register("retry", "320k");
         harness.Http.Register(HttpMethod.Get, url, () =>
@@ -156,7 +156,7 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task Requested_lossless_quality_does_not_accept_a_lowest_quality_mp3_payload()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         harness.Source.SetQualities("128k", "320k", "flac");
         var url = harness.Source.Register("quality-mismatch", "flac");
         harness.Http.Register(HttpMethod.Get, url, () => AudioResponse(64));
@@ -174,7 +174,7 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task Unsupported_requested_quality_uses_an_explicit_verified_fallback()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         harness.Source.SetQualities("128k", "flac");
         var selected = harness.Source.Register("quality-fallback", "flac");
         var fallback = harness.Source.Register("quality-fallback", "128k");
@@ -207,17 +207,17 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task Conflict_and_dangerous_names_stay_inside_the_target_without_overwriting()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         var url = harness.Source.Register("name");
         harness.Http.Register(HttpMethod.Get, url, () => AudioResponse(64));
         var existing = Path.Combine(harness.Target, "artist - title [mp3].mp3");
-        await File.WriteAllTextAsync(existing, "user-content");
+        await Task.Run(() => File.WriteAllText(existing, "user-content"));
 
         var conflict = await harness.Workflow.DownloadAsync(new(
             Song("name", "title", "artist"),
             TargetDirectory: harness.Target));
         Assert.EndsWith("artist - title [mp3](1).mp3", conflict.SavePath, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal("user-content", await File.ReadAllTextAsync(existing));
+        Assert.Equal("user-content", await Task.Run(() => File.ReadAllText(existing)));
 
         var dangerousUrl = harness.Source.Register("dangerous-name");
         harness.Http.Register(HttpMethod.Get, dangerousUrl, () => AudioResponse(64));
@@ -234,7 +234,7 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task Root_system_and_reparse_targets_are_refused_before_http()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         var url = harness.Source.Register("unsafe");
         harness.Http.Register(HttpMethod.Get, url, () => AudioResponse(64));
 
@@ -283,7 +283,7 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task List_download_reuses_single_rules_and_reports_partial_failure_once()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         var goodUrl = harness.Source.Register("good");
         var badUrl = harness.Source.Register("bad");
         harness.Http.Register(HttpMethod.Get, goodUrl, () => AudioResponse(64));
@@ -317,7 +317,7 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task List_cancellation_is_host_owned_and_marks_unstarted_songs_as_skipped()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         var firstUrl = harness.Source.Register("first");
         harness.Source.Register("never-started");
         var stream = new BlockingReadStream();
@@ -348,7 +348,7 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task External_playback_uses_controlled_http_and_owned_temporary_cleanup()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         var url = harness.Source.Register("external");
         harness.Http.Register(HttpMethod.Get, url, () => AudioResponse(64));
 
@@ -371,7 +371,7 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task External_playback_does_not_pass_a_detected_lower_quality_url_to_the_player()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         harness.Source.SetQualities("128k", "flac");
         var url = harness.Source.Register("external-low", "flac");
         harness.Http.Register(HttpMethod.Get, url, () => Mp3Response(128, 64));
@@ -391,11 +391,11 @@ public sealed class DownloadWorkflowTests
     [Fact]
     public async Task External_player_launch_is_owned_by_the_download_workflow()
     {
-        await using var harness = new DownloadHarness();
+        using var harness = new DownloadHarness();
         var player = Path.Combine(harness.Root, "player.exe");
         var audio = Path.Combine(harness.Root, "song.mp3");
-        await File.WriteAllTextAsync(player, "fixture");
-        await File.WriteAllTextAsync(audio, "fixture");
+        await Task.Run(() => File.WriteAllText(player, "fixture"));
+        await Task.Run(() => File.WriteAllText(audio, "fixture"));
 
         var result = await harness.Workflow.PlayExternallyAsync(new(
             player,
@@ -456,7 +456,7 @@ public sealed class DownloadWorkflowTests
 
     private static bool IsWithin(string root, string path)
     {
-        var relative = Path.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(path));
+        var relative = FrameworkCompatibility.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(path));
         return relative != "."
             && !Path.IsPathRooted(relative)
             && !relative.Equals("..", StringComparison.Ordinal)
@@ -464,7 +464,7 @@ public sealed class DownloadWorkflowTests
     }
 
     private static string CreateTestDirectory(string prefix) =>
-        Directory.CreateTempSubdirectory(prefix).FullName;
+        Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
 
     private static void DeleteTestDirectory(string directory, string prefix)
     {
@@ -598,7 +598,7 @@ public sealed class DownloadWorkflowTests
     private sealed class BlockingReadStream : Stream
     {
         private bool _first = true;
-        private readonly TaskCompletionSource _firstRead = new(
+        private readonly TaskCompletionSource<object?> _firstRead = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task FirstRead => _firstRead.Task;
@@ -615,16 +615,18 @@ public sealed class DownloadWorkflowTests
         public override int Read(byte[] buffer, int offset, int count) =>
             throw new NotSupportedException();
 
-        public override async ValueTask<int> ReadAsync(
-            Memory<byte> buffer,
-            CancellationToken cancellationToken = default)
+        private async Task<int> ReadCoreAsync(
+            byte[] buffer,
+            int offset,
+            int count,
+            CancellationToken cancellationToken)
         {
             if (_first)
             {
                 _first = false;
                 var bytes = new byte[] { 0x49, 0x44, 0x33, 0x2D, 0x70, 0x61, 0x72, 0x74 };
-                bytes.CopyTo(buffer);
-                _firstRead.TrySetResult();
+                Array.Copy(bytes, 0, buffer, offset, Math.Min(count, bytes.Length));
+                _firstRead.TrySetResult(null);
                 return bytes.Length;
             }
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
@@ -635,8 +637,7 @@ public sealed class DownloadWorkflowTests
             byte[] buffer,
             int offset,
             int count,
-            CancellationToken cancellationToken) =>
-            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+            CancellationToken cancellationToken) => ReadCoreAsync(buffer, offset, count, cancellationToken);
 
         public override void Flush() { }
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();

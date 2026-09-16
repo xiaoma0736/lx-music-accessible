@@ -22,7 +22,7 @@ public sealed class PlaylistSnapshotTests
             [provider],
             fixture.Data,
             NullLogger<PlaylistImportService>.Instance);
-        await using var backgroundWork = new BackgroundWorkHost(
+        using var backgroundWork = new BackgroundWorkHost(
             NullLogger<BackgroundWorkHost>.Instance);
         var playlists = new[]
         {
@@ -43,7 +43,7 @@ public sealed class PlaylistSnapshotTests
         await provider.CurrentFetchStarted.Task;
         var stop = backgroundWork.StopAsync();
         Assert.False(stop.IsCompleted);
-        provider.ReleaseCurrentFetch.SetResult();
+        provider.ReleaseCurrentFetch.SetResult(null);
 
         await stop;
         var snapshots = (await fixture.Data.GetPlaylistsAsync())
@@ -145,7 +145,7 @@ public sealed class PlaylistSnapshotTests
     public async Task Thousand_song_snapshot_uses_one_observable_sqlite_commit()
     {
         using var fixture = await TemporaryDatabase.CreateAsync();
-        await using var keeper = await OpenAsync(fixture.DatabasePath);
+        using var keeper = await OpenAsync(fixture.DatabasePath);
         Assert.Equal("wal", await keeper.QuerySingleAsync<string>("PRAGMA journal_mode=WAL"));
         await keeper.ExecuteAsync("PRAGMA wal_autocheckpoint=0");
         await keeper.QueryAsync("PRAGMA wal_checkpoint(TRUNCATE)");
@@ -246,7 +246,7 @@ public sealed class PlaylistSnapshotTests
         using var fixture = await TemporaryDatabase.CreateAsync();
         var playlist = CreatePlaylist("large-favorites", "Large favorites");
         await SeedAsync(fixture.Data, playlist, CreateSong("existing"));
-        await using var keeper = await OpenAsync(fixture.DatabasePath);
+        using var keeper = await OpenAsync(fixture.DatabasePath);
         Assert.Equal("wal", await keeper.QuerySingleAsync<string>("PRAGMA journal_mode=WAL"));
         await keeper.ExecuteAsync("PRAGMA wal_autocheckpoint=0");
         await keeper.QueryAsync("PRAGMA wal_checkpoint(TRUNCATE)");
@@ -306,7 +306,7 @@ public sealed class PlaylistSnapshotTests
 
     private static async Task AssertNoOrphansAsync(string databasePath)
     {
-        await using var connection = await OpenAsync(databasePath);
+        using var connection = await OpenAsync(databasePath);
         Assert.Empty(await connection.QueryAsync<string>("PRAGMA foreign_key_check"));
         Assert.Equal(0, await connection.QuerySingleAsync<int>(@"
             SELECT COUNT(*)
@@ -372,9 +372,9 @@ public sealed class PlaylistSnapshotTests
         public string PlatformId => "test";
         public string PlatformName => "测试平台";
         public List<string> FetchedRemoteIds { get; } = [];
-        public TaskCompletionSource CurrentFetchStarted { get; } =
+        public TaskCompletionSource<object?> CurrentFetchStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource ReleaseCurrentFetch { get; } =
+        public TaskCompletionSource<object?> ReleaseCurrentFetch { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<AccountInfo?> LoginByCookieAsync(string cookieText) =>
@@ -389,7 +389,7 @@ public sealed class PlaylistSnapshotTests
             FetchedRemoteIds.Add(playlist.RemoteId);
             if (playlist.RemoteId == "current")
             {
-                CurrentFetchStarted.SetResult();
+                CurrentFetchStarted.SetResult(null);
                 await ReleaseCurrentFetch.Task;
             }
             return [CreateSong(playlist.RemoteId)];
@@ -424,7 +424,7 @@ public sealed class PlaylistSnapshotTests
 
         public static async Task<TemporaryDatabase> CreateAsync()
         {
-            var database = new TemporaryDatabase(Directory.CreateTempSubdirectory(Prefix).FullName);
+            var database = new TemporaryDatabase(Path.Combine(Path.GetTempPath(), Prefix + Guid.NewGuid().ToString("N")));
             var initialized = await new DatabaseInitializer(
                 NullLogger<DatabaseInitializer>.Instance,
                 database.Path).InitializeAsync();
@@ -434,7 +434,7 @@ public sealed class PlaylistSnapshotTests
 
         public async Task ExecuteAsync(string sql)
         {
-            await using var connection = await OpenAsync(DatabasePath);
+            using var connection = await OpenAsync(DatabasePath);
             await connection.ExecuteAsync(sql);
         }
 
@@ -446,7 +446,7 @@ public sealed class PlaylistSnapshotTests
 
             var tempRoot = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath());
             var fullPath = System.IO.Path.GetFullPath(Path);
-            var relative = System.IO.Path.GetRelativePath(tempRoot, fullPath);
+            var relative = System.IO.FrameworkCompatibility.GetRelativePath(tempRoot, fullPath);
             if (relative == "."
                 || relative.StartsWith("..", StringComparison.Ordinal)
                 || System.IO.Path.IsPathRooted(relative)

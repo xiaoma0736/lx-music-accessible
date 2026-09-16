@@ -222,7 +222,7 @@ public sealed class AppDataOwnershipTests
     private sealed class TemporaryDirectory : IDisposable
     {
         public TemporaryDirectory() =>
-            Path = Directory.CreateTempSubdirectory("LXMusicAccessible.Ownership-").FullName;
+            Path = Path.Combine(Path.GetTempPath(), "LXMusicAccessible.Ownership-" + Guid.NewGuid().ToString("N"));
 
         public string Path { get; }
 

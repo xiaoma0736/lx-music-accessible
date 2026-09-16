@@ -171,7 +171,7 @@ public static class AppDataOwnership
             }
             catch (Exception ex) when (IsFileSystemOrFormatException(ex))
             {
-                AddFailure(failures, logFailure, "delete-file", Path.GetRelativePath(fullDirectory, file), ex);
+                AddFailure(failures, logFailure, "delete-file", FrameworkCompatibility.GetRelativePath(fullDirectory, file), ex);
             }
         }
 
@@ -399,7 +399,7 @@ public static class AppDataOwnership
 
     private static string Normalize(string path)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(path);
         var fullPath = Path.GetFullPath(path);
         var root = Path.GetPathRoot(fullPath);
         return string.Equals(fullPath, root, PathComparison) ? fullPath : TrimEnd(fullPath);
@@ -415,7 +415,7 @@ public static class AppDataOwnership
 
     private static bool IsAncestor(string possibleAncestor, string path)
     {
-        var relative = Path.GetRelativePath(TrimEnd(possibleAncestor), TrimEnd(path));
+        var relative = FrameworkCompatibility.GetRelativePath(TrimEnd(possibleAncestor), TrimEnd(path));
         return relative != "."
             && !relative.StartsWith(".." + Path.DirectorySeparatorChar, PathComparison)
             && !string.Equals(relative, "..", PathComparison)
@@ -423,10 +423,10 @@ public static class AppDataOwnership
     }
 
     private static StringComparison PathComparison =>
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        FrameworkCompatibility.IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     private static StringComparer PathComparer =>
-        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        FrameworkCompatibility.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
     private static AppDataCleanupResult Accepted() =>
         new(true, AppDataCleanupRefusal.None, Array.Empty<AppDataCleanupFailure>(), false);

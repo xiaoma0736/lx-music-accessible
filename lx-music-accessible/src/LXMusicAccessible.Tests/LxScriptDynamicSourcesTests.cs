@@ -192,7 +192,7 @@ public sealed class LxScriptDynamicSourcesTests
     [Fact]
     public async Task Manual_source_discovery_finds_runtime_declared_script_sources()
     {
-        await using var host = await TestApplicationHost.StartAsync();
+        using var host = await TestApplicationHost.StartAsync();
         var url = new Uri("https://fixture.invalid/dynamic-source.js");
         const string script = """
             /**

@@ -138,11 +138,11 @@ public class PrismSpeechService : ITtsService, IDisposable
     /// </summary>
     public void SetRate(double rate)
     {
-        _rate = Math.Clamp(rate, 0.5, 1.5);
+        _rate = FrameworkCompatibility.Clamp(rate, 0.5, 1.5);
 
         if (_usePrism && _backend != IntPtr.Zero)
         {
-            float prismRate = (float)Math.Clamp(0.5 + (_rate - 1.0) * 0.5, 0.2, 0.8);
+            float prismRate = (float)FrameworkCompatibility.Clamp(0.5 + (_rate - 1.0) * 0.5, 0.2, 0.8);
             try
             {
                 var err = PrismNative.prism_backend_set_rate(_backend, prismRate);

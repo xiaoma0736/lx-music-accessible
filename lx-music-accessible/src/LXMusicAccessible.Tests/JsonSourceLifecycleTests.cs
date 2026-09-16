@@ -47,7 +47,7 @@ public sealed class JsonSourceLifecycleTests
     [Fact]
     public async Task Json_manifest_stage_enable_and_register_runtime()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var scriptSource = app.Services.GetRequiredService<ScriptMusicSource>();
         var sources = app.Services.GetRequiredService<IMusicSourceService>();
         var info = scriptSource.StageFromContent(FullJson, "json-runtime", "fixture", true);
@@ -77,7 +77,7 @@ public sealed class JsonSourceLifecycleTests
     [Fact]
     public async Task Json_manifest_is_persisted_and_restored()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
         await data.SaveMusicSourcesAsync([JsonSource("restored-json", FullJson)]);
         var first = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
@@ -97,7 +97,7 @@ public sealed class JsonSourceLifecycleTests
     [Fact]
     public async Task Enabled_json_source_resolves_play_url_before_built_in_source()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         app.HttpHandler.RegisterText(
             HttpMethod.Get,
             new Uri("https://api.example.test/wy?id=123&br=exhigh"),
@@ -139,7 +139,7 @@ public sealed class JsonSourceLifecycleTests
           }
         }
         """;
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         await app.Services.GetRequiredService<IDataService>().SaveMusicSourcesAsync(
             [JsonSource("mismatch-json", json)]);
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
@@ -155,7 +155,7 @@ public sealed class JsonSourceLifecycleTests
     [Fact]
     public async Task Json_search_runs_on_requested_platform_and_sets_source()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         app.HttpHandler.RegisterText(
             HttpMethod.Get,
             new Uri("https://api.example.test/search?msg=Sun%20Flower"),
@@ -180,7 +180,7 @@ public sealed class JsonSourceLifecycleTests
     [Fact]
     public async Task Lyric_lookup_maps_json_translation()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         app.HttpHandler.RegisterText(
             HttpMethod.Get,
             new Uri("https://api.example.test/lyric?id=123"),

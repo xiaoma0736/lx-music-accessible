@@ -22,7 +22,7 @@ public sealed class SettingsWindowTests
     [Fact]
     public async Task Ordinary_settings_starts_on_the_native_general_category_without_editing_state()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var factory = app.Services.GetRequiredService<ApplicationWindowFactory>();
         var workflow = app.Services.GetRequiredService<SettingsWorkflow>();
 
@@ -370,14 +370,14 @@ public sealed class SettingsWindowTests
 
     private static Task RunOnStaThreadAsync(Action action)
     {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             Exception? failure = null;
             try { action(); }
             catch (Exception exception) { failure = exception; }
             finally { Dispatcher.CurrentDispatcher.InvokeShutdown(); }
-            if (failure is null) completion.SetResult();
+            if (failure is null) completion.SetResult(null);
             else completion.SetException(failure);
         });
         thread.SetApartmentState(ApartmentState.STA);

@@ -49,7 +49,7 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDgtQn2JZ34ZC28NWYpAUd98iZ37BUrX/aKzmFbt7cl
         var combined = $"{url}-36cd479b6b5-{text}-36cd479b6b5-{digest}";
 
         var encrypted = AesEncrypt(Encoding.UTF8.GetBytes(combined), CipherMode.ECB, EapiKey, null!);
-        var params_ = Convert.ToHexString(encrypted).ToUpper();
+        var params_ = FrameworkCompatibility.ToHexString(encrypted).ToUpper();
 
         return new Dictionary<string, string>
         {
@@ -62,7 +62,7 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDgtQn2JZ34ZC28NWYpAUd98iZ37BUrX/aKzmFbt7cl
     {
         var text = System.Text.Json.JsonSerializer.Serialize(data);
         var encrypted = AesEncrypt(Encoding.UTF8.GetBytes(text), CipherMode.ECB, LinuxApiKey, null!);
-        var eparams = Convert.ToHexString(encrypted).ToUpper();
+        var eparams = FrameworkCompatibility.ToHexString(encrypted).ToUpper();
 
         return new Dictionary<string, string>
         {
@@ -74,7 +74,7 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDgtQn2JZ34ZC28NWYpAUd98iZ37BUrX/aKzmFbt7cl
 
     private static byte[] GenerateRandomKey()
     {
-        var bytes = RandomNumberGenerator.GetBytes(16);
+        var bytes = FrameworkCompatibility.GetRandomBytes(16);
         var result = new byte[16];
         for (var i = 0; i < 16; i++)
             result[i] = (byte)Base62[bytes[i] % 62];
@@ -94,39 +94,59 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDgtQn2JZ34ZC28NWYpAUd98iZ37BUrX/aKzmFbt7cl
         return encryptor.TransformFinalBlock(data, 0, data.Length);
     }
 
-    /// <summary>原始 RSA 加密 (RSA_NO_PADDING) — 输入必须正好 128 字节</summary>
+    /// <summary>Raw RSA encryption (RSA_NO_PADDING); input must be exactly 128 bytes.</summary>
     private static string RsaEncryptRaw(byte[] data)
     {
         var padded = new byte[128];
         Array.Copy(data, 0, padded, 128 - data.Length, data.Length);
-
+        var pemBody = string.Concat(PublicKeyPem
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => !line.StartsWith("-----", StringComparison.Ordinal)));
+        var keyBytes = Convert.FromBase64String(pemBody);
         using var rsa = RSA.Create();
-        rsa.ImportFromPem(PublicKeyPem);
+        rsa.ImportParameters(new RSAParameters
+        {
+            Modulus = GetFirst128(keyBytes),
+            Exponent = GetLast3(keyBytes)
+        });
         var parameters = rsa.ExportParameters(false);
-
-        var modulus = new System.Numerics.BigInteger(parameters.Modulus!, true, true);
-        var exponent = new System.Numerics.BigInteger(parameters.Exponent!, true, true);
-        var plain = new System.Numerics.BigInteger(padded, true, true);
+        var modulus = new System.Numerics.BigInteger(parameters.Modulus!.Reverse().ToArray());
+        var exponent = new System.Numerics.BigInteger(parameters.Exponent!.Reverse().ToArray());
+        var plain = new System.Numerics.BigInteger(padded.Reverse().ToArray());
         var cipher = System.Numerics.BigInteger.ModPow(plain, exponent, modulus);
-
-        var encrypted = cipher.ToByteArray(true, true);
-        if (encrypted.Length < 128)
+        var cipherBytes = cipher.ToByteArray();
+        if (cipherBytes.Length > 0 && cipherBytes[cipherBytes.Length - 1] == 0)
         {
-            var paddedResult = new byte[128];
-            Array.Copy(encrypted, 0, paddedResult, 128 - encrypted.Length, encrypted.Length);
-            encrypted = paddedResult;
+            var trimmed = new byte[cipherBytes.Length - 1];
+            Array.Copy(cipherBytes, trimmed, trimmed.Length);
+            cipherBytes = trimmed;
         }
-        else if (encrypted.Length > 128)
-        {
-            encrypted = encrypted[^128..];
-        }
+        var encrypted = cipherBytes.Reverse().ToArray();
+        var result = new byte[128];
+        var sourceOffset = Math.Max(0, encrypted.Length - 128);
+        var count = Math.Min(128, encrypted.Length);
+        Array.Copy(encrypted, sourceOffset, result, 128 - count, count);
+        return FrameworkCompatibility.ToHexString(result).ToLower();
+    }
 
-        return Convert.ToHexString(encrypted).ToLower();
+    private static byte[] GetFirst128(byte[] value)
+    {
+        var result = new byte[128];
+        Array.Copy(value, result, Math.Min(128, value.Length));
+        return result;
+    }
+
+    private static byte[] GetLast3(byte[] value)
+    {
+        var result = new byte[3];
+        Array.Copy(value, value.Length - 3, result, 0, 3);
+        return result;
     }
 
     private static string Md5Hash(string input)
     {
-        var hash = MD5.HashData(Encoding.UTF8.GetBytes(input));
-        return Convert.ToHexString(hash).ToLower();
+        var hash = FrameworkCompatibility.Md5HashData(Encoding.UTF8.GetBytes(input));
+        return FrameworkCompatibility.ToHexString(hash).ToLower();
     }
 }

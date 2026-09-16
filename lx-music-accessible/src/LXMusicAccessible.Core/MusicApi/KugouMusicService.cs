@@ -808,7 +808,7 @@ public class KugouMusicService : IMusicApi
         if (string.IsNullOrWhiteSpace(lrcContent)) return null;
 
         var lines = new List<LyricLine>();
-        foreach (var line in lrcContent.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var line in lrcContent.SplitTrimmed('\n'))
         {
             var match = System.Text.RegularExpressions.Regex.Match(line.Trim(), @"^\[(\d{2}):(\d{2})(?:\.(\d+))?\](.*)");
             if (match.Success)

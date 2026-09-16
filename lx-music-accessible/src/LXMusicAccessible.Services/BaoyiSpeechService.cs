@@ -95,7 +95,7 @@ public sealed class BaoyiSpeechService : ITtsService, IDisposable
     public void SetRate(double rate)
     {
         // 保益语速由读屏自身控制，本接口不支持切换；仅记录
-        _rate = Math.Clamp(rate, 0.5, 1.5);
+        _rate = FrameworkCompatibility.Clamp(rate, 0.5, 1.5);
     }
 
     public void SetVoice(string voiceId)

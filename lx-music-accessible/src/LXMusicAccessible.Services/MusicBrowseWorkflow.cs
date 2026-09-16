@@ -449,7 +449,7 @@ public sealed class MusicBrowseWorkflow
 
     public Task<BrowseResult<IReadOnlyList<MusicInfo>>> ActivateAlbumAsync(MusicInfo album)
     {
-        ArgumentNullException.ThrowIfNull(album);
+        FrameworkCompatibility.ThrowIfNull(album);
         var revision = BeginActivation();
         return RunLatestAsync(
             revision,
@@ -534,7 +534,7 @@ public sealed class MusicBrowseWorkflow
 
     public Task<BrowseResult<PagedResult<MusicInfo>>> ActivateSavedPlaylistAsync(Playlist playlist)
     {
-        ArgumentNullException.ThrowIfNull(playlist);
+        FrameworkCompatibility.ThrowIfNull(playlist);
         var revision = BeginActivation();
         if (string.IsNullOrWhiteSpace(playlist.RemoteId))
             return Task.FromResult(Invalid<PagedResult<MusicInfo>>(revision, "该歌单没有远程内容"));
@@ -794,7 +794,7 @@ public sealed class MusicBrowseWorkflow
 
     private static string RequireId(string value)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(value);
         return value;
     }
 

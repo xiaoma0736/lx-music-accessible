@@ -17,7 +17,7 @@ public sealed class PlaylistLoginHostTests
     [Fact]
     public async Task Host_registers_one_login_factory_and_one_qr_module()
     {
-        await using var host = await TestApplicationHost.StartAsync();
+        using var host = await TestApplicationHost.StartAsync();
 
         Assert.Same(
             host.Services.GetRequiredService<IPlaylistLoginWindowFactory>(),
@@ -33,7 +33,7 @@ public sealed class PlaylistLoginHostTests
         var provider = new ControlledPlaylistProvider();
         ControlledLoginWindowFactory? dialogs = null;
 
-        await using (var host = await TestApplicationHost.StartAsync(services =>
+        using (var host = await TestApplicationHost.StartAsync(services =>
         {
             services.RemoveAll<IPlaylistImportProvider>();
             services.AddSingleton<IPlaylistImportProvider>(provider);

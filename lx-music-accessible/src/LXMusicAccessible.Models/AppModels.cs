@@ -1,4 +1,3 @@
-using System.Windows.Input;
 using System.ComponentModel;
 
 namespace LXMusicAccessible.Models;
@@ -72,8 +71,8 @@ public class Hotkey
 
     /// <summary>动作标识（对应 HotkeyActions 常量，用于分发执行）</summary>
     public string ActionId { get; set; } = string.Empty;
-    public Key Key { get; set; }
-    public ModifierKeys Modifiers { get; set; }
+    public PlatformKey Key { get; set; }
+    public PlatformModifiers Modifiers { get; set; }
     public bool IsGlobal { get; set; }
     public string Action { get; set; } = string.Empty;
     public string Command { get; set; } = string.Empty;
@@ -169,8 +168,8 @@ public class HotkeyPressedEventArgs : EventArgs
 {
     public Hotkey Hotkey { get; set; } = null!;
     public DateTime PressedTime { get; set; }
-    public Key Key { get; set; }
-    public ModifierKeys Modifiers { get; set; }
+    public PlatformKey Key { get; set; }
+    public PlatformModifiers Modifiers { get; set; }
 }
 
 /// <summary>

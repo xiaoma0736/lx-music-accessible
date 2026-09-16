@@ -13,7 +13,7 @@ public sealed class WorkflowConsolidationTests
     [Fact]
     public async Task Search_history_has_one_owner_and_persists_without_the_window()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var workflow = app.Services.GetRequiredService<MusicBrowseWorkflow>();
 
         await workflow.LoadSearchHistoryAsync();
@@ -35,7 +35,7 @@ public sealed class WorkflowConsolidationTests
     [Fact]
     public async Task Saved_playlist_commands_share_one_state_and_atomic_data_path()
     {
-        await using var app = await TestApplicationHost.StartAsync();
+        using var app = await TestApplicationHost.StartAsync();
         var workflow = app.Services.GetRequiredService<SavedPlaylistWorkflow>();
 
         Assert.NotNull((await workflow.LoadAsync()).Snapshot.Selected);
@@ -60,7 +60,7 @@ public sealed class WorkflowConsolidationTests
     public async Task Browse_module_owns_paged_playback_continuation()
     {
         var playback = new RecordingPlayback();
-        await using var app = await TestApplicationHost.StartAsync(services =>
+        using var app = await TestApplicationHost.StartAsync(services =>
         {
             services.Replace(ServiceDescriptor.Singleton<IMusicBrowseSource>(new PagedBrowseSource()));
             services.Replace(ServiceDescriptor.Singleton<IPlaybackCoordinator>(playback));

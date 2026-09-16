@@ -315,7 +315,7 @@ public sealed class SourceManagerWindowTests
 
     private static Task RunOnStaThreadAsync(Action action)
     {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             Exception? failure = null;
@@ -331,7 +331,7 @@ public sealed class SourceManagerWindowTests
             {
                 Dispatcher.CurrentDispatcher.InvokeShutdown();
             }
-            if (failure is null) completion.SetResult();
+            if (failure is null) completion.SetResult(null);
             else completion.SetException(failure);
         });
         thread.SetApartmentState(ApartmentState.STA);

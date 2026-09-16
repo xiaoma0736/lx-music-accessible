@@ -35,7 +35,7 @@ public sealed class LyricsWorkflowTests
             Line(1, "一"),
             Line(2, "二"),
             Line(3, "三")));
-        await using var harness = CreateHarness(source);
+        using var harness = CreateHarness(source);
 
         await harness.Workflow.LoadAsync(music);
         harness.Playback.SetState(PlayerState.Playing, music);
@@ -61,7 +61,7 @@ public sealed class LyricsWorkflowTests
     public async Task New_song_generation_prevents_an_old_request_from_overwriting_current_lyrics()
     {
         var source = new ControlledLyricSource(ignoreCancellation: true);
-        await using var harness = CreateHarness(source);
+        using var harness = CreateHarness(source);
         var oldSong = Song("old");
         var newSong = Song("new");
 
@@ -85,7 +85,7 @@ public sealed class LyricsWorkflowTests
     public async Task Playback_subscription_handles_pause_seek_stop_cancellation_and_missing_lyrics()
     {
         var source = new ControlledLyricSource(ignoreCancellation: false);
-        await using var harness = CreateHarness(source);
+        using var harness = CreateHarness(source);
         var song = Song("playing");
 
         harness.Playback.Raise(PlayerState.Loading, song);
@@ -136,7 +136,7 @@ public sealed class LyricsWorkflowTests
             Text = "原文",
             Translation = "Translation"
         }));
-        await using var harness = CreateHarness(source, new ThrowingAnnouncer());
+        using var harness = CreateHarness(source, new ThrowingAnnouncer());
 
         await harness.Workflow.LoadAsync(music);
         harness.Playback.SetState(PlayerState.Playing, music);

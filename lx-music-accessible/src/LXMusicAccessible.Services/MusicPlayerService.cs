@@ -9,7 +9,7 @@ namespace LXMusicAccessible.Services;
 /// 播放协调深模块：唯一拥有队列、索引、播放模式、来源重试、代际和预缓存。
 /// 调用者只提交播放意图并观察结果或状态事件。
 /// </summary>
-public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoordinator, IAudioPlaybackControl, IAsyncDisposable
+public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoordinator, IAudioPlaybackControl, IAsyncDisposable, IDisposable
 {
     private const string PlaySlot = "music-player.play";
     private const string PrecacheSlot = "music-player.precache";
@@ -65,7 +65,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         _ownsBackgroundWork = backgroundWork is null;
         _ownsHttpClient = httpClient is null;
         _precacheDirectory = Path.GetFullPath(precacheDirectory ?? Path.GetTempPath());
-        _random = random ?? Random.Shared;
+        _random = random ?? FrameworkCompatibility.SharedRandom;
         _audioPlayer.PlaybackCompleted += AudioPlayer_PlaybackCompleted;
     }
 
@@ -103,8 +103,8 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
 
     public Task<PlaybackResult> PlayAsync(PlaybackRequest request)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.Selection);
+        FrameworkCompatibility.ThrowIfNull(request);
+        FrameworkCompatibility.ThrowIfNull(request.Selection);
 
         var queue = request.Queue?.Where(item => item is not null).ToList() ?? [];
         var index = FindIndex(queue, request.Selection);
@@ -139,9 +139,9 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         PlaybackRequest request,
         ManualSourceOption option)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(option);
-        ArgumentNullException.ThrowIfNull(request.Selection);
+        FrameworkCompatibility.ThrowIfNull(request);
+        FrameworkCompatibility.ThrowIfNull(option);
+        FrameworkCompatibility.ThrowIfNull(request.Selection);
         if (!MusicSearchMatcher.IsSameSong(option.Candidate, request.Selection)
             || !string.Equals(option.Candidate.Source, option.Platform, StringComparison.OrdinalIgnoreCase))
         {
@@ -379,11 +379,11 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
     {
         if (_queue.Count == 0) return -1;
         if (naturalEnd && _mode == PlayMode.SingleLoop)
-            return Math.Clamp(_currentIndex, 0, _queue.Count - 1);
+            return FrameworkCompatibility.Clamp(_currentIndex, 0, _queue.Count - 1);
         if (_mode == PlayMode.Shuffle)
             return _random.Next(_queue.Count);
 
-        var index = Math.Clamp(_currentIndex, 0, _queue.Count - 1) + direction;
+        var index = FrameworkCompatibility.Clamp(_currentIndex, 0, _queue.Count - 1) + direction;
         if (index >= _queue.Count)
             return _mode == PlayMode.Loop ? 0 : -1;
         if (index < 0)
@@ -1092,8 +1092,9 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                 timeout.Token))
             {
                 response.EnsureSuccessStatusCode();
-                await using var stream = File.Create(temporaryPath);
-                await response.Content.CopyToAsync(stream, timeout.Token);
+                using var stream = File.Create(temporaryPath);
+                using var input = await response.Content.ReadAsStreamAsync();
+                await input.CopyToAsync(stream, 81920, timeout.Token);
             }
             token.ThrowIfCancellationRequested();
 
@@ -1150,7 +1151,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         string? path = null;
         lock (_gate)
         {
-            if (_precachedPaths.Remove(MusicKey(music), out var cached)) path = cached;
+            if (_precachedPaths.TryGetValue(MusicKey(music), out var cached)) { path = cached; _precachedPaths.Remove(MusicKey(music)); }
         }
         if (path is not null) DeletePrecacheFile(path);
     }
@@ -1168,7 +1169,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
 
     public void SetVolume(double volume)
     {
-        _volume = Math.Clamp(volume, 0, 1);
+        _volume = FrameworkCompatibility.Clamp(volume, 0, 1);
         _audioPlayer.Volume = _volume;
     }
 
@@ -1178,7 +1179,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         {
             var effective = _audioPlayer.Volume;
             if (Math.Abs(effective - _volume) <= 0.01) return;
-            _volume = Math.Clamp(effective, 0, 1);
+            _volume = FrameworkCompatibility.Clamp(effective, 0, 1);
             _audioPlayer.Volume = _volume;
         }
         catch (Exception exception)
@@ -1220,6 +1221,9 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
             return null;
         }
     }
+
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
 
     public async ValueTask DisposeAsync()
     {

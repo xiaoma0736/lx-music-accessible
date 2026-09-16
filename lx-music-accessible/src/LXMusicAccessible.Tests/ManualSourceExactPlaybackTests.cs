@@ -35,7 +35,7 @@ public sealed class ManualSourceExactPlaybackTests
         var audio = new ExactAudioPlayer();
         audio.QualitiesByUrl["selected-320"] = "320k";
         var sources = new ExactSourceAdapter { Url = "selected-320" };
-        await using var player = CreatePlayer(audio, sources);
+        using var player = CreatePlayer(audio, sources);
         player.DefaultQuality = "128k";
         var next = new MusicInfo { Id = "next", Source = "netease", Title = "下一首", Artist = "歌手" };
         var option = ManualSourceOption.Create(
@@ -59,7 +59,7 @@ public sealed class ManualSourceExactPlaybackTests
     {
         var audio = new ExactAudioPlayer();
         var sources = new ExactSourceAdapter { Url = "selected" };
-        await using var player = CreatePlayer(audio, sources);
+        using var player = CreatePlayer(audio, sources);
         var option = ManualSourceOption.Create(
             "qq-script", "QQ??", "netease", Candidate, "320k", "QQ???320k");
 
@@ -78,7 +78,7 @@ public sealed class ManualSourceExactPlaybackTests
     {
         var audio = new ExactAudioPlayer();
         var sources = new ExactSourceAdapter();
-        await using var player = CreatePlayer(audio, sources);
+        using var player = CreatePlayer(audio, sources);
         player.DefaultQuality = "128k";
         var option = ManualSourceOption.Create(
             "qq-script", "QQ脚本", "qq", Candidate, "320k", "QQ脚本，320k");
@@ -100,7 +100,7 @@ public sealed class ManualSourceExactPlaybackTests
     {
         var audio = new ExactAudioPlayer();
         var sources = new ExactSourceAdapter();
-        await using var player = CreatePlayer(audio, sources);
+        using var player = CreatePlayer(audio, sources);
         var option = ManualSourceOption.Create(
             "qq-script", "QQ脚本", "qq", Candidate, "320k", "QQ脚本，320k");
 

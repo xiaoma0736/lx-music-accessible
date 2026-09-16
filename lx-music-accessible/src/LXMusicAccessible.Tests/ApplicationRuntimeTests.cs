@@ -22,12 +22,12 @@ public sealed class ApplicationRuntimeTests
     public async Task Start_shows_the_window_only_after_host_database_and_required_modules_are_ready()
     {
         var events = new List<string>();
-        var directory = Directory.CreateTempSubdirectory("LXMusicAccessible.Runtime-").FullName;
+        var directory = Path.Combine(Path.GetTempPath(), "LXMusicAccessible.Runtime-" + Guid.NewGuid().ToString("N"));
         var shell = new RecordingShell(events);
         var initializer = new RecordingInitializer(directory, events);
         var failures = new RecordingFailurePresenter(StartupFailureDecision.Exit, events);
 
-        await using var runtime = CreateRuntime(directory, initializer, failures, shell, events);
+        using var runtime = CreateRuntime(directory, initializer, failures, shell, events);
         var outcome = await runtime.StartAsync();
 
         Assert.Equal(ApplicationStartOutcome.Started, outcome);
@@ -56,12 +56,12 @@ public sealed class ApplicationRuntimeTests
     public async Task Failed_initialization_releases_the_host_before_retry_and_never_shows_a_partial_window()
     {
         var events = new List<string>();
-        var directory = Directory.CreateTempSubdirectory("LXMusicAccessible.Runtime-").FullName;
+        var directory = Path.Combine(Path.GetTempPath(), "LXMusicAccessible.Runtime-" + Guid.NewGuid().ToString("N"));
         var shell = new RecordingShell(events);
         var initializer = new RecordingInitializer(directory, events, failuresBeforeSuccess: 1);
         var failures = new RecordingFailurePresenter(StartupFailureDecision.Retry, events);
 
-        await using var runtime = CreateRuntime(directory, initializer, failures, shell, events);
+        using var runtime = CreateRuntime(directory, initializer, failures, shell, events);
         var outcome = await runtime.StartAsync();
 
         Assert.Equal(ApplicationStartOutcome.Started, outcome);
@@ -83,12 +83,12 @@ public sealed class ApplicationRuntimeTests
     public async Task Failed_initialization_can_exit_without_a_window_and_disposes_the_host()
     {
         var events = new List<string>();
-        var directory = Directory.CreateTempSubdirectory("LXMusicAccessible.Runtime-").FullName;
+        var directory = Path.Combine(Path.GetTempPath(), "LXMusicAccessible.Runtime-" + Guid.NewGuid().ToString("N"));
         var shell = new RecordingShell(events);
         var initializer = new RecordingInitializer(directory, events, failuresBeforeSuccess: int.MaxValue);
         var failures = new RecordingFailurePresenter(StartupFailureDecision.Exit, events);
 
-        await using var runtime = CreateRuntime(directory, initializer, failures, shell, events);
+        using var runtime = CreateRuntime(directory, initializer, failures, shell, events);
         var outcome = await runtime.StartAsync();
 
         Assert.Equal(ApplicationStartOutcome.ExitRequested, outcome);
@@ -103,21 +103,21 @@ public sealed class ApplicationRuntimeTests
     public async Task Stop_quiesces_host_owned_work_before_persistence_and_host_release()
     {
         var events = new List<string>();
-        var directory = Directory.CreateTempSubdirectory("LXMusicAccessible.Runtime-").FullName;
+        var directory = Path.Combine(Path.GetTempPath(), "LXMusicAccessible.Runtime-" + Guid.NewGuid().ToString("N"));
         var shell = new RecordingShell(events);
         var initializer = new RecordingInitializer(directory, events);
         var failures = new RecordingFailurePresenter(StartupFailureDecision.Exit, events);
         var probe = new AsyncReleaseProbe(events);
-        var started = new TaskCompletionSource(
+        var started = new TaskCompletionSource<object?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
-        await using var runtime = CreateRuntime(directory, initializer, failures, shell, events);
+        using var runtime = CreateRuntime(directory, initializer, failures, shell, events);
         Assert.Equal(ApplicationStartOutcome.Started, await runtime.StartAsync());
         var background = runtime.Services!.GetRequiredService<BackgroundWorkHost>();
         background.StartLatest("download.fixture", async context =>
         {
-            await using var owned = probe;
-            started.SetResult();
+            using var owned = probe;
+            started.SetResult(null);
             await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken);
         });
         await started.Task;
