@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using LXMusicAccessible.Models;
 
@@ -117,7 +118,7 @@ public class QqMusicService : IMusicApi
                         {
                             Id = songMid.Length > 0 ? songMid : songId,
                         Songmid = songMid,
-                            Title = item.TryGetProperty("songname", out var sname) && sname.ValueKind == JsonValueKind.String ? sname.GetString() ?? "" 
+                            Title = item.TryGetProperty("songname", out var sname) && sname.ValueKind == JsonValueKind.String ? sname.GetString() ?? ""
                                 : item.TryGetProperty("name", out var nm2) ? nm2.GetString() ?? "" : "",
                             Artist = singerName.Length > 0 ? singerName :
                                 item.TryGetProperty("singer", out var sng) ? sng.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "" : "",
@@ -456,14 +457,48 @@ public class QqMusicService : IMusicApi
     /// <summary>
     /// 获取歌单分类 — 参考原版 lx-music-desktop：playlist.PlaylistAllCategoriesServer/get_all_categories
     /// </summary>
-    public Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
+        public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("获取{Name}歌单分类", SourceName);
+        var data = @"{""tags"":{""method"":""get_all_categories"",""param"":{""qq"":""""},""module"":""playlist.PlaylistAllCategoriesServer""}}";
+        var officialTask = _httpClient.GetAsync($"{UUrl}/cgi-bin/musicu.fcg", new Dictionary<string, string>
+        {
+            ["loginUin"] = "0", ["hostUin"] = "0", ["format"] = "json", ["inCharset"] = "utf-8",
+            ["outCharset"] = "utf-8", ["notice"] = "0", ["platform"] = "wk_v15.json", ["needNewCode"] = "0", ["data"] = data
+        }, null, cancellationToken);
+        var hotTask = _httpClient.GetAsync("https://c.y.qq.com/node/pc/wk_v15/category_playlist.html", null, null, cancellationToken);
+        await Task.WhenAll(officialTask, hotTask);
+        using var document = JsonDocument.Parse(await officialTask);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("code", out var code) || code.GetInt32() != 0 ||
+            !root.TryGetProperty("tags", out var tags) || !tags.TryGetProperty("data", out var tagData) ||
+            !tagData.TryGetProperty("v_group", out var groups) || groups.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException("QQ playlist catalogue returned no data.");
 
-        // QQ 官方分类接口返回的标签 ID 与歌单查询接口（get_playlist_by_tag）多数不匹配，
-        // 会导致选分类后歌单为空。这里直接返回实测可用（get_playlist_by_tag 有数据）的分类，
-        // 每个分类的第一个标签即默认查询标签。
-        return Task.FromResult(GetCuratedCategories());
+        var result = new List<PlaylistCategory>();
+        var hotTags = ParseQqHotTags(await hotTask);
+        if (hotTags.Count > 0)
+            result.Add(new PlaylistCategory { Id = "recommend", Name = "推荐", Tags = hotTags });
+        foreach (var group in groups.EnumerateArray())
+        {
+            var groupName = group.TryGetProperty("group_name", out var name) ? name.GetString() ?? "" : "";
+            if (groupName.Length == 0 || !group.TryGetProperty("v_item", out var items) || items.ValueKind != JsonValueKind.Array) continue;
+            var list = items.EnumerateArray().Select(item => new PlaylistTag
+            {
+                Id = item.TryGetProperty("id", out var id) ? id.ToString() : "",
+                Name = item.TryGetProperty("name", out var tagName) ? tagName.GetString() ?? "" : ""
+            }).Where(tag => tag.Id.Length > 0 && tag.Name.Length > 0).ToList();
+            if (list.Count > 0) result.Add(new PlaylistCategory { Id = groupName, Name = groupName, Tags = list });
+        }
+        return result;
+    }
+
+    private static List<PlaylistTag> ParseQqHotTags(string html)
+    {
+        var tags = new List<PlaylistTag>();
+        foreach (Match match in Regex.Matches(html, @"data-id=""([^""]+)""[^>]*>(.*?)</a>", RegexOptions.Singleline))
+            tags.Add(new PlaylistTag { Id = match.Groups[1].Value, Name = match.Groups[2].Value });
+        return tags;
     }
 
     /// <summary>精选可用的 QQ 歌单分类（标签 ID 经 get_playlist_by_tag 实测有数据）</summary>
@@ -522,93 +557,84 @@ public class QqMusicService : IMusicApi
     /// <summary>
     /// 按分类获取歌单列表 — 参考原版：get_playlist_by_tag(全部) / get_category_content(指定标签)
     /// </summary>
-    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
+        public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
     {
-        try
-        {
-            _logger.LogInformation("获取QQ歌单: {Category}, 页码: {Page}", categoryId, page);
-
-            // get_category_content 接口已失效（恒返回空），统一改用 get_playlist_by_tag（标签 id 需为数值）
-            long tagId = 10000000;
-            if (!string.IsNullOrEmpty(categoryId) && !string.Equals(categoryId, "all", StringComparison.OrdinalIgnoreCase) &&
-                long.TryParse(categoryId, out var parsed))
-                tagId = parsed;
-
-            var url = $"{UUrl}/cgi-bin/musicu.fcg";
-            var playlistReq = new
+        var tag = categoryId ?? string.Empty;
+        var useCategory = long.TryParse(tag, out var categoryIdValue);
+        object playlistRequest = useCategory
+            ? new
+            {
+                comm = new { cv = 1602, ct = 20 },
+                playlist = new
+                {
+                    method = "get_category_content",
+                    @param = new { titleid = categoryIdValue, caller = "0", category_id = categoryIdValue, size = pageSize, page = page - 1, use_page = 1 },
+                    module = "playlist.PlayListCategoryServer"
+                }
+            }
+            : new
             {
                 comm = new { cv = 1602, ct = 20 },
                 playlist = new
                 {
                     method = "get_playlist_by_tag",
-                    param = new { id = tagId, sin = pageSize * (page - 1), size = pageSize, order = 5, cur_page = page },
+                    @param = new { id = 10000000, sin = pageSize * (page - 1), size = pageSize, order = 5, cur_page = page },
                     module = "playlist.PlayListPlazaServer"
                 }
             };
-
-            var dataJson = JsonSerializer.Serialize(playlistReq);
-            var parameters = new Dictionary<string, string>
+        var data = JsonSerializer.Serialize(playlistRequest);
+        var response = await _httpClient.GetAsync($"{UUrl}/cgi-bin/musicu.fcg", new Dictionary<string, string>
+        {
+            ["loginUin"] = "0", ["hostUin"] = "0", ["format"] = "json", ["inCharset"] = "utf-8",
+            ["outCharset"] = "utf-8", ["notice"] = "0", ["platform"] = "wk_v15.json", ["needNewCode"] = "0", ["data"] = data
+        }, null, cancellationToken);
+        using var document = JsonDocument.Parse(response);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("code", out var code) || code.GetInt32() != 0 ||
+            !root.TryGetProperty("playlist", out var playlist) || !playlist.TryGetProperty("data", out var playlistData))
+            throw new InvalidOperationException("QQ playlist page returned no data.");
+        var playlists = new List<Playlist>();
+        var total = 0;
+        if (useCategory)
+        {
+            if (!playlistData.TryGetProperty("content", out var content) ||
+                !content.TryGetProperty("v_item", out var items) || items.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException("QQ playlist category content returned no data.");
+            total = content.TryGetProperty("total_cnt", out var totalCount) ? totalCount.GetInt32() : 0;
+            foreach (var item in items.EnumerateArray())
             {
-                ["loginUin"] = "0", ["hostUin"] = "0", ["format"] = "json",
-                ["inCharset"] = "utf-8", ["outCharset"] = "utf-8", ["notice"] = "0",
-                ["platform"] = "wk_v15.json", ["needNewCode"] = "0",
-                ["data"] = dataJson
-            };
-            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
-            var data = JsonSerializer.Deserialize<JsonElement>(response);
-
-            var playlists = new List<Playlist>();
-            int total = 0;
-
-            if (data.TryGetProperty("code", out var code) && code.GetInt32() == 0 &&
-                data.TryGetProperty("playlist", out var pl) &&
-                pl.TryGetProperty("data", out var plData))
-            {
-                if (plData.TryGetProperty("total", out var tEl)) total = tEl.GetInt32();
-                if (plData.TryGetProperty("v_playlist", out var vp) && vp.ValueKind == JsonValueKind.Array)
+                if (!item.TryGetProperty("basic", out var basic)) continue;
+                var playlistId = basic.TryGetProperty("tid", out var tid) ? tid.ToString() : "";
+                if (playlistId.Length == 0) continue;
+                playlists.Add(new Playlist
                 {
-                    foreach (var item in vp.EnumerateArray())
+                    Id = "qq_" + playlistId,
+                    Name = basic.TryGetProperty("title", out var name) ? name.GetString() ?? "" : "",
+                    Description = basic.TryGetProperty("desc", out var description) ? description.GetString() ?? "" : "",
+                    Type = PlaylistType.Recommend
+                });
+            }
+        }
+        else
+        {
+            total = playlistData.TryGetProperty("total", out var totalCount) ? totalCount.GetInt32() : 0;
+            if (playlistData.TryGetProperty("v_playlist", out var items) && items.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in items.EnumerateArray())
+                {
+                    var playlistId = item.TryGetProperty("tid", out var tid) ? tid.ToString() : "";
+                    if (playlistId.Length == 0) continue;
+                    playlists.Add(new Playlist
                     {
-                        string tid = "", name = "", desc = "";
-                        if (item.TryGetProperty("basic", out var basic))
-                        {
-                            if (basic.TryGetProperty("tid", out var t2)) tid = t2.ValueKind == JsonValueKind.Number ? t2.GetInt64().ToString() : t2.GetString() ?? "";
-                            if (basic.TryGetProperty("title", out var n2)) name = n2.GetString() ?? "";
-                            if (basic.TryGetProperty("desc", out var d2)) desc = d2.GetString() ?? "";
-                        }
-                        if (string.IsNullOrEmpty(tid) && item.TryGetProperty("tid", out var tid2))
-                            tid = tid2.ValueKind == JsonValueKind.Number ? tid2.GetInt64().ToString() : tid2.GetString() ?? "";
-                        if (string.IsNullOrEmpty(name) && item.TryGetProperty("title", out var n3))
-                            name = n3.GetString() ?? "";
-                        if (string.IsNullOrEmpty(name)) continue;
-
-                        playlists.Add(new Playlist
-                        {
-                            Id = "qq_" + tid,
-                            Name = name,
-                            Description = desc,
-                            Tags = new List<string>(),
-                            Type = PlaylistType.Recommend,
-                            CreatedDate = DateTime.Now,
-                            ModifiedDate = DateTime.Now
-                        });
-                    }
+                        Id = "qq_" + playlistId,
+                        Name = item.TryGetProperty("title", out var name) ? name.GetString() ?? "" : "",
+                        Description = item.TryGetProperty("desc", out var description) ? description.GetString() ?? "" : "",
+                        Type = PlaylistType.Recommend
+                    });
                 }
             }
-
-            return new PagedResult<Playlist>
-            {
-                CurrentPage = page,
-                PageSize = pageSize,
-                TotalItems = total,
-                Items = playlists
-            };
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "获取QQ歌单列表失败: {Category}", categoryId);
-            return PagedResult<Playlist>.Empty(page, pageSize);
-        }
+        return new PagedResult<Playlist> { CurrentPage = page, PageSize = pageSize, TotalItems = total, Items = playlists };
     }
 
     /// <summary>
@@ -616,8 +642,7 @@ public class QqMusicService : IMusicApi
     /// </summary>
     public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
-        try
-        {
+
             _logger.LogInformation("获取QQ歌单详情: {PlaylistId}", playlistId);
 
             var url = $"{UUrl}/cgi-bin/musicu.fcg";
@@ -687,7 +712,7 @@ public class QqMusicService : IMusicApi
                         musicList.Add(new MusicInfo
                         {
                             Id = songMid,
-                            Title = item.TryGetProperty("songname", out var sname) && sname.ValueKind == JsonValueKind.String ? sname.GetString() ?? "" 
+                            Title = item.TryGetProperty("songname", out var sname) && sname.ValueKind == JsonValueKind.String ? sname.GetString() ?? ""
                                 : item.TryGetProperty("name", out var nm2) ? nm2.GetString() ?? "" : "",
                             Artist = singerName,
                             Album = item.TryGetProperty("album", out var al) && al.TryGetProperty("name", out var aln)
@@ -711,12 +736,7 @@ public class QqMusicService : IMusicApi
                 TotalItems = total,
                 Items = musicList
             };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "获取QQ歌单详情失败: {PlaylistId}", playlistId);
-            return PagedResult<MusicInfo>.Empty(page, pageSize);
-        }
+
     }
 
     /// <summary>

@@ -289,13 +289,42 @@ public partial class WinFormsShell : Form
         CategoryList = WinFormsUi.ListBox("分类", 4);
         CategoryPlaylists = WinFormsUi.ListBox("歌单", 5);
         CategorySongs = WinFormsUi.ListBox("分类歌曲", 6);
+
+        var playlistPrevious = CreateButton("上一页", 20, (_, _) => LoadCategoryPlaylists(GetCurrentCategoryPage() - 1));
+        var playlistNext = CreateButton("下一页", 21, (_, _) => LoadCategoryPlaylists(GetCurrentCategoryPage() + 1));
+        var playlistPage = new Label { Text = "第 1 页", AutoSize = true, TabStop = false };
+        WinFormsUi.Name(playlistPage, "CategoryPlaylistPage", 22, false);
+        playlistPrevious.Name = playlistPrevious.AccessibleName = "CategoryPlaylistPreviousPage";
+        playlistNext.Name = playlistNext.AccessibleName = "CategoryPlaylistNextPage";
+        playlistPrevious.TabStop = playlistNext.TabStop = false;
+        playlistPrevious.TabIndex = 20; playlistNext.TabIndex = 21;
+
+        var songPrevious = CreateButton("上一页", 23, (_, _) => _ = LoadCategorySongs(GetCurrentSongPage() - 1));
+        var songNext = CreateButton("下一页", 24, (_, _) => _ = LoadCategorySongs(GetCurrentSongPage() + 1));
+        var songPage = new Label { Text = "第 1 页", AutoSize = true, TabStop = false };
+        WinFormsUi.Name(songPage, "CategorySongPage", 25, false);
+        songPrevious.Name = songPrevious.AccessibleName = "CategorySongPreviousPage";
+        songNext.Name = songNext.AccessibleName = "CategorySongNextPage";
+        songPrevious.TabStop = songNext.TabStop = false;
+        songPrevious.TabIndex = 23; songNext.TabIndex = 24;
+
         sourceLabel.SetBounds(10, 14, 0, 0);
         CategorySource.SetBounds(60, 10, 150, 24);
         refresh.SetBounds(220, 9, 80, 26);
-        CategoryList.SetBounds(10, 44, 175, 520);
-        CategoryPlaylists.SetBounds(195, 44, 250, 520);
-        CategorySongs.SetBounds(455, 44, 495, 520);
-        page.Controls.AddRange(new Control[] { sourceLabel, CategorySource, refresh, CategoryList, CategoryPlaylists, CategorySongs });
+        playlistPrevious.SetBounds(310, 9, 70, 26);
+        playlistNext.SetBounds(385, 9, 70, 26);
+        playlistPage.SetBounds(460, 13, 80, 20);
+        CategoryList.SetBounds(10, 44, 175, 500);
+        CategoryPlaylists.SetBounds(195, 44, 250, 500);
+        CategorySongs.SetBounds(455, 44, 495, 500);
+        songPrevious.SetBounds(455, 550, 70, 26);
+        songNext.SetBounds(530, 550, 70, 26);
+        songPage.SetBounds(605, 555, 80, 20);
+        page.Controls.AddRange(new Control[]
+        {
+            sourceLabel, CategorySource, refresh, playlistPrevious, playlistNext, playlistPage,
+            songPrevious, songNext, songPage, CategoryList, CategoryPlaylists, CategorySongs
+        });
         CategoryList.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) LoadCategoryPlaylists(); };
         CategoryPlaylists.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) _ = LoadCategorySongs(); };
         CategorySongs.DoubleClick += (_, _) => _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category);
@@ -307,6 +336,8 @@ public partial class WinFormsShell : Form
         return page;
     }
 
+    internal IAccessibleAnnouncer AnnouncerForTests => _announcer;
+    internal Label StatusTextForTests => StatusText;
     private TabPage CreateRankingPage()
     {
         var page = new TabPage("排行榜") { AccessibleName = "排行榜", Padding = new Padding(10) };

@@ -211,37 +211,63 @@ public partial class WinFormsShell
         }, "加载分类");
     }
 
-    private void LoadCategoryPlaylists()
+    private void LoadCategoryPlaylists(int page = 1)
     {
         var category = WinFormsUi.Selected<PlaylistCategory>(CategoryList);
         if (category is null) return;
+        var requestedPage = Math.Max(1, page);
         _browse.SelectCategory(category);
-        _ = RunAsync(async () => await _browse.ActivateCategoryAsync(), result =>
+        _ = RunAsync(async () => await _browse.ActivateCategoryAsync(requestedPage), result =>
         {
-            if (!result.Succeeded || result.Value is null) return;
+            if (!result.Succeeded || result.Value is null)
+            {
+                SetBrowseStatus(result.Message, AnnouncementKind.Error);
+                return;
+            }
             CategoryPlaylists.Items.Clear();
             foreach (var playlist in result.Value.Items)
                 CategoryPlaylists.Items.Add(new ObjectBox<Playlist>(playlist.Name, playlist));
-            Announce(result.Message, "category-playlists");
+            PageControl("CategoryPlaylistPreviousPage", "CategoryPlaylistNextPage", "CategoryPlaylistPage", requestedPage, result.Value.TotalItems);
+            SetBrowseStatus(result.Message, AnnouncementKind.Success);
             if (ContainsFocus) CategoryPlaylists.Focus();
         }, "加载歌单");
     }
 
-    private async Task LoadCategorySongs()
+    private async Task LoadCategorySongs(int page = 1)
     {
         var playlist = WinFormsUi.Selected<Playlist>(CategoryPlaylists);
         if (playlist is null) return;
+        var requestedPage = Math.Max(1, page);
         _browse.SelectPlaylist(playlist);
-        var result = await _browse.ActivatePlaylistAsync();
+        var result = await _browse.ActivatePlaylistAsync(requestedPage);
         if (result.Succeeded && result.Value is not null)
         {
             _categorySongs = result.Value.Items.ToList();
             WinFormsUi.FillSongs(CategorySongs, _categorySongs);
-            Announce(result.Message, "category-songs");
+            PageControl("CategorySongPreviousPage", "CategorySongNextPage", "CategorySongPage", requestedPage, result.Value.TotalItems);
+            SetBrowseStatus(result.Message, AnnouncementKind.Success);
             if (ContainsFocus) CategorySongs.Focus();
         }
+        else SetBrowseStatus(result.Message, AnnouncementKind.Error);
     }
 
+    private int GetCurrentCategoryPage() => _browse.CurrentCategoryPage?.Page ?? 1;
+    private int GetCurrentSongPage() => _browse.CurrentPlaylistPage?.Page ?? 1;
+
+    private void PageControl(string previousName, string nextName, string pageName, int page, int totalItems)
+    {
+        var pageSize = 20;
+        var totalPages = totalItems > 0 ? Math.Max(1, (int)Math.Ceiling(totalItems / (double)pageSize)) : page + 1;
+        Controls.Find(previousName, true)[0].Enabled = page > 1;
+        Controls.Find(nextName, true)[0].Enabled = page < totalPages;
+        Controls.Find(pageName, true)[0].Text = $"第 {page} 页";
+    }
+
+    private void SetBrowseStatus(string message, AnnouncementKind kind)
+    {
+        if (!IsDisposed && !string.IsNullOrWhiteSpace(message)) StatusText.Text = message;
+        Announce(message, "browse-status", kind);
+    }
     private void LoadRankings()
     {
         _browse.SelectRankingSource(SourceId(RankingSource.Text), RankingSource.Text);
@@ -274,7 +300,7 @@ public partial class WinFormsShell
     private async void FavoriteCategoryPlaylist()
     {
         var playlist = WinFormsUi.Selected<Playlist>(CategoryPlaylists);
-        await FavoriteRemotePlaylist(playlist?.Name, "netease", playlist?.Id, PlaylistType.Recommend);
+        await FavoriteRemotePlaylist(playlist?.Name, SourceId(CategorySource.Text), playlist?.Id, PlaylistType.Recommend);
     }
 
     private async void FavoriteRanking()

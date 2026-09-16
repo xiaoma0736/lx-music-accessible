@@ -980,7 +980,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         {
             try { return await api.GetPlaylistCategoriesAsync(cancellationToken).WaitAsync(cancellationToken); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception ex) { _logger.LogError(ex, "获取歌单分类失败: {SourceId}", sourceId); }
+            catch (Exception ex) { _logger.LogError(ex, "获取歌单分类失败: {SourceId}", sourceId); throw; }
         }
         return new List<PlaylistCategory>();
     }
@@ -996,7 +996,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         {
             try { return await api.GetPlaylistsByCategoryAsync(category, page, pageSize, cancellationToken).WaitAsync(cancellationToken); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception ex) { _logger.LogError(ex, "获取歌单列表失败"); }
+            catch (Exception ex) { _logger.LogError(ex, "获取歌单列表失败"); throw; }
         }
         return PagedResult<Playlist>.Empty(page, pageSize);
     }
@@ -1012,7 +1012,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         {
             try { return await api.GetPlaylistDetailAsync(cleanId, page, pageSize, cancellationToken).WaitAsync(cancellationToken); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception ex) { _logger.LogError(ex, "获取歌单详情失败: {PlaylistId}", playlistId); }
+            catch (Exception ex) { _logger.LogError(ex, "获取歌单详情失败: {PlaylistId}", playlistId); throw; }
         }
         return PagedResult<MusicInfo>.Empty(page, pageSize);
     }

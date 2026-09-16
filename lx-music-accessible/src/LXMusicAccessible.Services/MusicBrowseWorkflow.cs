@@ -96,6 +96,12 @@ public sealed record PlaylistBrowseSnapshot(
     int Page,
     int TotalItems);
 
+public sealed record CategoryBrowseSnapshot(
+    PlaylistCategory Category,
+    IReadOnlyList<Playlist> Items,
+    int Page,
+    int TotalItems);
+
 public sealed record RankingBrowseSnapshot(
     Ranking Ranking,
     IReadOnlyList<MusicInfo> Items,
@@ -137,6 +143,7 @@ public sealed class MusicBrowseWorkflow
     private PlaylistCategory? _category;
     private Playlist? _playlist;
     private PlaylistBrowseSnapshot? _playlistSnapshot;
+    private CategoryBrowseSnapshot? _categorySnapshot;
     private string _rankingSource = "netease";
     private Ranking? _ranking;
     private RankingBrowseSnapshot? _rankingSnapshot;
@@ -165,6 +172,19 @@ public sealed class MusicBrowseWorkflow
             lock (_gate)
             {
                 return _searchSnapshot with { Items = _searchSnapshot.Items.ToArray() };
+            }
+        }
+    }
+
+    public CategoryBrowseSnapshot? CurrentCategoryPage
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _categorySnapshot is null
+                    ? null
+                    : _categorySnapshot with { Items = _categorySnapshot.Items.ToArray() };
             }
         }
     }
@@ -359,6 +379,7 @@ public sealed class MusicBrowseWorkflow
                 _category = null;
                 _playlist = null;
                 _playlistSnapshot = null;
+                _categorySnapshot = null;
             },
             $"已选择歌单音源：{displayName ?? sourceId}，按 Enter 或刷新按钮加载分类");
 
@@ -369,6 +390,7 @@ public sealed class MusicBrowseWorkflow
                 _category = category;
                 _playlist = null;
                 _playlistSnapshot = null;
+                _categorySnapshot = null;
             },
             category is null ? "未选择歌单分类" : $"已选择分类：{category.Name}，按 Enter 加载歌单");
 
@@ -489,24 +511,30 @@ public sealed class MusicBrowseWorkflow
             BrowseFocusTarget.CategoryList);
     }
 
-    public Task<BrowseResult<PagedResult<Playlist>>> ActivateCategoryAsync()
+    public Task<BrowseResult<PagedResult<Playlist>>> ActivateCategoryAsync(int page = 1)
     {
         var (revision, selection) = Snapshot(() => (_categorySource, _category));
         if (selection._category is null)
             return Task.FromResult(Invalid<PagedResult<Playlist>>(revision, "请选择歌单分类"));
 
         var tag = selection._category.Tags.FirstOrDefault()?.Id ?? "all";
+        var requestedPage = Math.Max(1, page);
         return RunLatestAsync(
             revision,
             $"正在加载分类：{selection._category.Name}",
             cancellationToken => _source.GetPlaylistsByCategoryAsync(
                 tag,
-                1,
+                requestedPage,
                 BrowsePageSize,
                 selection._categorySource,
                 cancellationToken),
-            result => result.Items.Count == 0 ? "该音源暂无可用歌单" : $"已加载 {result.Items.Count} 个歌单",
-            BrowseFocusTarget.CategoryPlaylists);
+            result => result.Items.Count == 0 ? "该音源暂时没有可用歌单" : $"已加载 {result.Items.Count} 个歌单",
+            BrowseFocusTarget.CategoryPlaylists,
+            result => _categorySnapshot = new(
+                selection._category,
+                result.Items.ToArray(),
+                requestedPage,
+                result.TotalItems));
     }
 
     public Task<BrowseResult<PagedResult<MusicInfo>>> ActivatePlaylistAsync(int page = 1)

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using LXMusicAccessible.Models;
@@ -317,67 +317,44 @@ public class KugouMusicService : IMusicApi
     /// <summary>
     /// 获取歌单分类 — 参考原版 lx-music-desktop：www2 getSpecial?is_smarty=1 → data.tagids
     /// </summary>
-    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
+            public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("获取{Name}歌单分类", SourceName);
-
-        try
+        var response = await _httpClient.GetAsync("http://www2.kugou.kugou.com/yueku/v9/special/getSpecial", new Dictionary<string, string>
         {
-            var url = "http://www2.kugou.kugou.com/yueku/v9/special/getSpecial";
-            var response = await _httpClient.GetAsync(url, new Dictionary<string, string>
-            {
-                ["is_smarty"] = "1", ["cdn"] = "cdn", ["t"] = "5"
-            }, null, cancellationToken);
-            var data = JsonSerializer.Deserialize<JsonElement>(response);
+            ["is_smarty"] = "1", ["cdn"] = "cdn", ["t"] = "5"
+        }, null, cancellationToken);
+        using var document = JsonDocument.Parse(response);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("status", out var status) || status.GetInt32() != 1 ||
+            !root.TryGetProperty("data", out var data))
+            throw new InvalidOperationException("Kugou playlist catalogue returned no data.");
 
-            var categories = new List<PlaylistCategory>
-            {
-                new PlaylistCategory
-                {
-                    Id = "all",
-                    Name = "全部歌单",
-                    Tags = new List<PlaylistTag> { new() { Id = "", Name = "全部" } }
-                }
-            };
+        var categories = new List<PlaylistCategory>();
+        if (data.TryGetProperty("hotTag", out var hotTag) && hotTag.TryGetProperty("data", out var hotValue))
+        {
+            var id = hotValue.TryGetProperty("special_id", out var sid) ? sid.GetString() ?? "" : "";
+            var name = hotValue.TryGetProperty("special_name", out var sn) ? sn.GetString() ?? "" : "";
+            if (id.Length > 0 && name.Length > 0)
+                categories.Add(new PlaylistCategory { Id = "recommend", Name = "推荐", Tags = [new PlaylistTag { Id = id, Name = name }] });
+        }
 
-            if (data.TryGetProperty("status", out var st) && st.GetInt32() == 1 &&
-                data.TryGetProperty("data", out var d) &&
-                d.TryGetProperty("tagids", out var tagids) &&
-                tagids.ValueKind == JsonValueKind.Object)
+        if (data.TryGetProperty("tagids", out var groups) && groups.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var group in groups.EnumerateObject())
             {
-                foreach (var prop in tagids.EnumerateObject())
-                {
-                    var categoryName = prop.Name;
-                    var tagObj = prop.Value;
-                    if (!tagObj.TryGetProperty("data", out var tagData) || tagData.ValueKind != JsonValueKind.Array)
-                        continue;
-
-                    var tagList = new List<PlaylistTag>();
-                    foreach (var tag in tagData.EnumerateArray())
+                if (!group.Value.TryGetProperty("data", out var tags) || tags.ValueKind != JsonValueKind.Array) continue;
+                var list = tags.EnumerateArray()
+                    .Select(tag => new PlaylistTag
                     {
-                        var name = tag.TryGetProperty("name", out var tn) ? tn.GetString() ?? "" : "";
-                        var id = tag.TryGetProperty("id", out var tid)
-                            ? (tid.ValueKind == JsonValueKind.Number ? tid.GetInt64().ToString() : tid.GetString() ?? "")
-                            : "";
-                        if (!string.IsNullOrEmpty(name))
-                            tagList.Add(new PlaylistTag { Id = id, Name = name });
-                    }
-
-                    if (tagList.Count > 0)
-                        categories.Add(new PlaylistCategory { Id = categoryName, Name = categoryName, Tags = tagList });
-                }
+                        Id = tag.TryGetProperty("id", out var id) ? id.ToString() : "",
+                        Name = tag.TryGetProperty("name", out var name) ? name.GetString() ?? "" : ""
+                    })
+                    .Where(tag => tag.Id.Length > 0 && tag.Name.Length > 0).ToList();
+                if (list.Count > 0) categories.Add(new PlaylistCategory { Id = group.Name, Name = group.Name, Tags = list });
             }
-
-            if (categories.Count <= 1)
-                return GetDefaultCategories();
-
-            return categories;
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "获取酷狗歌单分类失败，使用内置分类");
-            return GetDefaultCategories();
-        }
+        return categories;
     }
 
     private static List<PlaylistCategory> GetDefaultCategories()
@@ -394,61 +371,45 @@ public class KugouMusicService : IMusicApi
     /// <summary>
     /// 按分类获取歌单列表 — 参考原版：getSpecial?is_ajax=1 → special_db
     /// </summary>
-    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
+        public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
     {
-        try
+        var tag = categoryId ?? string.Empty;
+        var baseUrl = "http://www2.kugou.kugou.com/yueku/v9/special/getSpecial";
+        var listResponse = await _httpClient.GetAsync(baseUrl, new Dictionary<string, string>
         {
-            _logger.LogInformation("获取酷狗歌单: {Category}, 页码: {Page}", categoryId, page);
-
-            var url = "http://www2.kugou.kugou.com/yueku/v9/special/getSpecial";
-            var parameters = new Dictionary<string, string>
-            {
-                ["is_ajax"] = "1", ["cdn"] = "cdn", ["t"] = "5",
-                ["c"] = categoryId ?? "", ["p"] = page.ToString()
-            };
-
-            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
-            var result = JsonSerializer.Deserialize<JsonElement>(response);
-
-            var playlists = new List<Playlist>();
-            int total = 0;
-
-            if (result.TryGetProperty("status", out var st) && st.GetInt32() == 1 &&
-                result.TryGetProperty("special_db", out var specialDb) &&
-                specialDb.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in specialDb.EnumerateArray())
-                {
-                    var specialId = item.TryGetProperty("specialid", out var sid)
-                        ? (sid.ValueKind == JsonValueKind.Number ? sid.GetInt64().ToString() : sid.GetString() ?? "")
-                        : "";
-                    playlists.Add(new Playlist
-                    {
-                        Id = "kg_" + specialId,
-                        Name = item.TryGetProperty("specialname", out var snm) ? snm.GetString() ?? "" : "",
-                        Description = item.TryGetProperty("intro", out var desc) ? desc.GetString() ?? "" : "",
-                        Tags = new List<string>(),
-                        Type = PlaylistType.Recommend,
-                        CreatedDate = DateTime.Now,
-                        ModifiedDate = DateTime.Now
-                    });
-                }
-            }
-
-            // 酷狗接口不返回总数，交由 UI 估算分页
-            return new PagedResult<Playlist>
-            {
-                CurrentPage = page,
-                PageSize = pageSize,
-                TotalItems = total,
-                Items = playlists
-            };
-        }
-        catch (Exception ex)
+            ["is_ajax"] = "1", ["cdn"] = "cdn", ["t"] = "5", ["c"] = tag, ["p"] = page.ToString()
+        }, null, cancellationToken);
+        var infoResponse = await _httpClient.GetAsync(baseUrl, new Dictionary<string, string>
         {
-            _logger.LogError(ex, "获取酷狗歌单列表失败: {Category}", categoryId);
-            return PagedResult<Playlist>.Empty(page, pageSize);
+            ["is_smarty"] = "1", ["cdn"] = "cdn", ["t"] = "5", ["c"] = tag
+        }, null, cancellationToken);
+        using var listDocument = JsonDocument.Parse(listResponse);
+        using var infoDocument = JsonDocument.Parse(infoResponse);
+        var list = listDocument.RootElement;
+        var playlists = new List<Playlist>();
+        if (list.ValueKind != JsonValueKind.Object || !list.TryGetProperty("status", out var status) || status.GetInt32() != 1 ||
+            !list.TryGetProperty("special_db", out var items) || items.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException("Kugou playlist page returned no data.");
+        foreach (var item in items.EnumerateArray())
+        {
+            var specialId = item.TryGetProperty("specialid", out var id) ? id.ToString() : "";
+            if (specialId.Length == 0) continue;
+            playlists.Add(new Playlist
+            {
+                Id = "kg_" + specialId,
+                Name = item.TryGetProperty("specialname", out var name) ? name.GetString() ?? "" : "",
+                Description = item.TryGetProperty("intro", out var intro) ? intro.GetString() ?? "" : "",
+                Type = PlaylistType.Recommend
+            });
         }
+        var total = 0;
+        if (infoDocument.RootElement.ValueKind == JsonValueKind.Object &&
+            infoDocument.RootElement.TryGetProperty("data", out var infoData) &&
+            infoData.ValueKind == JsonValueKind.Object &&
+            infoData.TryGetProperty("params", out var parameters) &&
+            parameters.TryGetProperty("total", out var totalValue))
+            total = totalValue.ValueKind == JsonValueKind.Number ? totalValue.GetInt32() : int.TryParse(totalValue.GetString(), out var parsed) ? parsed : 0;
+        return new PagedResult<Playlist> { CurrentPage = page, PageSize = pageSize, TotalItems = total, Items = playlists };
     }
 
     /// <summary>
@@ -456,8 +417,7 @@ public class KugouMusicService : IMusicApi
     /// </summary>
     public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
-        try
-        {
+
             _logger.LogInformation("获取酷狗歌单详情: {PlaylistId}", playlistId);
 
             var url = $"{ApiBaseV3}/special/song";
@@ -528,12 +488,7 @@ public class KugouMusicService : IMusicApi
                 TotalItems = total,
                 Items = musicList
             };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "获取酷狗歌单详情失败: {PlaylistId}", playlistId);
-            return PagedResult<MusicInfo>.Empty(page, pageSize);
-        }
+
     }
 
     /// <summary>从酷狗 filename（"歌手 - 歌名"）解析歌手与歌名，兼容不同分隔符</summary>

@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using LXMusicAccessible.Models;
 using Microsoft.Extensions.Logging;
@@ -381,52 +381,51 @@ public class NeteaseMusicService : IMusicApi
 
     // ========== 歌单分类 ==========
 
-    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
+        public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
     {
-        try
-        {
-            var result = await _httpClient.PostWeapiAsync<NeteaseCategoryResult>(
-                $"{WeapiBaseUrl}/playlist/catalogue",
-                new { },
-                DefaultHeaders,
-                cancellationToken);
+        var officialTask = _httpClient.PostWeapiAsync<JsonElement?>($"{WeapiBaseUrl}/playlist/catalogue", new { }, DefaultHeaders, cancellationToken);
+        var hotTask = _httpClient.PostWeapiAsync<JsonElement?>($"{WeapiBaseUrl}/playlist/hottags", new { }, DefaultHeaders, cancellationToken);
+        await Task.WhenAll(officialTask, hotTask);
+        var official = await officialTask;
+        var hot = await hotTask;
+        if (official is null || official.Value.ValueKind != JsonValueKind.Object || !official.Value.TryGetProperty("sub", out var subs) || subs.ValueKind != JsonValueKind.Array ||
+            !official.Value.TryGetProperty("categories", out var categoryNames) || categoryNames.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("Netease playlist catalogue returned no data.");
 
-            if (result?.Sub == null || result.Categories == null)
-                return GetDefaultCategories();
-
-            var grouped = result.Sub
-                .GroupBy(s => s.Category)
-                .Select(g => new PlaylistCategory
-                {
-                    Id = g.Key.ToString(),
-                    Name = result.Categories.TryGetValue(g.Key.ToString(), out var name) ? name : "其他",
-                    Tags = g.Select(c => new PlaylistTag { Id = c.Name ?? "", Name = c.Name ?? "" }).ToList()
-                })
-                .Where(c => c.Tags.Count > 0)
-                .ToList();
-
-            grouped.Insert(0, new PlaylistCategory
+        var grouped = subs.EnumerateArray()
+            .Where(item => item.TryGetProperty("category", out var _) && item.TryGetProperty("name", out var tagName) && tagName.GetString()?.Length > 0)
+            .GroupBy(item => item.GetProperty("category").GetString() ?? "", StringComparer.Ordinal)
+            .Select(group => new PlaylistCategory
             {
-                Id = "all",
-                Name = "全部歌单",
-                Tags = new List<PlaylistTag> { new() { Id = "全部", Name = "全部" } }
-            });
+                Id = group.Key,
+                Name = categoryNames.TryGetProperty(group.Key, out var name) ? name.GetString() ?? "其他" : "其他",
+                Tags = group.Select(item => new PlaylistTag { Id = item.GetProperty("name").GetString() ?? "", Name = item.GetProperty("name").GetString() ?? "" }).ToList()
+            })
+            .Where(category => category.Tags.Count > 0)
+            .ToList();
 
-            return grouped;
-        }
-        catch (Exception ex)
+        var hotTags = new List<PlaylistTag>();
+        if (hot is not null && hot.Value.ValueKind == JsonValueKind.Object && hot.Value.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Array)
         {
-            _logger.LogError(ex, "获取歌单分类失败，使用内置分类");
-            return GetDefaultCategories();
+            foreach (var item in tags.EnumerateArray())
+            {
+                if (item.TryGetProperty("playlistTag", out var tag) && tag.TryGetProperty("name", out var name))
+                {
+                    var value = name.GetString() ?? "";
+                    if (value.Length > 0) hotTags.Add(new PlaylistTag { Id = value, Name = value });
+                }
+            }
         }
+        if (hotTags.Count > 0)
+            grouped.Insert(0, new PlaylistCategory { Id = "recommend", Name = "推荐", Tags = hotTags });
+        return grouped;
     }
 
     // ========== 歌单列表 ==========
 
     public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
     {
-        try
-        {
+
             var result = await _httpClient.PostWeapiAsync<NeteasePlaylistResult>(
                 $"{WeapiBaseUrl}/playlist/list",
                 new { cat = categoryId, order = "hot", limit = pageSize, offset = pageSize * (page - 1), total = true },
@@ -454,20 +453,14 @@ public class NeteaseMusicService : IMusicApi
                 TotalItems = result.Total,
                 Items = playlists
             };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "获取歌单列表失败: {Category}", categoryId);
-            return PagedResult<Playlist>.Empty(page, pageSize);
-        }
+
     }
 
     // ========== 歌单详情 ==========
 
     public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
-        try
-        {
+
             var result = await _httpClient.PostLinuxApiAsync<NeteaseLinuxApiResp>(
                 new
                 {
@@ -504,12 +497,7 @@ public class NeteaseMusicService : IMusicApi
                 TotalItems = result.Playlist.TrackCount,
                 Items = musicList
             };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "获取歌单详情失败: {PlaylistId}", playlistId);
-            return PagedResult<MusicInfo>.Empty(page, pageSize);
-        }
+
     }
 
     // ========== 辅助方法 ==========

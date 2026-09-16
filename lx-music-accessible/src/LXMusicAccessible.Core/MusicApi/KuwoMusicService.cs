@@ -345,72 +345,70 @@ public class KuwoMusicService : IMusicApi
     /// <summary>
     /// 获取歌单分类 — 参考原版 lx-music-desktop：wapi getTagList
     /// </summary>
-    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
+        public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("获取{Name}歌单分类", SourceName);
-
-        try
+        var official = await _httpClient.GetAsync("http://wapi.kuwo.cn/api/pc/classify/playlist/getTagList", new Dictionary<string, string>
         {
-            var url = "http://wapi.kuwo.cn/api/pc/classify/playlist/getTagList";
-            var parameters = new Dictionary<string, string>
+            ["cmd"] = "rcm_keyword_playlist", ["user"] = "0", ["prod"] = "kwplayer_pc_9.0.5.0",
+            ["vipver"] = "9.0.5.0", ["source"] = "kwplayer_pc_9.0.5.0", ["loginUid"] = "0",
+            ["loginSid"] = "0", ["appUid"] = "76039576"
+        }, null, cancellationToken);
+        var hot = await _httpClient.GetAsync("http://wapi.kuwo.cn/api/pc/classify/playlist/getRcmTagList", new Dictionary<string, string>
+        {
+            ["loginUid"] = "0", ["loginSid"] = "0", ["appUid"] = "76039576"
+        }, null, cancellationToken);
+        using var officialDoc = JsonDocument.Parse(official);
+        using var hotDoc = JsonDocument.Parse(hot);
+        var categories = new List<PlaylistCategory>();
+        var hotTags = new List<PlaylistTag>();
+        if (hotDoc.RootElement.ValueKind == JsonValueKind.Object &&
+            hotDoc.RootElement.TryGetProperty("code", out var hotCode) && hotCode.GetInt32() == 200 &&
+            hotDoc.RootElement.TryGetProperty("data", out var hotData) && hotData.ValueKind == JsonValueKind.Array &&
+            hotData.GetArrayLength() > 0 && hotData[0].TryGetProperty("data", out var hotList))
+        {
+            foreach (var tag in hotList.EnumerateArray())
             {
-                ["cmd"] = "rcm_keyword_playlist", ["user"] = "0",
-                ["prod"] = "kwplayer_pc_9.0.5.0", ["vipver"] = "9.0.5.0",
-                ["source"] = "kwplayer_pc_9.0.5.0",
-                ["loginUid"] = "0", ["loginSid"] = "0", ["appUid"] = "76039576"
-            };
-
-            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
-            var result = JsonSerializer.Deserialize<JsonElement>(response);
-
-            var categories = new List<PlaylistCategory>
-            {
-                new PlaylistCategory
-                {
-                    Id = "all",
-                    Name = "全部歌单",
-                    Tags = new List<PlaylistTag> { new() { Id = "", Name = "全部" } }
-                }
-            };
-
-            if (result.TryGetProperty("code", out var code) && code.GetInt32() == 200 &&
-                result.TryGetProperty("data", out var groups) &&
-                groups.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var group in groups.EnumerateArray())
-                {
-                    var groupName = group.TryGetProperty("name", out var gn) ? gn.GetString() ?? "" : "";
-                    if (string.IsNullOrEmpty(groupName)) continue;
-
-                    var tagList = new List<PlaylistTag>();
-                    if (group.TryGetProperty("data", out var tagData) && tagData.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var tag in tagData.EnumerateArray())
-                        {
-                            var name = tag.TryGetProperty("name", out var tn) ? tn.GetString() ?? "" : "";
-                            var id = tag.TryGetProperty("id", out var tid)
-                                ? (tid.ValueKind == JsonValueKind.Number ? tid.GetInt64().ToString() : tid.GetString() ?? "")
-                                : "";
-                            if (!string.IsNullOrEmpty(name))
-                                tagList.Add(new PlaylistTag { Id = id, Name = name });
-                        }
-                    }
-
-                    if (tagList.Count > 0)
-                        categories.Add(new PlaylistCategory { Id = groupName, Name = groupName, Tags = tagList });
-                }
+                var id = GetKuwoTagId(tag);
+                var name = GetString(tag, "name");
+                if (id.Length > 0 && name.Length > 0) hotTags.Add(new PlaylistTag { Id = id, Name = name });
             }
-
-            if (categories.Count <= 1)
-                return GetDefaultCategories();
-
-            return categories;
         }
-        catch (Exception ex)
+        if (hotTags.Count > 0)
+            categories.Add(new PlaylistCategory { Id = "recommend", Name = "推荐", Tags = hotTags });
+
+        if (officialDoc.RootElement.ValueKind == JsonValueKind.Object &&
+            officialDoc.RootElement.TryGetProperty("code", out var code) && code.GetInt32() == 200 &&
+            officialDoc.RootElement.TryGetProperty("data", out var groups) && groups.ValueKind == JsonValueKind.Array)
         {
-            _logger.LogError(ex, "获取酷我歌单分类失败，使用内置分类");
-            return GetDefaultCategories();
+            foreach (var group in groups.EnumerateArray())
+            {
+                var groupName = GetString(group, "name");
+                if (groupName.Length == 0 || !group.TryGetProperty("data", out var tags) || tags.ValueKind != JsonValueKind.Array) continue;
+                var list = tags.EnumerateArray().Select(tag => new PlaylistTag { Id = GetKuwoTagId(tag), Name = GetString(tag, "name") })
+                    .Where(tag => tag.Id.Length > 0 && tag.Name.Length > 0).ToList();
+                if (list.Count > 0) categories.Add(new PlaylistCategory { Id = groupName, Name = groupName, Tags = list });
+            }
         }
+        return categories;
+    }
+
+    private static string GetKuwoTagId(JsonElement tag)
+    {
+        var id = GetString(tag, "id");
+        var digest = GetString(tag, "digest");
+        return id.Length == 0 ? string.Empty : digest.Length == 0 ? id : id + "-" + digest;
+    }
+
+    private static string GetString(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value)) return string.Empty;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString() ?? string.Empty,
+            JsonValueKind.Number => value.GetRawText(),
+            _ => string.Empty
+        };
     }
 
     private static List<PlaylistCategory> GetDefaultCategories()
@@ -427,78 +425,53 @@ public class KuwoMusicService : IMusicApi
     /// <summary>
     /// 按分类获取歌单列表 — 参考原版：getRcmPlayList(全部) / getTagPlayList(指定标签)
     /// </summary>
-    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
+        public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
     {
-        try
+        var id = categoryId ?? string.Empty;
+        var dash = id.IndexOf('-');
+        if (dash > 0) id = id[..dash];
+        var isAll = id.Length == 0 || id == "all";
+        var url = isAll
+            ? "http://wapi.kuwo.cn/api/pc/classify/playlist/getRcmPlayList"
+            : "http://wapi.kuwo.cn/api/pc/classify/playlist/getTagPlayList";
+        var parameters = new Dictionary<string, string>
         {
-            _logger.LogInformation("获取酷我歌单: {Category}, 页码: {Page}", categoryId, page);
-
-            var isAll = string.IsNullOrEmpty(categoryId) || categoryId == "all";
-            var url = isAll
-                ? "http://wapi.kuwo.cn/api/pc/classify/playlist/getRcmPlayList"
-                : "http://wapi.kuwo.cn/api/pc/classify/playlist/getTagPlayList";
-
-            var parameters = new Dictionary<string, string>
+            ["loginUid"] = "0", ["loginSid"] = "0", ["appUid"] = "76039576",
+            ["pn"] = page.ToString(), ["rn"] = pageSize.ToString()
+        };
+        if (isAll) parameters["order"] = "hot"; else parameters["id"] = id;
+        var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
+        using var document = JsonDocument.Parse(response);
+        var root = document.RootElement;
+        var playlists = new List<Playlist>();
+        var total = 0;
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("code", out var code) && code.GetInt32() == 200 &&
+            root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+        {
+            total = GetInt(data, "total");
+            if (data.TryGetProperty("data", out var items) && items.ValueKind == JsonValueKind.Array)
             {
-                ["loginUid"] = "0", ["loginSid"] = "0", ["appUid"] = "76039576",
-                ["pn"] = page.ToString(), ["rn"] = pageSize.ToString()
-            };
-            if (isAll)
-                parameters["order"] = "hot";
-            else
-                parameters["id"] = categoryId;
-
-            var response = await _httpClient.GetAsync(url, parameters, null, cancellationToken);
-            var result = JsonSerializer.Deserialize<JsonElement>(response);
-
-            var playlists = new List<Playlist>();
-            int total = 0;
-
-            if (result.TryGetProperty("code", out var code) && code.GetInt32() == 200 &&
-                result.TryGetProperty("data", out var data))
-            {
-                if (data.TryGetProperty("total", out var tEl))
+                foreach (var item in items.EnumerateArray())
                 {
-                    if (tEl.ValueKind == JsonValueKind.Number) total = tEl.GetInt32();
-                    else int.TryParse(tEl.GetString() ?? "0", out total);
-                }
-
-                if (data.TryGetProperty("data", out var list) && list.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var item in list.EnumerateArray())
+                    var playlistId = GetString(item, "id");
+                    if (playlistId.Length == 0) continue;
+                    playlists.Add(new Playlist
                     {
-                        var id = item.TryGetProperty("id", out var idEl)
-                            ? (idEl.ValueKind == JsonValueKind.Number ? idEl.GetInt64().ToString() : idEl.GetString() ?? "")
-                            : "";
-                        if (string.IsNullOrEmpty(id)) continue;
-
-                        playlists.Add(new Playlist
-                        {
-                            Id = "kw_" + id,
-                            Name = item.TryGetProperty("name", out var nm) ? nm.GetString() ?? "" : "",
-                            Description = item.TryGetProperty("desc", out var desc) ? desc.GetString() ?? "" : "",
-                            Tags = new List<string>(),
-                            Type = PlaylistType.Recommend,
-                            CreatedDate = DateTime.Now,
-                            ModifiedDate = DateTime.Now
-                        });
-                    }
+                        Id = "kw_" + playlistId,
+                        Name = GetString(item, "name"),
+                        Description = GetString(item, "desc"),
+                        Type = PlaylistType.Recommend
+                    });
                 }
             }
+        }
+        return new PagedResult<Playlist> { CurrentPage = page, PageSize = pageSize, TotalItems = total, Items = playlists };
+    }
 
-            return new PagedResult<Playlist>
-            {
-                CurrentPage = page,
-                PageSize = pageSize,
-                TotalItems = total,
-                Items = playlists
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "获取酷我歌单列表失败: {Category}", categoryId);
-            return PagedResult<Playlist>.Empty(page, pageSize);
-        }
+    private static int GetInt(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value)) return 0;
+        return value.ValueKind == JsonValueKind.Number ? value.GetInt32() : int.TryParse(value.GetString(), out var number) ? number : 0;
     }
 
     /// <summary>
@@ -506,8 +479,7 @@ public class KuwoMusicService : IMusicApi
     /// </summary>
     public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
-        try
-        {
+
             _logger.LogInformation("获取酷我歌单详情: {PlaylistId}", playlistId);
 
             var url = "http://nplserver.kuwo.cn/pl.svc";
@@ -563,12 +535,7 @@ public class KuwoMusicService : IMusicApi
                 TotalItems = total,
                 Items = musicList
             };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "获取酷我歌单详情失败: {PlaylistId}", playlistId);
-            return PagedResult<MusicInfo>.Empty(page, pageSize);
-        }
+
     }
 
     /// <summary>

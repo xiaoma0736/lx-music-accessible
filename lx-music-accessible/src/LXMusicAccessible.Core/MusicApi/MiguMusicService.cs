@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using System.Linq;
 using LXMusicAccessible.Models;
@@ -275,58 +275,49 @@ public class MiguMusicService : IMusicApi
     }
 
     /// <summary>获取歌单分类 — 参考原版：musiclistplaza-taglist（扁平标签）</summary>
-    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
+        public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("获取{Name}歌单分类", SourceName);
+        var response = await _httpClient.GetAsync("https://app.c.nf.migu.cn/pc/v1.0/template/musiclistplaza-taglist/release", null,
+            new Dictionary<string, string> { ["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15" }, cancellationToken);
+        using var document = JsonDocument.Parse(response);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("code", out var code) || code.GetString() != "000000" ||
+            !root.TryGetProperty("data", out var blocks) || blocks.ValueKind != JsonValueKind.Array || blocks.GetArrayLength() == 0)
+            throw new InvalidOperationException("Migu playlist catalogue returned no data.");
 
-        try
+        var result = new List<PlaylistCategory>();
+        var first = blocks[0];
+        if (first.TryGetProperty("content", out var hotItems) && hotItems.ValueKind == JsonValueKind.Array)
         {
-            var url = "https://app.c.nf.migu.cn/pc/v1.0/template/musiclistplaza-taglist/release";
-            var headers = new Dictionary<string, string> { ["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15" };
-            var response = await _httpClient.GetAsync(url, null, headers, cancellationToken);
-            var data = JsonSerializer.Deserialize<JsonElement>(response);
-
-            var categories = new List<PlaylistCategory>
+            var hotTags = ParseMiguTags(hotItems);
+            if (hotTags.Count > 0) result.Add(new PlaylistCategory { Id = "recommend", Name = "推荐", Tags = hotTags });
+        }
+        foreach (var block in blocks.EnumerateArray().Skip(1))
+        {
+            if (!block.TryGetProperty("header", out var header) || !header.TryGetProperty("title", out var title) ||
+                !block.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) continue;
+            var tags = ParseMiguTags(content);
+            if (tags.Count > 0)
             {
-                new PlaylistCategory
-                {
-                    Id = "all",
-                    Name = "全部歌单",
-                    Tags = new List<PlaylistTag> { new() { Id = "", Name = "全部" } }
-                }
-            };
-
-            var tagList = new List<PlaylistTag>();
-            if (data.TryGetProperty("code", out var code) && code.GetString() == "000000" &&
-                data.TryGetProperty("data", out var d) &&
-                d.TryGetProperty("content", out var content) &&
-                content.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in content.EnumerateArray())
-                {
-                    if (!item.TryGetProperty("texts", out var texts) || texts.ValueKind != JsonValueKind.Array || texts.GetArrayLength() < 2)
-                        continue;
-                    var name = texts[0].GetString() ?? "";
-                    var id = texts[1].GetString() ?? "";
-                    if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(id))
-                        tagList.Add(new PlaylistTag { Id = id, Name = name });
-                }
+                var name = title.GetString() ?? "";
+                result.Add(new PlaylistCategory { Id = name, Name = name, Tags = tags });
             }
-
-            categories.Add(new PlaylistCategory
-            {
-                Id = "tags",
-                Name = "热门标签",
-                Tags = tagList.Count > 0 ? tagList : DefaultTagList()
-            });
-
-            return categories;
         }
-        catch (Exception ex)
+        return result;
+    }
+
+    private static List<PlaylistTag> ParseMiguTags(JsonElement items)
+    {
+        var tags = new List<PlaylistTag>();
+        foreach (var item in items.EnumerateArray())
         {
-            _logger.LogError(ex, "获取咪咕歌单分类失败，使用内置分类");
-            return GetDefaultCategories();
+            if (!item.TryGetProperty("texts", out var texts) || texts.ValueKind != JsonValueKind.Array || texts.GetArrayLength() < 2) continue;
+            var name = texts[0].GetString() ?? "";
+            var id = texts[1].GetString() ?? "";
+            if (name.Length > 0 && id.Length > 0) tags.Add(new PlaylistTag { Id = id, Name = name });
         }
+        return tags;
     }
 
     private static List<PlaylistCategory> GetDefaultCategories()
@@ -350,63 +341,53 @@ public class MiguMusicService : IMusicApi
     };
 
     /// <summary>按分类获取歌单列表 — 参考原版：square-recommend(全部) / listbytag(指定标签)</summary>
-    public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
+        public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
     {
-        try
+        var headers = new Dictionary<string, string> { ["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15" };
+        var playlists = new List<Playlist>();
+        int? total = null;
+        if (string.IsNullOrEmpty(categoryId) || categoryId == "all")
         {
-            var headers = new Dictionary<string, string> { ["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15" };
-            var playlists = new List<Playlist>();
-
-            if (string.IsNullOrEmpty(categoryId) || categoryId == "all")
-            {
-                var url = $"https://app.c.nf.migu.cn/pc/bmw/page-data/playlist-square-recommend/v1.0?templateVersion=2&pageNo={page}";
-                var response = await _httpClient.GetAsync(url, null, headers, cancellationToken);
-                var data = JsonSerializer.Deserialize<JsonElement>(response);
-                CollectMiguPlaylists(data, playlists);
-                return new PagedResult<Playlist> { CurrentPage = page, PageSize = pageSize, TotalItems = playlists.Count, Items = playlists };
-            }
-
-            var listUrl = $"https://app.c.nf.migu.cn/pc/v1.0/template/musiclistplaza-listbytag/release?pageNumber={page}&templateVersion=2&tagId={categoryId}";
-            var listResponse = await _httpClient.GetAsync(listUrl, null, headers, cancellationToken);
-            var listData = JsonSerializer.Deserialize<JsonElement>(listResponse);
-
-            if (listData.TryGetProperty("data", out var d))
-            {
-                if (d.TryGetProperty("contents", out var contents) && contents.ValueKind == JsonValueKind.Array)
-                {
-                    CollectMiguPlaylists(contents, playlists);
-                }
-                else if (d.TryGetProperty("contentItemList", out var items) && items.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var block in items.EnumerateArray())
-                    {
-                        if (!block.TryGetProperty("itemList", out var il) || il.ValueKind != JsonValueKind.Array) continue;
-                        foreach (var item in il.EnumerateArray())
-                        {
-                            string id = "", name = "";
-                            if (item.TryGetProperty("logEvent", out var le) && le.TryGetProperty("contentId", out var cid))
-                                id = cid.GetString() ?? "";
-                            if (item.TryGetProperty("title", out var t)) name = t.GetString() ?? "";
-                            if (!string.IsNullOrEmpty(id))
-                                playlists.Add(new Playlist
-                                {
-                                    Id = "migu_" + id,
-                                    Name = name,
-                                    Description = "",
-                                    Tags = new List<string>(),
-                                    Type = PlaylistType.Recommend,
-                                    CreatedDate = DateTime.Now,
-                                    ModifiedDate = DateTime.Now
-                                });
-                        }
-                    }
-                }
-            }
-
-            // 标签接口不返回总数，交由 UI 估算分页
-            return new PagedResult<Playlist> { CurrentPage = page, PageSize = pageSize, TotalItems = 0, Items = playlists };
+            var url = $"https://app.c.nf.migu.cn/pc/bmw/page-data/playlist-square-recommend/v1.0?templateVersion=2&pageNo={page}";
+            var response = await _httpClient.GetAsync(url, null, headers, cancellationToken);
+            using var document = JsonDocument.Parse(response);
+            CollectMiguPlaylists(document.RootElement, playlists);
         }
-        catch (Exception ex) { _logger.LogError(ex, "获取咪咕歌单失败"); return PagedResult<Playlist>.Empty(page, pageSize); }
+        else
+        {
+            var url = $"https://app.c.nf.migu.cn/pc/v1.0/template/musiclistplaza-listbytag/release?pageNumber={page}&templateVersion=2&tagId={Uri.EscapeDataString(categoryId)}";
+            var response = await _httpClient.GetAsync(url, null, headers, cancellationToken);
+            using var document = JsonDocument.Parse(response);
+            if (!document.RootElement.TryGetProperty("data", out var data))
+                throw new InvalidOperationException("Migu playlist page returned no data.");
+            CollectMiguPlaylists(data, playlists);
+            total = FindMiguTotal(data);
+        }
+        var effectiveTotal = total ?? (playlists.Count > 0 ? page * pageSize : Math.Max(0, (page - 1) * pageSize));
+        return new PagedResult<Playlist> { CurrentPage = page, PageSize = pageSize, TotalItems = effectiveTotal, Items = playlists };
+    }
+
+    private static int? FindMiguTotal(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (element.TryGetProperty("total_cnt", out var total))
+                return total.ValueKind == JsonValueKind.Number ? total.GetInt32() : int.TryParse(total.GetString(), out var parsed) ? parsed : null;
+            foreach (var property in element.EnumerateObject())
+            {
+                var value = FindMiguTotal(property.Value);
+                if (value.HasValue) return value;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                var value = FindMiguTotal(item);
+                if (value.HasValue) return value;
+            }
+        }
+        return null;
     }
 
     /// <summary>递归收集模板响应中的歌单节点（resType=="2021"）</summary>
@@ -451,8 +432,7 @@ public class MiguMusicService : IMusicApi
     /// <summary>获取歌单详情 — 参考原版：MIGUM3.0/resource/playlist/song/v2.0</summary>
     public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
     {
-        try
-        {
+
             var url = $"https://app.c.nf.migu.cn/MIGUM3.0/resource/playlist/song/v2.0?pageNo={page}&pageSize={pageSize}&playlistId={playlistId}";
             var headers = new Dictionary<string, string>
             {
@@ -473,8 +453,7 @@ public class MiguMusicService : IMusicApi
                     foreach (var s in songs.EnumerateArray()) musicList.Add(MapMiguPlaylistSong(s));
             }
             return new PagedResult<MusicInfo> { CurrentPage = page, PageSize = pageSize, TotalItems = total, Items = musicList };
-        }
-        catch (Exception ex) { _logger.LogError(ex, "获取咪咕歌单详情失败"); return PagedResult<MusicInfo>.Empty(page, pageSize); }
+
     }
 
     private static MusicInfo MapMiguPlaylistSong(JsonElement song)
