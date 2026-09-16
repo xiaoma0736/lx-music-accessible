@@ -190,7 +190,7 @@ public partial class WinFormsShell : Form
         var help = new MenuItem("&帮助");
         help.MenuItems.Add(new MenuItem("使用说明(&G)", (_, _) => _services.Windows?.CreateUserGuide(this).Show()));
         help.MenuItems.Add(new MenuItem("赞助(&Z)", (_, _) => _services.Windows?.CreateSponsor(this).ShowDialog(this)));
-        help.MenuItems.Add(new MenuItem("关于(&A)", (_, _) => MessageBox.Show(this, "落雪音乐无障碍版 V2.0\n专为盲人用户优化的音乐播放器。", "关于", MessageBoxButtons.OK, MessageBoxIcon.Information)));
+        help.MenuItems.Add(new MenuItem("关于(&A)", (_, _) => MessageBox.Show(this, "落雪音乐无障碍版 3.0\n专为盲人用户优化的音乐播放器。", "关于", MessageBoxButtons.OK, MessageBoxIcon.Information)));
         foreach (var item in new[] { file, play, navigate, tools, help })
         {
             item.OwnerDraw = false;

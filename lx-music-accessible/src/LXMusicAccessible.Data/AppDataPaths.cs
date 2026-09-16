@@ -19,17 +19,22 @@ public static class AppDataPaths
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DefaultDirName);
 
     /// <summary>Returns a verified owned directory, a safe legacy custom directory, or the default.</summary>
-    public static string ResolveDataDir()
+    public static string ResolveDataDir() => ResolveDataDir(DefaultDataDir);
+
+    public static string ResolveDataDir(string localApplicationDataDirectory)
     {
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(localApplicationDataDirectory);
+        var root = Path.GetFullPath(localApplicationDataDirectory);
+        var defaultDirectory = Path.Combine(root, DefaultDirName);
         try
         {
-            var pointerPath = Path.Combine(DefaultDataDir, PointerFileName);
+            var pointerPath = Path.Combine(root, DefaultDirName, PointerFileName);
             if (File.Exists(pointerPath))
             {
-                return TryReadPointer(pointerPath, out var owned) ? owned.Path : DefaultDataDir;
+                return TryReadPointer(pointerPath, out var owned) ? owned.Path : defaultDirectory;
             }
 
-            var legacyPointerPath = Path.Combine(DefaultDataDir, LegacyPointerFileName);
+            var legacyPointerPath = Path.Combine(root, DefaultDirName, LegacyPointerFileName);
             if (File.Exists(legacyPointerPath))
             {
                 var legacyPath = File.ReadAllText(legacyPointerPath).Trim();
@@ -46,17 +51,21 @@ public static class AppDataPaths
             Debug.WriteLine($"Data directory resolution failed: {ex.GetType().Name}");
         }
 
-        return DefaultDataDir;
+        return defaultDirectory;
     }
-
     /// <summary>
     /// Establishes ownership only for the conventional default directory. Legacy custom directories
     /// remain usable but unowned, so cleanup will preserve them.
     /// </summary>
-    public static string PrepareDataDir()
+    public static string PrepareDataDir() => PrepareDataDir(DefaultDataDir);
+
+    public static string PrepareDataDir(string localApplicationDataDirectory)
     {
-        var directory = ResolveDataDir();
-        if (!string.Equals(Path.GetFullPath(directory), Path.GetFullPath(DefaultDataDir), PathComparison))
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(localApplicationDataDirectory);
+        var root = Path.GetFullPath(localApplicationDataDirectory);
+        var defaultDirectory = Path.Combine(root, DefaultDirName);
+        var directory = ResolveDataDir(root);
+        if (!string.Equals(Path.GetFullPath(directory), Path.GetFullPath(defaultDirectory), PathComparison))
             return directory;
 
         try
@@ -67,7 +76,7 @@ public static class AppDataPaths
             {
                 try
                 {
-                    WriteDefaultOwnership(ownershipId);
+                    WriteDefaultOwnership(root, directory, ownershipId);
                 }
                 catch
                 {
@@ -91,7 +100,6 @@ public static class AppDataPaths
 
         return directory;
     }
-
     /// <summary>Creates a dedicated owned child beneath a user-selected parent directory.</summary>
     public static OwnedAppDataDirectory CreateOwnedDataDirectory(string selectedParent)
     {
@@ -250,12 +258,12 @@ public static class AppDataPaths
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         DefaultOwnershipFileName);
 
-    private static void WriteDefaultOwnership(Guid ownershipId)
+    private static void WriteDefaultOwnership(string localApplicationDataDirectory, string defaultDirectory, Guid ownershipId)
     {
-        var record = new DataDirectoryPointer(PointerSchemaVersion, Path.GetFullPath(DefaultDataDir), ownershipId);
-        var temporaryPath = DefaultOwnershipFilePath + ".tmp";
+        var record = new DataDirectoryPointer(PointerSchemaVersion, Path.GetFullPath(defaultDirectory), ownershipId);
+        var temporaryPath = Path.Combine(localApplicationDataDirectory, DefaultOwnershipFileName) + ".tmp";
         File.WriteAllText(temporaryPath, JsonSerializer.Serialize(record));
-        FrameworkCompatibility.Move(temporaryPath, DefaultOwnershipFilePath, true);
+        FrameworkCompatibility.Move(temporaryPath, Path.Combine(localApplicationDataDirectory, DefaultOwnershipFileName), true);
     }
 
     private static bool TryReadDefaultOwnership(out OwnedAppDataDirectory ownedDirectory)

@@ -8,7 +8,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <AssemblyName>落雪音乐无障碍版V2.0</AssemblyName>
     <RootNamespace>LXMusicAccessible</RootNamespace>
-    <Version>2.0.0</Version>
+    <Version>3.0.0</Version>
     <Authors>LX Music Accessible Team</Authors>
     <Product>落雪音乐无障碍版</Product>
     <Description>专为盲人用户优化的音乐播放器</Description>

@@ -16,6 +16,34 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
+        if (args.Length == 0 || (args.Length > 0 && args[0] == "--install-parent"))
+        {
+            var runtimeCheck = DotNetFrameworkRequirement.Evaluate();
+            var diagnosticPath = WriteRuntimeDiagnostics(runtimeCheck);
+            if (!runtimeCheck.IsInstalled)
+            {
+                var runtimeTitle = "Microsoft .NET Framework 4.8 required";
+                var runtimeMessage =
+                    "This app requires Microsoft .NET Framework 4.8 (x64)." + Environment.NewLine +
+                    "Install the runtime, then run Setup again:" + Environment.NewLine +
+                    DotNetFrameworkRequirement.DownloadUrl + Environment.NewLine + Environment.NewLine +
+                    "Diagnostics: " + (diagnosticPath ?? "not written");
+                if (args.Length > 0)
+                {
+                    Console.Error.WriteLine(runtimeMessage);
+                    return 2;
+                }
+
+                MessageBox.Show(
+                    runtimeMessage,
+                    runtimeTitle,
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error,
+                    MessageBoxDefaultButton.Button1,
+                    MessageBoxOptions.DefaultDesktopOnly);
+                return 2;
+            }
+        }
         if (args.Length == 2 && args[0] == "--install-parent")
             return RunNonInteractiveInstall(args[1]);
         if (args.Length == 3 && args[0] == "--uninstall-target" && Guid.TryParse(args[2], out var ownershipId))
@@ -88,6 +116,35 @@ static class Program
             MessageBox.Show($"安装失败：{ex.Message}", "落雪音乐无障碍版 安装",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
+        }
+    }
+
+    private static string? WriteRuntimeDiagnostics(DotNetFrameworkCheck check)
+    {
+        try
+        {
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "LXMusicAccessible",
+                "setup");
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, "net48-diagnostics.txt");
+            File.WriteAllText(
+                path,
+                string.Format(
+                    "{0} installed={1}; required={2}; release={3}; {4}{5}",
+                    DateTimeOffset.UtcNow.ToString("O"),
+                    check.IsInstalled,
+                    check.RequiredRelease,
+                    check.Release?.ToString() ?? "missing",
+                    check.Diagnostic,
+                    Environment.NewLine));
+            return path;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Runtime diagnostics write failed: {ex.GetType().Name}");
+            return null;
         }
     }
 
@@ -220,7 +277,7 @@ static class Program
                 @"Software\Microsoft\Windows\CurrentVersion\Uninstall\LxMusicAccessible");
             if (key == null) return;
             key.SetValue("DisplayName", "落雪音乐无障碍版");
-            key.SetValue("DisplayVersion", "2.0.0");
+            key.SetValue("DisplayVersion", "3.0.0");
             key.SetValue("Publisher", "LX Music Accessible Team");
             key.SetValue("DisplayIcon", exePath);
             key.SetValue("InstallLocation", installDir);
