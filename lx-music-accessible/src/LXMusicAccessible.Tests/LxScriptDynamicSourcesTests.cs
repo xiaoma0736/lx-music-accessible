@@ -87,7 +87,6 @@ public sealed class LxScriptDynamicSourcesTests
     [InlineData("lx.send(lx.EVENT_NAMES.inited, { sources: { tx: {} } });")]
     [InlineData("lx.send(lx.EVENT_NAMES.inited, { sources: { tx: { type: 'music', qualitys: ['128k'] } } });")]
     [InlineData("lx.send(lx.EVENT_NAMES.inited, { sources: { tx: { type: 'media', actions: ['musicUrl'], qualitys: ['128k'] } } });")]
-    [InlineData("lx.send(lx.EVENT_NAMES.inited, { sources: { tx: { type: 'music', actions: ['lyric'], qualitys: ['128k'] } } });")]
     [InlineData("lx.send(lx.EVENT_NAMES.inited, { sources: { tx: { type: 'music', actions: 'musicUrl', qualitys: ['128k'] } } });")]
     [InlineData("lx.send(lx.EVENT_NAMES.inited, { sources: { tx: { type: 'music', actions: ['musicUrl'], qualitys: ['', ' ', null, 128] } } });")]
     [InlineData("lx.send(lx.EVENT_NAMES.inited, { sources: { tx: { type: 'music', actions: ['musicUrl'], qualitys: '128k' } } });")]

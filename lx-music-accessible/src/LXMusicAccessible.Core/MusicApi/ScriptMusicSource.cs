@@ -218,6 +218,8 @@ public class ScriptMusicSource : IDisposable
                 Kind = LxSourceType.JsonManifest,
                 Name = manifest.Name,
                 Version = manifest.Version,
+                Author = manifest.Author,
+                Homepage = manifest.Homepage,
                 Description = manifest.Description,
                 JsonSource = manifest,
                 SupportedSources = manifest.Platforms.Keys.Select(MapSourceId)
@@ -235,6 +237,11 @@ public class ScriptMusicSource : IDisposable
                     .Where(mappedQuality => mappedQuality is not null)
                     .Select(mappedQuality => mappedQuality!)
                     .ToList() ?? [];
+                var actions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (definition.Url is not null) actions.Add("musicUrl");
+                if (definition.Lyric is not null) actions.Add("lyric");
+                if (definition.Pic is not null) actions.Add("pic");
+                if (actions.Count > 0) jsonInfo.ActionMap[mappedPlatform] = actions;
                 };
             return jsonInfo;
         }
@@ -256,6 +263,10 @@ public class ScriptMusicSource : IDisposable
 
         var descMatch = Regex.Match(script, @"@description\s+(.+?)(?:\n|\*\/)", RegexOptions.Singleline);
         info.Description = descMatch.Success ? descMatch.Groups[1].Value.Trim() : "";
+        var authorMatch = Regex.Match(script, @"@author\s+(.+?)(?:\n|\*\/)", RegexOptions.Singleline);
+        info.Author = authorMatch.Success ? authorMatch.Groups[1].Value.Trim() : "";
+        var homepageMatch = Regex.Match(script, @"@homepage\s+(.+?)(?:\n|\*\/)", RegexOptions.Singleline);
+        info.Homepage = homepageMatch.Success ? homepageMatch.Groups[1].Value.Trim() : "";
 
         // 2. 提取 API_URL（宽松：混淆脚本常无 API_URL，交由 LxScriptEngine 执行，正则路径自动跳过）
         var apiUrlMatch = Regex.Match(script, @"(?:const|let|var)\s+API_URL\s*=\s*(?:[`""'])([^`""']+)(?:[`""'])");
@@ -539,6 +550,9 @@ public class LxScriptInfo
     public string ApiKey { get; set; } = "";
     public List<string> SupportedSources { get; set; } = new();
     public Dictionary<string, List<string>> QualityMap { get; set; } = new();
+    public Dictionary<string, HashSet<string>> ActionMap { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public string Author { get; set; } = "";
+    public string Homepage { get; set; } = "";
     public LxUrlPattern UrlPattern { get; set; } = LxUrlPattern.None;
     public string? RawScript { get; set; }
     public DateTime LoadedAt { get; set; }

@@ -743,7 +743,18 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
     }
 
     private static bool SupportsRequestedSource(LxScriptInfo script, string source) =>
-        script.SupportedSources.Contains(source, StringComparer.OrdinalIgnoreCase);
+        script.SupportedSources.Contains(source, StringComparer.OrdinalIgnoreCase)
+        && (!script.ActionMap.TryGetValue(ToLxSourceId(source), out var actions)
+            || actions.Count == 0
+            || actions.Contains("musicUrl", StringComparer.OrdinalIgnoreCase));
+
+    private static string ToLxSourceId(string source) => source.ToLowerInvariant() switch
+    {
+        "qq" => "tx",
+        "netease" => "wy",
+        "migu" => "mg",
+        _ => source.ToLowerInvariant()
+    };
 
     private static bool SupportsQuality(LxScriptInfo script, string source, string quality) =>
         !script.QualityMap.TryGetValue(source, out var declared)

@@ -54,7 +54,9 @@ public class LxScriptEngine
         "request_timeout",
         "response_limit_exceeded",
         "script_encoding_invalid",
-        "url_invalid"
+        "url_invalid",
+        "action_not_declared",
+        "script_result_invalid"
     ];
     private readonly ILogger<LxScriptEngine> _logger;
     private readonly ScriptNetworkClient _networkClient;
@@ -162,6 +164,11 @@ public class LxScriptEngine
     {
         LastFailure = null;
         if (!IsScriptAllowed(script)) return default;
+        if (!IsActionDeclared(script, action, source))
+        {
+            SetFailure("action_not_declared");
+            return default;
+        }
         using var execution = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         execution.CancelAfter(ExecutionTimeout);
         try
@@ -210,7 +217,13 @@ public class LxScriptEngine
             var valueJson = value.GetString();
             if (string.IsNullOrWhiteSpace(valueJson) || valueJson == "null") return default;
             using var valueDoc = JsonDocument.Parse(valueJson);
-            return parse(valueDoc.RootElement);
+            var parsed = parse(valueDoc.RootElement);
+            if (!IsValidActionResult(action, valueDoc.RootElement, parsed))
+            {
+                SetFailure("script_result_invalid");
+                throw new LxScriptActionException("script_result_invalid");
+            }
+            return parsed;
         }
 
         if (root.TryGetProperty("err", out var err) && err.ValueKind == JsonValueKind.String)
@@ -343,12 +356,18 @@ public class LxScriptEngine
                     || !string.Equals(type.GetString(), "music", StringComparison.Ordinal)
                     || !declaredSource.Value.TryGetProperty("actions", out var actions)
                     || actions.ValueKind != JsonValueKind.Array
-                    || !actions.EnumerateArray().Any(item =>
-                        item.ValueKind == JsonValueKind.String
-                        && string.Equals(item.GetString(), "musicUrl", StringComparison.Ordinal))
                     || !declaredSource.Value.TryGetProperty("qualitys", out var qualities)
                     || qualities.ValueKind != JsonValueKind.Array)
                     continue;
+
+                var validActions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var actionValue in actions.EnumerateArray())
+                {
+                    if (actionValue.ValueKind != JsonValueKind.String) continue;
+                    var action = actionValue.GetString()?.Trim();
+                    if (action is "musicUrl" or "lyric" or "pic") validActions.Add(action!);
+                }
+                if (validActions.Count == 0) continue;
 
                 var seenQualities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var parsedQualities = new List<string>();
@@ -363,6 +382,9 @@ public class LxScriptEngine
 
                 if (!script.SupportedSources.Contains(platform, StringComparer.OrdinalIgnoreCase))
                     script.SupportedSources.Add(platform);
+                if (!script.ActionMap.TryGetValue(platform, out var existingActions))
+                    script.ActionMap[platform] = existingActions = new(StringComparer.OrdinalIgnoreCase);
+                existingActions.UnionWith(validActions);
                 if (!script.QualityMap.TryGetValue(platform, out var existingQualities))
                     script.QualityMap[platform] = existingQualities = [];
                 foreach (var quality in parsedQualities)
@@ -388,6 +410,31 @@ public class LxScriptEngine
         "git" or "github" => null,
         _ => source.ToLowerInvariant()
     };
+
+    private static bool IsActionDeclared(LxScriptInfo script, string action, string source)
+    {
+        if (!script.ActionMap.TryGetValue(source.ToLowerInvariant(), out var declared) || declared.Count == 0)
+            return true;
+        return declared.Contains(action, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool IsValidActionResult<T>(string action, JsonElement value, T? parsed)
+    {
+        if (action is "musicUrl" or "pic")
+        {
+            return value.ValueKind == JsonValueKind.String
+                && value.GetString() is { Length: > 0 and <= 2048 } candidate
+                && Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+        }
+
+        if (action != "lyric" || parsed is not LxLyricRaw lyric) return false;
+        return !string.IsNullOrWhiteSpace(lyric.Lyric)
+            && lyric.Lyric.Length <= 51200
+            && (lyric.Tlyric?.Length ?? 0) <= 5120
+            && (lyric.Rlyric?.Length ?? 0) <= 5120
+            && (lyric.Lxlyric?.Length ?? 0) <= 8192;
+    }
 
     private static LxLyricRaw? ParseLyricResult(JsonElement v)
     {
@@ -421,8 +468,8 @@ public class LxScriptEngine
             ["name"] = script.Name,
             ["description"] = script.Description ?? "",
             ["version"] = script.Version ?? "1.0.0",
-            ["author"] = "",
-            ["homepage"] = "",
+            ["author"] = script.Author ?? "",
+            ["homepage"] = script.Homepage ?? "",
             ["rawScript"] = script.RawScript
         });
 
@@ -555,8 +602,12 @@ public class LxScriptEngine
             }
             req.Headers.TryAddWithoutValidation("User-Agent", "lx-music-desktop/2.0.0");
 
-            if (!string.IsNullOrEmpty(body) && req.Method != HttpMethod.Get && req.Method != HttpMethod.Head)
-                req.Content = new StringContent(body, Encoding.UTF8, contentType ?? "application/json");
+            if (req.Method != HttpMethod.Get && req.Method != HttpMethod.Head && (!string.IsNullOrEmpty(body) || contentType is not null))
+            {
+                req.Content = new ByteArrayContent(Encoding.UTF8.GetBytes(body ?? string.Empty));
+                if (!string.IsNullOrWhiteSpace(contentType))
+                    req.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+            }
 
             var resp = _networkClient.SendAsync(
                 req,
@@ -624,6 +675,21 @@ public class LxScriptEngine
                     if (size < 0 || size > MaxRandomBytes) return Err("crypto_limit_exceeded");
                     return Ok(Convert.ToBase64String(FrameworkCompatibility.GetRandomBytes(size)));
                 }
+                case "digest":
+                {
+                    var data = GetB64(r, "data", MaxNativeBufferBytes);
+                    var algorithm = (GetStr(r, "algorithm") ?? "").ToLowerInvariant();
+                    byte[] hash = algorithm switch
+                    {
+                        "md5" => System.Security.Cryptography.MD5.Create().ComputeHash(data),
+                        "sha1" => System.Security.Cryptography.SHA1.Create().ComputeHash(data),
+                        "sha256" => System.Security.Cryptography.SHA256.Create().ComputeHash(data),
+                        "sha512" => System.Security.Cryptography.SHA512.Create().ComputeHash(data),
+                        _ => throw new InvalidOperationException("unsupported digest algorithm")
+                    };
+                    return Ok(Convert.ToBase64String(hash));
+                }
+
                 default:
                     return Err("crypto_operation_unsupported");
             }
@@ -631,6 +697,10 @@ public class LxScriptEngine
         catch (ScriptResourceLimitException ex)
         {
             return Err(ex.Code);
+        }
+        catch (InvalidOperationException)
+        {
+            return Err("crypto_operation_unsupported");
         }
         catch
         {
@@ -768,14 +838,27 @@ public class LxScriptEngine
             if (argsJson.Length > MaxHeaderCharacters) return "{}";
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(argsJson) ? "{}" : argsJson);
             var root = doc.RootElement;
-            string? log = null, updateUrl = null;
-            if (root.TryGetProperty("log", out var l) && l.ValueKind == JsonValueKind.String) log = l.GetString();
-            if (root.TryGetProperty("updateUrl", out var u) && u.ValueKind == JsonValueKind.String) updateUrl = u.GetString();
+            if (!root.TryGetProperty("log", out var l)
+                || l.ValueKind != JsonValueKind.String
+                || l.GetString() is not { Length: > 0 } rawLog)
+                return "{}";
+
+            var log = rawLog.Length > 1024 ? rawLog[..1024] + "..." : rawLog;
+            string? updateUrl = null;
+            if (root.TryGetProperty("updateUrl", out var u)
+                && u.ValueKind == JsonValueKind.String
+                && u.GetString() is { Length: <= 1024 } candidate
+                && Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            {
+                updateUrl = candidate;
+            }
+
             try
             {
                 UpdateAlert?.Invoke(
                     this,
-                    new LxScriptUpdateAlertEventArgs { Log = log ?? "", UpdateUrl = updateUrl });
+                    new LxScriptUpdateAlertEventArgs { Log = log, UpdateUrl = updateUrl });
             }
             catch (Exception exception)
             {
@@ -957,9 +1040,9 @@ public class LxScriptEngine
         {
             msg = data;
         }
-        var mInt = new System.Numerics.BigInteger(msg.Reverse().ToArray());
-        var nInt = new System.Numerics.BigInteger(p.Modulus.Reverse().ToArray());
-        var eInt = new System.Numerics.BigInteger(p.Exponent.Reverse().ToArray());
+        var mInt = ToPositiveBigInteger(msg);
+        var nInt = ToPositiveBigInteger(p.Modulus);
+        var eInt = ToPositiveBigInteger(p.Exponent);
         if (mInt >= nInt) throw new InvalidOperationException("message too large for rsa key");
         var enc = System.Numerics.BigInteger.ModPow(mInt, eInt, nInt);
         var littleEndian = enc.ToByteArray();
@@ -980,26 +1063,88 @@ public class LxScriptEngine
                 .Select(line => line.Trim())
                 .Where(line => !line.StartsWith("-----", StringComparison.Ordinal)));
             var bytes = Convert.FromBase64String(body);
-            if (bytes.Length < 3) return null;
+            if (TryParseSubjectPublicKeyInfo(bytes, out var parameters))
+                return parameters;
+
             using var rsa = RSA.Create();
-            var parameters = new RSAParameters
+            try { rsa.FromXmlString(keyPem); return rsa.ExportParameters(false); }
+            catch (Exception ex) when (ex is CryptographicException or System.Xml.XmlException)
             {
-                Modulus = Slice(bytes, 0, bytes.Length - 3),
-                Exponent = Slice(bytes, bytes.Length - 3)
-            };
-            rsa.ImportParameters(parameters);
-            return parameters;
+                _logger.LogDebug("RSA XML key parsing failed: {ErrorType}", ex.GetType().Name);
+            }
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or CryptographicException)
         {
             _logger.LogDebug("RSA PEM key parsing failed: {ErrorType}", ex.GetType().Name);
-            return null;
         }
+        return null;
     }
 
-    // ================================================================
-    //  脚本执行片断
-    // ================================================================
+    private static System.Numerics.BigInteger ToPositiveBigInteger(byte[] bigEndian)
+    {
+        var littleEndian = bigEndian.Reverse().ToArray();
+        Array.Resize(ref littleEndian, littleEndian.Length + 1);
+        return new System.Numerics.BigInteger(littleEndian);
+    }
+
+    private static bool TryParseSubjectPublicKeyInfo(byte[] der, out RSAParameters parameters)
+    {
+        parameters = default;
+        var offset = 0;
+        if (!TryReadDer(der, ref offset, 0x30, out var outer)) return false;
+        var position = 0;
+        if (!TryReadDer(outer, ref position, 0x30, out _)) return false;
+        if (!TryReadDer(outer, ref position, 0x03, out var bitString)
+            || bitString.Length < 2
+            || bitString[0] != 0) return false;
+
+        var rsa = CopySegment(bitString, 1, bitString.Length);
+        var rsaOffset = 0;
+        if (!TryReadDer(rsa, ref rsaOffset, 0x30, out var publicKey)) return false;
+        var keyOffset = 0;
+        if (!TryReadDer(publicKey, ref keyOffset, 0x02, out var modulus)
+            || !TryReadDer(publicKey, ref keyOffset, 0x02, out var exponent)) return false;
+        parameters.Modulus = TrimLeadingZero(modulus);
+        parameters.Exponent = TrimLeadingZero(exponent);
+        return parameters.Modulus.Length > 0 && parameters.Exponent.Length > 0;
+    }
+
+    private static bool TryReadDer(byte[] data, ref int offset, byte expectedTag, out byte[] content)
+    {
+        content = Array.Empty<byte>();
+        if (offset + 2 > data.Length || data[offset] != expectedTag) return false;
+        var length = (int)data[offset + 1];
+        var headerLength = 2;
+        if ((length & 0x80) != 0)
+        {
+            var lengthBytes = length & 0x7f;
+            if (lengthBytes == 0 || lengthBytes > 4 || offset + 2 + lengthBytes > data.Length) return false;
+            length = 0;
+            for (var index = 0; index < lengthBytes; index++)
+                length = (length << 8) | data[offset + 2 + index];
+            headerLength += lengthBytes;
+        }
+        if (length < 0 || offset + headerLength + length > data.Length) return false;
+        content = CopySegment(data, offset + headerLength, offset + headerLength + length);
+        offset += headerLength + length;
+        return true;
+    }
+
+    private static byte[] TrimLeadingZero(byte[] value)
+    {
+        var index = 0;
+        while (index < value.Length - 1 && value[index] == 0) index++;
+        return CopySegment(value, index, value.Length);
+    }
+
+    private static byte[] CopySegment(byte[] value, int start, int stop)
+    {
+        if (stop <= start) return Array.Empty<byte>();
+        var result = new byte[stop - start];
+        Buffer.BlockCopy(value, start, result, 0, result.Length);
+        return result;
+    }
+
     private const string InvokeSnippet = """
 (async () => {
   try {
@@ -1290,6 +1435,18 @@ public class LxScriptEngine
     if (!r.ok) throw new Error(r.err || 'crypto error');
     return b64ToBytes(r.b64);
   }
+  function nativeDigest(algorithm, data) {
+    var raw = nativeCrypto('digest', JSON.stringify({ algorithm: String(algorithm || ''), data: anyToB64(data) }));
+    var r = JSON.parse(raw);
+    if (!r.ok) throw new Error(r.err || 'digest error');
+    return r.b64 ? b64ToBytes(r.b64) : [];
+  }
+  function nativeDigestString(algorithm) {
+    return function (value) {
+      var bytes = nativeDigest(algorithm, value == null ? '' : value);
+      return bytesToHex(bytes);
+    };
+  }
   function nativeZlibOp(op, data) {
     return new Promise(function (resolve, reject) {
       var raw;
@@ -1330,14 +1487,14 @@ public class LxScriptEngine
     createRandomID: function (len) { var s = ''; var chars = 'abcdefghijklmnopqrstuvwxyz0123456789'; var n = len || 16; for (var i = 0; i < n; i++) s += chars.charAt(Math.floor(Math.random() * chars.length)); return s; },
     bufToString: function (buf, format) { return bytesToString(buf, format); },
     log: function () {},
-    md5: MD5,
-    sha1: SHA1,
-    sha256: SHA256,
-    sha512: SHA256,
+    md5: nativeDigestString('md5'),
+    sha1: nativeDigestString('sha1'),
+    sha256: nativeDigestString('sha256'),
+    sha512: nativeDigestString('sha512'),
     base64Encode: function (s) { return toBase64(s == null ? '' : String(s)); },
     base64Decode: function (s) { try { return atobImpl(s); } catch (e) { return s; } },
     crypto: {
-      md5: MD5, sha1: SHA1, sha256: SHA256, sha512: SHA256,
+      md5: nativeDigestString('md5'), sha1: nativeDigestString('sha1'), sha256: nativeDigestString('sha256'), sha512: nativeDigestString('sha512'),
       aesEncrypt: function (buffer, mode, key, iv) { return nativeAes('aesEncrypt', buffer, mode, key, iv); },
       aesDecrypt: function (buffer, mode, key, iv) { return nativeAes('aesDecrypt', buffer, mode, key, iv); },
       rsaEncrypt: function (buffer, key) { return nativeRsa(buffer, key); },
@@ -1381,6 +1538,11 @@ public class LxScriptEngine
           return;
         }
         if (eventName === EVENT_NAMES.updateAlert) {
+          if (globalThis.__lxUpdateAlertCaptured) {
+            reject(new Error('The update alert can only be called once.'));
+            return;
+          }
+          globalThis.__lxUpdateAlertCaptured = true;
           try { if (nativeUpdateAlert) nativeUpdateAlert(JSON.stringify(data || {})); }
           catch (e) { reject(e); return; }
           resolve();
@@ -1436,6 +1598,7 @@ public class LxScriptEngine
 
   globalThis.__lxInitedJson = null;
   globalThis.__lxInitedCaptured = false;
+  globalThis.__lxUpdateAlertCaptured = false;
   globalThis.lx.__invoke = function (action, source, musicInfo, type) {
     var h = handlers['request'];
     if (typeof h === 'function') return h({ action: action, source: source, info: { musicInfo: musicInfo, type: type } });
