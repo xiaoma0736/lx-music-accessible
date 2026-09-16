@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 

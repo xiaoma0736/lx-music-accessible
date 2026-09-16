@@ -9,6 +9,10 @@
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Dapper" Version="2.1.35" />
@@ -75,6 +79,7 @@
     <ProjectReference Include="..\LXMusicAccessible.Models\LXMusicAccessible.Models.csproj" />
     <ProjectReference Include="..\LXMusicAccessible.Data\LXMusicAccessible.Data.csproj" />
     <ProjectReference Include="..\LXMusicAccessible.Audio\LXMusicAccessible.Audio.csproj" />
+    <ProjectReference Include="..\LXMusicAccessible.App\LXMusicAccessible.App.csproj" />
     <ProjectReference Include="..\LXMusicAccessible.Services\LXMusicAccessible.Services.csproj" />
   </ItemGroup>
 

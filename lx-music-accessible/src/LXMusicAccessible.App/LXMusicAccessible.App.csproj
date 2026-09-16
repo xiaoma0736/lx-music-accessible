@@ -1,14 +1,11 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
-
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net48</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <UseWPF>true</UseWPF>
     <PlatformTarget>x64</PlatformTarget>
-    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
-    
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <AssemblyName>落雪音乐无障碍版V2.0</AssemblyName>
     <RootNamespace>LXMusicAccessible</RootNamespace>
     <Version>2.0.0</Version>
@@ -16,21 +13,20 @@
     <Product>落雪音乐无障碍版</Product>
     <Description>专为盲人用户优化的音乐播放器</Description>
   </PropertyGroup>
-
   <ItemGroup>
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.0" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
     <PackageReference Include="Serilog" Version="3.1.1" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
-    <PackageReference Include="Serilog.Sinks.Console" Version="5.0.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
+    <PackageReference Include="System.Resources.Extensions" Version="8.0.0" />
   </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\LXMusicAccessible.Core\LXMusicAccessible.Core.csproj" />
     <ProjectReference Include="..\LXMusicAccessible.Models\LXMusicAccessible.Models.csproj" />
@@ -38,26 +34,18 @@
     <ProjectReference Include="..\LXMusicAccessible.Data\LXMusicAccessible.Data.csproj" />
     <ProjectReference Include="..\LXMusicAccessible.Audio\LXMusicAccessible.Audio.csproj" />
   </ItemGroup>
-
   <ItemGroup>
-    <!-- Prism 原生库 (MPL-2.0, https://github.com/ethindp/prism)：Link 扁平输出到程序根目录，P/Invoke 才能加载 -->
     <Content Include="Native\prism.dll" Link="prism.dll" CopyToOutputDirectory="PreserveNewest" />
-    <!-- 保益悦听三方朗读 DLL (byctrl)：byctrl-x64.dll P/Invoke，随包输出到程序根目录 -->
     <Content Include="Native\byctrl-x64.dll" Link="byctrl-x64.dll" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Native\tolk.dll" Link="tolk.dll" CopyToOutputDirectory="PreserveNewest" />
-    <!-- BASS 原生音频库 (bass.dll 等，非商业免费分发)：Link 扁平输出到程序根目录，ManagedBass 才能加载 -->
     <Content Include="Native\Bass\bass.dll" Link="bass.dll" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Native\Bass\bassflac.dll" Link="bassflac.dll" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Native\Bass\bassape.dll" Link="bassape.dll" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Native\Bass\bassopus.dll" Link="bassopus.dll" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Native\PRISM_LICENSE.txt" Link="PRISM_LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
-    <!-- 使用说明文档：随包复制到输出目录 Docs\ 下 -->
+    <Content Include="Docs\**\*" Link="Docs\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Docs\使用说明.md" Link="Docs\使用说明.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Resources\**\*" Link="Resources\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="UninstallCleanup.ps1" Link="UninstallCleanup.ps1" CopyToOutputDirectory="PreserveNewest" />
-    <!-- 固定备用脚本作为 Core 嵌入资源交付，并在运行前校验内置 SHA-256。 -->
-    <!-- 赞助二维码（用户扫码赞助入口；请用真实收款码替换 Resources\sponsor_qr.png 后重新构建） -->
-    <Resource Include="Resources\sponsor_qr.png" />
   </ItemGroup>
 </Project>
-
-

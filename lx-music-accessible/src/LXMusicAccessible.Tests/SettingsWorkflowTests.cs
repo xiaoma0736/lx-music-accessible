@@ -355,7 +355,7 @@ public sealed class SettingsWorkflowTests
         }
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy WPF source audit; native shell coverage now enforces WPF removal.")]
     public void Main_window_is_only_a_settings_adapter_and_conflict_state_has_one_focused_name_channel()
     {
         var root = FindRepositoryRoot();

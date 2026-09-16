@@ -2,8 +2,9 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <NoWarn>$(NoWarn);NU1702</NoWarn>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>LXMusicAccessible.Setup</AssemblyName>
     <RootNamespace>LXMusicAccessible.Setup</RootNamespace>
@@ -15,6 +16,8 @@
     <InstallerPayloadDirectory Condition="'$(InstallerPayloadDirectory)' == ''">$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)installer-payload\$(Configuration)\$(InstallerRuntimeIdentifier)\</InstallerPayloadDirectory>
     <InstallerPayloadArchive Condition="'$(InstallerPayloadArchive)' == ''">$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)installer-payload\$(Configuration)\payload-$(InstallerRuntimeIdentifier).zip</InstallerPayloadArchive>
   </PropertyGroup>
+  <ItemGroup>
+  </ItemGroup>
 
   <ItemGroup>
     <InstallerApplicationProject Include="..\LXMusicAccessible.App\LXMusicAccessible.App.csproj" />
@@ -31,7 +34,7 @@
     <MSBuild Projects="@(InstallerApplicationProject)"
              Targets="Publish"
              BuildInParallel="false"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(InstallerRuntimeIdentifier);SelfContained=true;PublishDir=$([MSBuild]::EnsureTrailingSlash('$(InstallerPayloadDirectory)'))" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(InstallerRuntimeIdentifier);SelfContained=false;PublishSingleFile=false;PublishDir=$([MSBuild]::EnsureTrailingSlash('$(InstallerPayloadDirectory)'))" />
     <ZipDirectory SourceDirectory="$(InstallerPayloadDirectory)"
                   DestinationFile="$(InstallerPayloadArchive)"
                   Overwrite="true" />

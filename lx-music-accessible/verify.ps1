@@ -126,9 +126,9 @@ try {
         throw "Empty catch block found. Record an expected fallback or a redacted failure."
     }
 
-    $mainWindowSource = Get-Content -Raw -LiteralPath (Join-Path $root "src\LXMusicAccessible.App\MainWindow.xaml.cs")
-    if ($mainWindowSource -match '\bIServiceProvider\b') {
-        throw "MainWindow must not hold or accept a general IServiceProvider."
+    $shellSource = Get-Content -Raw -LiteralPath (Join-Path $root "src\LXMusicAccessible.App\WinFormsShell.Workflows.cs")
+    if ($shellSource -match '\bIServiceProvider\b') {
+        throw "Shell must not hold or accept a general IServiceProvider."
     }
     Write-Host "Host composition and exception diagnostics checks passed ($($sourceFiles.Count) C# source files)."
 

@@ -5,11 +5,11 @@
     <NuGetAuditMode>all</NuGetAuditMode>
     <NuGetAuditLevel>high</NuGetAuditLevel>
     <WarningsAsErrors>$(WarningsAsErrors);NU1903;NU1904</WarningsAsErrors>
-    <NoWarn>$(NoWarn);CS8600;CS8601;CS8602;CS8603;CS8604;CS8618;CS8619;CS8620;CS8625;CS8632</NoWarn>
+    <NoWarn>$(NoWarn);MSB3277;CS8600;CS8601;CS8602;CS8603;CS8604;CS8618;CS8619;CS8620;CS8625;CS8632</NoWarn>
     <TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <!-- 安全固定：传递依赖 System.Private.Uri 4.3.0 存在高危漏洞 GHSA-5f2m-466j-3848 / GHSA-xhfc-gr8f-ffwc -->
+    <!-- Net48 binds the patched 8.0.6 netstandard2.0 asset; Directory.Build.targets selects that assembly. -->
     <!-- Net48 binds the patched 8.0.6 netstandard2.0 asset; Directory.Build.targets selects that assembly. -->
     <PackageReference Include="System.Text.Json" Version="8.0.6" GeneratePathProperty="true" ExcludeAssets="compile;runtime" />
     <PackageReference Include="System.Private.Uri" Version="4.3.2" />

@@ -140,7 +140,6 @@ static class Program
                 using var dlg = new FolderBrowserDialog
                 {
                     Description = "请选择安装位置（程序会创建专属子目录）",
-                    UseDescriptionForTitle = true
                 };
                 if (Directory.Exists(txtDir.Text.Trim())) dlg.SelectedPath = txtDir.Text.Trim();
                 if (dlg.ShowDialog() == DialogResult.OK)
