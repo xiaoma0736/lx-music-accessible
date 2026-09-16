@@ -50,26 +50,16 @@
     <Compile Remove="Issue49PlaybackSourceSafetyTests.cs" />
     <Compile Remove="ManualSourceSwitchWorkflowTests.cs" />
     <Compile Remove="InstallDirectoryOwnershipTests.cs" />
-    <Compile Remove="AccessibilitySemanticsTests.cs" />
-    <Compile Remove="AccessibleAnnouncerTests.cs" />
     <Compile Remove="ApplicationHostTests.cs" />
     <Compile Remove="ApplicationRuntimeTests.cs" />
     <Compile Remove="ApplicationShutdownTests.cs" />
     <Compile Remove="DesktopLifecycleWorkflowTests.cs" />
-    <Compile Remove="DownloadManagerWindowTests.cs" />
     <Compile Remove="GlobalHotkeyMessageWindowTests.cs" />
-    <Compile Remove="Issue49SettingsAccessibilityTests.cs" />
-    <Compile Remove="ListFocusAuditTests.cs" />
     <Compile Remove="LoginDiagnosticsTests.cs" />
     <Compile Remove="PlaybackRecoveryAndPlaybackInfoTests.cs" />
     <Compile Remove="SpeechWhitelistTests.cs" />
     <Compile Remove="MainWindowShellTests.cs" />
-    <Compile Remove="ManualSourceSwitchWindowTests.cs" />
-    <Compile Remove="PlaylistImportWindowTests.cs" />
     <Compile Remove="PlaylistLoginHostTests.cs" />
-    <Compile Remove="SettingsWindowTests.cs" />
-    <Compile Remove="SourceManagerWindowTests.cs" />
-    <Compile Remove="ToolWindowCoordinatorTests.cs" />
     <Compile Remove="WindowShortcutTests.cs" />
     <Compile Remove="WorkflowConsolidationTests.cs" />
   </ItemGroup>

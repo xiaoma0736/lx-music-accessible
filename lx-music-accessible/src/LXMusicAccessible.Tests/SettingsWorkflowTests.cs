@@ -355,51 +355,7 @@ public sealed class SettingsWorkflowTests
         }
     }
 
-    [Fact(Skip = "Legacy WPF source audit; native shell coverage now enforces WPF removal.")]
-    public void Main_window_is_only_a_settings_adapter_and_conflict_state_has_one_focused_name_channel()
-    {
-        var root = FindRepositoryRoot();
-        var mainCode = File.ReadAllText(Path.Combine(
-            root, "src", "LXMusicAccessible.App", "MainWindow.xaml.cs"));
-        var mainXaml = File.ReadAllText(Path.Combine(
-            root, "src", "LXMusicAccessible.App", "MainWindow.xaml"));
-        var settingsXaml = File.ReadAllText(Path.Combine(
-            root, "src", "LXMusicAccessible.App", "SettingsWindow.xaml"));
-        var conflictXaml = File.ReadAllText(Path.Combine(
-            root, "src", "LXMusicAccessible.App", "HotkeyConflictDialog.xaml"));
-
-        Assert.DoesNotContain("GetSettingsAsync", mainCode, StringComparison.Ordinal);
-        Assert.DoesNotContain("SaveSettingsAsync", mainCode, StringComparison.Ordinal);
-        Assert.DoesNotContain("RegisterHotKey", mainCode, StringComparison.Ordinal);
-        Assert.DoesNotContain("UnregisterHotKey", mainCode, StringComparison.Ordinal);
-        Assert.Contains("SettingsWorkflow settingsWorkflow", mainCode, StringComparison.Ordinal);
-        Assert.Contains("_settingsWorkflow.SettingsChanged += SettingsWorkflow_SettingsChanged", mainCode);
-        Assert.Contains("_settingsWorkflow.Current.Settings.HideToTrayOnAltF4", mainCode);
-        Assert.Contains("_settingsWorkflow.Current.Settings.DownloadPath", mainCode);
-        Assert.Contains("_settingsWorkflow.Current.Settings.ThirdPartyPlayerPath", mainCode);
-        Assert.Contains("GetDefaultDownloadQuality()", mainCode);
-        Assert.DoesNotContain("settings.AutoPlay = AutoPlayCheckBox", mainCode);
-        Assert.DoesNotContain("settings.EnableScreenReader = EnableScreenReaderCheckBox", mainCode);
-        Assert.DoesNotContain("settings.DownloadPath = DownloadPathBox", mainCode);
-        Assert.DoesNotContain("settings.ThirdPartyPlayerPath = ThirdPartyPlayerPathBox", mainCode);
-        Assert.DoesNotContain("settings.ShuffleMode = ShufflePlayCheckBox", mainCode);
-        Assert.DoesNotContain("settings.LoopMode = RepeatPlayCheckBox", mainCode);
-        Assert.DoesNotContain("<TabItem Header=\"设置\"", mainXaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("AutoPlayCheckBox", settingsXaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("EnableScreenReaderCheckBox", settingsXaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("Content=\"关闭\"", settingsXaml, StringComparison.Ordinal);
-        Assert.Contains("if (_settingsInputSuppressed) return;", mainCode, StringComparison.Ordinal);
-        Assert.Contains("Property=\"AutomationProperties.Name\" Value=\"{Binding AccessibleText}\"", settingsXaml);
-        Assert.DoesNotContain("Property=\"AutomationProperties.HelpText\"", mainXaml);
-        Assert.DoesNotContain("Property=\"AutomationProperties.ItemStatus\" Value=\"{Binding ConflictStatus}\"", mainXaml);
-        Assert.Contains("Title=\"快捷键冲突提示\"", conflictXaml);
-        Assert.DoesNotContain("AutomationProperties.Name=", conflictXaml);
-        Assert.DoesNotContain("AutomationProperties.HelpText=", conflictXaml);
-        Assert.Contains("AutomationProperties.ItemStatus=\"存在全局快捷键注册冲突\"", conflictXaml);
-        Assert.DoesNotContain("SendInput", mainCode, StringComparison.Ordinal);
-    }
-
-    [Fact]
+[Fact]
     public async Task Global_hotkey_defaults_use_navigation_and_multimedia_layout()
     {
         var workflow = CreateWorkflow(new RecordingSettingsStore(), new RecordingHotkeyAdapter());

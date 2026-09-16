@@ -101,7 +101,7 @@ public partial class WinFormsShell : Form
         statusTimer.Tick += (_, _) => timeLabel.Text = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         statusTimer.Start();
 
-        MainTabs = new TabControl { Name = "MainTabs", Dock = DockStyle.Fill, TabIndex = 1 };
+        MainTabs = new TabControl { Name = "MainTabs", Dock = DockStyle.Fill, TabIndex = 1, AccessibleName = "导航" };
         MainTabs.Controls.Add(CreateSearchPage());
         MainTabs.Controls.Add(CreatePlaylistPage());
         MainTabs.Controls.Add(CreateCategoryPage());
@@ -165,7 +165,7 @@ public partial class WinFormsShell : Form
         play.MenuItems.Add(new MenuItem("快退十秒(&R)", (_, _) => Seek(-10), Shortcut.F7));
         play.MenuItems.Add(new MenuItem("快进十秒(&F)", (_, _) => Seek(10), Shortcut.F8));
         play.MenuItems.Add(new MenuItem("音量减(&L)", (_, _) => ChangeVolume(-0.1), Shortcut.F9));
-        play.MenuItems.Add(new MenuItem("音量加(&G)", (_, _) => ChangeVolume(0.1), Shortcut.F10));
+        play.MenuItems.Add(new MenuItem("音量加(&G)", (_, _) => ChangeVolume(0.1)));
         play.MenuItems.Add(new MenuItem("上一个播放设备(&E)", (_, _) => SwitchDevice(-1), Shortcut.F11));
         play.MenuItems.Add(new MenuItem("下一个播放设备(&X)", (_, _) => SwitchDevice(1), Shortcut.F12));
         play.MenuItems.Add(new MenuItem("切换播放模式(&M)", (_, _) => TogglePlayMode(), Shortcut.F1));

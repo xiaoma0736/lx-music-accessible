@@ -71,15 +71,17 @@ internal static class WinFormsUi
     public static void FillSongs(ListBox list, IEnumerable<MusicInfo> songs)
     {
         var selected = Selected<MusicInfo>(list)?.Id;
+        var selectedIndex = list.SelectedIndex;
         list.BeginUpdate();
         list.Items.Clear();
         foreach (var song in songs) list.Items.Add(new ObjectBox<MusicInfo>(song.AccessibleName, song));
         list.EndUpdate();
         if (list.Items.Count > 0)
         {
-            var index = selected is null ? 0 : Enumerable.Range(0, list.Items.Count)
-                .Where(i => list.Items[i] is ObjectBox<MusicInfo> box && box.Value.Id == selected).DefaultIfEmpty(-1).First();
-            list.SelectedIndex = index >= 0 ? index : 0;
+            var identityMatches = Enumerable.Range(0, list.Items.Count)
+                .Where(i => list.Items[i] is ObjectBox<MusicInfo> box && box.Value.Id == selected).ToArray();
+            var index = identityMatches.Length > 0 ? identityMatches[0] : Math.Max(0, Math.Min(selectedIndex, list.Items.Count - 1));
+            list.SelectedIndex = index;
         }
     }
 
@@ -147,6 +149,8 @@ public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer
             _progressTimer.Start();
             return;
         }
+        if (!string.IsNullOrEmpty(announcement.ActivityId) && announcement.Kind is AnnouncementKind.Busy or AnnouncementKind.Progress)
+            _terminal.Remove(announcement.ActivityId);
         if (announcement.Kind is AnnouncementKind.Success or AnnouncementKind.Error && !string.IsNullOrEmpty(announcement.ActivityId))
         {
             _pendingProgress.Remove(announcement.ActivityId);

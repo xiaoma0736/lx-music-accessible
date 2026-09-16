@@ -81,7 +81,7 @@ public class WebLoginForm : Form
     private readonly IPlaylistImportService _service;
     private readonly IAccessibleAnnouncer _announcer;
     private readonly ILogger<WebLoginForm> _logger;
-    private readonly WebView2 _browser = new() { Dock = DockStyle.Fill };
+    private readonly WebView2 _browser = new() { Dock = DockStyle.Fill, AccessibleName = "登录网页", TabStop = true, TabIndex = 4 };
     private readonly Label _status = new() { Text = "正在打开登录页...", Dock = DockStyle.Bottom, AutoSize = false, Height = 28, TextAlign = ContentAlignment.MiddleLeft, TabStop = false };
     public string? LastAccountName { get; private set; }
 
@@ -129,6 +129,11 @@ public class WebLoginForm : Form
         };
     }
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode == Keys.Escape) Close();
+    }
     private async Task CompleteAsync(string platform)
     {
         if (_browser.CoreWebView2 is null) return;
@@ -218,6 +223,11 @@ public class KugouQrLoginForm : Form
         FormClosed += (_, _) => _timer.Stop();
     }
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode == Keys.Escape) Close();
+    }
     private async Task LoadAsync()
     {
         try

@@ -19,6 +19,7 @@ public class SourceManagerForm : Form
     private readonly IMusicSourceService _sources;
     private readonly ListBox _list = WinFormsUi.ListBox("音源", 1);
     private readonly Label _empty = new() { Text = "暂无自定义音源。", AutoSize = true, TabStop = false };
+    private string _sourceSignature = string.Empty;
 
     public SourceManagerForm(IAccessibleAnnouncer announcer, IMusicSourceService sources, Func<KeyEventArgs, bool> handleHotkey)
     {
@@ -46,23 +47,37 @@ public class SourceManagerForm : Form
         menu.MenuItems.Add(new MenuItem("删除", (_, _) => Delete()));
         _list.ContextMenu = menu;
         _list.KeyDown += (_, e) => { if (e.KeyCode is Keys.Enter or Keys.Space) { e.Handled = true; menu.Show(_list, new Point(10, 10)); } };
-        _sources.SourcesChanged += (_, _) => BeginInvoke(RefreshSources);
+        _sources.SourcesChanged += (_, _) => BeginInvoke(RefreshSourcesAfterExternalChange);
         RefreshSources();
         Shown += (_, _) => _list.Focus();
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode == Keys.Escape) Close();
+    }
+    private void RefreshSourcesAfterExternalChange()
+    {
+        var before = _sourceSignature;
+        RefreshSources();
+        if (before != _sourceSignature) Announce("音源列表已更新", "source-list");
     }
 
     internal void RefreshSources()
     {
         var sources = _sources.GetAllSources().Where(source => !source.IsSystemHidden).ToList();
+        var selectedIndex = _list.SelectedIndex;
         var selected = WinFormsUi.Selected<MusicSource>(_list)?.Id;
         _list.Items.Clear();
         foreach (var source in sources)
             _list.Items.Add(new ObjectBox<MusicSource>(source.AccessibleName, source));
         _empty.Visible = sources.Count == 0;
-        _list.Visible = sources.Count > 0;
+        _sourceSignature = string.Join("|", sources.Select(source => source.Id + ":" + source.AccessibleName));
         if (sources.Count > 0)
         {
-            var index = selected is null ? 0 : Enumerable.Range(0, _list.Items.Count).Where(i => ((ObjectBox<MusicSource>)_list.Items[i]).Value.Id == selected).DefaultIfEmpty(0).First();
+            var identityMatch = Enumerable.Range(0, _list.Items.Count).Where(i => ((ObjectBox<MusicSource>)_list.Items[i]).Value.Id == selected).ToArray();
+            var index = identityMatch.Length > 0 ? identityMatch[0] : Math.Max(0, Math.Min(selectedIndex, _list.Items.Count - 1));
             _list.SelectedIndex = index;
         }
     }
@@ -213,8 +228,15 @@ public class DownloadManagerForm : Form
 
     protected TextBox? RecordingBox { get; set; }
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode == Keys.Escape) Close();
+    }
     private void Reload()
     {
+        var selectedIds = Selected().Select(task => task.Id).ToHashSet(StringComparer.Ordinal);
+        var listHadFocus = _tasks.Focused;
         _tasks.BeginUpdate();
         _tasks.Items.Clear();
         foreach (var task in _downloads.Tasks)
@@ -227,7 +249,13 @@ public class DownloadManagerForm : Form
         }
         _tasks.EndUpdate();
         _empty.Visible = _tasks.Items.Count == 0;
-        _tasks.Visible = _tasks.Items.Count > 0;
+        if (selectedIds.Count > 0)
+        {
+            foreach (ListViewItem item in _tasks.Items)
+                item.Selected = item.Tag is DownloadTask task && selectedIds.Contains(task.Id);
+        }
+
+        if (listHadFocus) _tasks.Focus();
         UpdateButtonState();
     }
 
@@ -289,7 +317,7 @@ public class PlaylistImportForm : Form
     private readonly Action<ListBox>? _attachSongList;
     private readonly ListBox _playlists = WinFormsUi.ListBox("个人歌单", 5);
     private readonly ListBox _songs = WinFormsUi.ListBox("歌曲预览", 6);
-    private readonly TextBox _cookie = new();
+    private readonly TextBox _cookie = new() { Name = "Cookie", AccessibleName = "Cookie" };
     private readonly Label _account = new() { Text = "未登录", AutoSize = true, TabStop = false, AccessibleName = "账号状态" };
     private readonly Label _status = new() { Text = "请选择音乐平台。", AutoSize = true, TabStop = false, AccessibleName = "导入状态" };
     private string? _platform;
@@ -334,6 +362,11 @@ public class PlaylistImportForm : Form
         Shown += async (_, _) => { await _service.EnsureAccountsLoadedAsync(); RefreshAccount(); _playlists.Focus(); };
     }
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode == Keys.Escape) Close();
+    }
     private void SelectPlatform(string platform)
     {
         _platform = platform;
@@ -464,6 +497,11 @@ public class LyricsForm : Form
         Shown += (_, _) => _text.Focus();
     }
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode == Keys.Escape) Close();
+    }
     private void Render(LyricsState state)
     {
         _title.Text = state.Music is null ? "暂无歌词" : $"歌词：{state.Music.Artist}，{state.Music.Title}";
@@ -510,6 +548,11 @@ public class ManualSourceSwitchForm : Form
         Shown += (_, _) => { search.Focus(); if (_target is not null) _ = SearchAsync(); };
     }
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode == Keys.Escape) Close();
+    }
     private async Task SearchAsync()
     {
         if (_target is null) return;
@@ -550,13 +593,14 @@ public class ManualSourceSwitchForm : Form
 public class UserGuideForm : Form
 {
     private readonly IAccessibleAnnouncer _announcer;
-    private readonly TextBox _guide = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window };
+    private readonly TextBox _guide = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window, AccessibleName = "使用说明" };
     private readonly ComboBox _chapter = WinFormsUi.Combo("指南章节", 1);
 
     public UserGuideForm(IAccessibleAnnouncer announcer)
     {
         _announcer = announcer;
         Text = "使用说明";
+        KeyPreview = true;
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(820, 640);
         var top = new Panel { Dock = DockStyle.Top, Height = 36, TabStop = false };
@@ -578,6 +622,11 @@ public class UserGuideForm : Form
         Shown += (_, _) => _guide.Focus();
     }
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode == Keys.Escape) Close();
+    }
     private void Render(int chapter)
     {
         _guide.Text = chapter switch

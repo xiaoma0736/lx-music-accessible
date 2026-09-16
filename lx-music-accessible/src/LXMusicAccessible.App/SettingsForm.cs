@@ -27,15 +27,15 @@ public class SettingsForm : Form
     private readonly ComboBox _closeBehavior = WinFormsUi.Combo("关闭行为", 1, "关闭应用", "隐藏到托盘");
     private readonly ComboBox _quality = WinFormsUi.Combo("默认播放音质", 2, "标准", "较高", "极高", "无损", "Hi-Res");
     private readonly ComboBox _playMode = WinFormsUi.Combo("默认播放模式", 3, "顺序播放", "列表循环", "单曲循环", "随机播放");
-    private readonly TextBox _playerPath = new();
+    private readonly TextBox _playerPath = new() { AccessibleName = "第三方播放器路径" };
     private readonly CheckBox _lyricAnnounce = new() { Text = "自动播报歌词" };
     private readonly CheckBox _lyricScroll = new() { Text = "自动滚动歌词" };
-    private readonly TextBox _downloadPath = new();
+    private readonly TextBox _downloadPath = new() { AccessibleName = "下载目录" };
     private readonly ComboBox _downloadQuality = WinFormsUi.Combo("默认下载音质", 7, "标准", "较高", "极高", "无损", "Hi-Res");
     private readonly CheckBox _downloadLyric = new() { Text = "同时下载歌词" };
     private readonly CheckBox _nameQuality = new() { Text = "文件名包含音质" };
     private readonly ComboBox _nameOrder = WinFormsUi.Combo("文件名顺序", 10, "歌手 - 标题", "标题 - 歌手");
-    private readonly TextBox _dataDir = new() { ReadOnly = true };
+    private readonly TextBox _dataDir = new() { ReadOnly = true, AccessibleName = "数据目录" };
     private readonly CheckBox _voiceEnabled = new() { Text = "启用语音朗读提示" };
     private readonly Label _backend = new() { AutoSize = true, TabStop = false };
     private readonly ComboBox _voice = WinFormsUi.Combo("朗读声音", 13);
@@ -62,7 +62,7 @@ public class SettingsForm : Form
         StartPosition = FormStartPosition.CenterParent;
         MinimizeBox = false;
         Size = new Size(850, 640);
-        var tabs = new TabControl { Dock = DockStyle.Fill, TabIndex = 0 };
+        var tabs = new TabControl { Dock = DockStyle.Fill, TabIndex = 0, AccessibleName = "设置分类" };
         tabs.TabPages.Add(CreateGeneral());
         tabs.TabPages.Add(CreatePlayback());
         tabs.TabPages.Add(CreateLyrics());
@@ -370,7 +370,11 @@ public class SettingsForm : Form
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
-        if (_recording is null) return;
+        if (_recording is null)
+        {
+            if (e.KeyCode == Keys.Escape) Close();
+            return;
+        }
         if (e.KeyCode == Keys.Escape) { EndRecording("已取消，快捷键未更改"); return; }
         if (e.KeyCode == Keys.Delete) { var item = _recording; _ = ClearHotkey(item); return; }
         var key = (PlatformKey)e.KeyCode;

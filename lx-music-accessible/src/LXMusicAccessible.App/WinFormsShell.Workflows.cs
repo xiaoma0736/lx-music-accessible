@@ -536,7 +536,6 @@ public partial class WinFormsShell
             case Keys.F7: Seek(-10); break;
             case Keys.F8: Seek(10); break;
             case Keys.F9: ChangeVolume(-0.1); break;
-            case Keys.F10: ChangeVolume(0.1); break;
             case Keys.F11: SwitchDevice(-1); break;
             case Keys.F12: SwitchDevice(1); break;
             case Keys.F1: TogglePlayMode(); break;
