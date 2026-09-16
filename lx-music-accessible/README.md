@@ -1,7 +1,18 @@
-# LX Music 无障碍版 - 需求文档
+# LX Music 无障碍版 - 需求与发布说明
 
 ## 项目概述
-基于开源项目 lx-music-desktop，使用 C# + .NET 8.0 开发的专为盲人用户优化的 Windows 客户端。
+基于开源项目 lx-music-desktop，使用 C#、.NET Framework 4.8 与原生 WinForms 开发的专为盲人和视障用户优化的 64 位 Windows 客户端。
+
+## 3.0.0 运行环境与发布
+
+- 产品版本为 3.0.0，仅支持 64 位 Windows。
+- 应用为框架依赖版本，必须已安装 Microsoft .NET Framework 4.8 或更新版本（安装器检查注册表 Release 值不低于 `528040`）。
+- ZIP 不内置 .NET 运行时；安装器会检测运行时，缺失时给出官方下载地址和诊断文件路径。
+- 网页登录使用 Microsoft Edge WebView2 Runtime；歌词/状态语音播报可使用 SAPI5，检测到争渡、保益或 Prism 后端时优先使用。
+- 音频、SQLite、ClearScript V8、UIA/读屏桥接和 WebView2 加载器所需的 x64 原生库随应用分发；ClearScript V8 不可用时会回退到 Jint。
+- 不提供应用 self-contained .NET 8 产物。数据默认继续使用 `%LocalAppData%\lxmusic`，升级保留设置、歌单、凭据、快捷键和可信音源。
+
+完整发布验证、产物哈希和人工验收状态见 [docs/release-validation-3.0.0.md](docs/release-validation-3.0.0.md)。
 
 ## 当前界面与键盘入口
 
@@ -13,22 +24,23 @@
 
 ## 核心需求
 
-### 1. 完美支持屏幕阅读器的无障碍键盘导航
+### 1. 屏幕阅读器无障碍键盘导航
 - **全局快捷键支持**：空格/Enter 播放暂停、方向键选择、Tab 切换焦点
-- **屏幕阅读器兼容**：完美支持 NVDA、Narrator、JAWS 等主流屏幕阅读器
-- **UI Automation 支持**：使用 UI Automation 框架提供完整的无障碍信息
+- **目标读屏器**：NVDA、Narrator、JAWS 等主流屏幕阅读器；人工读屏验收在发布前执行
+- **UI Automation 支持**：WinForms 控件暴露语义名称、状态和 UIA 通知
 - **语音提示**：操作状态变化时提供清晰的语音反馈
 - **焦点管理**：确保焦点位置准确、可预测，焦点切换路径合理
 
 ### 2. 分页式视图展示
 
 #### 2.1 搜索功能
-- 支持多平台搜索（网易云、QQ音乐、酷狗等）
+- 支持多平台搜索（网易云、QQ音乐、酷狗、酷我、咪咕）
 - 分页显示搜索结果（20条/页）
 - 支持按歌曲、歌手、专辑分类显示
 - 快速预览和播放搜索结果
 
 #### 2.2 分类歌单浏览
+- 支持网易云、QQ音乐、酷狗、酷我、咪咕五个官方平台的分类动态浏览
 - 按音乐类型分类（流行、摇滚、古典、民谣等）
 - 按情感分类（治愈、励志、怀旧等）
 - 按场景分类（工作、学习、运动、睡眠等）
@@ -36,7 +48,7 @@
 
 #### 2.3 排行榜查看
 - 热歌榜、新歌榜、原创榜等主流排行榜
-- 支持多平台排行榜
+- 支持网易云、QQ音乐、酷狗、酷我、咪咕五个平台
 - 分页显示，可查看历史排行
 
 #### 2.4 个人列表管理
@@ -210,21 +222,22 @@
 
 ### 核心技术栈
 - **开发语言**：C#
-- **运行时**：.NET 8.0
-- **UI 框架**：WPF（Windows Presentation Foundation）
+- **运行时**：.NET Framework 4.8（x64，应用框架依赖）
+- **UI 框架**：原生 WinForms
 - **数据库**：SQLite（本地数据存储）
 - **HTTP 客户端**：HttpClient
-- **媒体播放**：NAudio 或 MediaElement
-- **UI 自动化**：UI Automation 框架
+- **媒体播放**：BASS 及 APE/FLAC/Opus 插件
+- **UI 自动化**：WinForms UI Automation 与原生通知
 
 ### 第三方库
-- **MVVM 框架**：CommunityToolkit.Mvvm
 - **依赖注入**：Microsoft.Extensions.DependencyInjection
 - **日志记录**：Serilog
-- **配置管理**：Microsoft.Extensions.Configuration
 - **JSON 处理**：System.Text.Json
-- **全局热键**：HotkeyManager 或 P/Invoke
-- **TTS 集成**：System.Speech 或 Azure Speech Service
+- **脚本引擎**：ClearScript V8 优先，Jint 回退
+- **音频**：ManagedBass / BASS
+- **网页登录**：WebView2
+- **全局热键**：Win32 API
+- **语音**：System.Speech 与 Prism/Tolk、争渡、保益桥接
 
 ## 无障碍设计原则
 

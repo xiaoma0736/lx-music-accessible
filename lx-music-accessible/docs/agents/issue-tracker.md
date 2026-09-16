@@ -31,7 +31,7 @@ A ticket is on the implementation frontier when all of its blockers are closed a
 ## Implementation skill discipline
 
 - The ticket-owning sub-agent reads and uses every available skill triggered by the ticket before changing code.
-- Use `ponytail` at its default full intensity for implementation and self-review: reuse existing seams and native WPF behavior, keep the diff minimal, and add no speculative framework or dependency. `ponytail` is mandatory but not exclusive; use accessibility, diagnosis, testing, review, and other available skills whenever their trigger conditions apply.
+- Use `ponytail` at its default full intensity for implementation and self-review: reuse existing seams and native WinForms behavior, keep the diff minimal, and add no speculative framework or dependency. `ponytail` is mandatory but not exclusive; use accessibility, diagnosis, testing, review, and other available skills whenever their trigger conditions apply.
 - Accessibility, validation, error handling, data safety, issue acceptance criteria, and the local `verify.ps1` gate are hard requirements and are never simplified away.
 
 ## Scope decisions

@@ -1,4 +1,6 @@
-﻿# 技术方案文档
+# 技术方案文档
+
+> **状态：历史技术方案。** 本文件描述项目早期 .NET 8/WPF 构想，已被当前的 .NET Framework 4.8 x64 WinForms 实现取代；当前需求见 `README.md`，测试见 `docs/testing.md`。
 
 ## 1. 总体架构设计
 
