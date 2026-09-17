@@ -345,6 +345,7 @@ public static class ApplicationHost
                 services.AddSingleton<LxScriptEngine>();
                 services.AddSingleton<ITtsService, RoutingTtsService>();
                 services.AddSingleton<SettingsWorkflow>();
+                services.AddSingleton<GlobalHotkeyMessageWindow>();
                 services.AddSingleton<IProcessLauncher, SystemProcessLauncher>();
                 services.AddSingleton<IPlaylistImportService, PlaylistImportService>();
                 services.AddSingleton<IPlaylistImportProvider, NeteasePlaylistProvider>();
@@ -438,7 +439,9 @@ internal sealed class ProductionStartupInitializer(string dataDirectory) : IStar
         _ = services.GetRequiredService<IDownloadWorkflow>();
         _ = services.GetRequiredService<ILyricService>();
         _ = services.GetRequiredService<LyricsWorkflow>();
-        _ = services.GetRequiredService<SettingsWorkflow>();
+        var globalHotkeys = services.GetRequiredService<GlobalHotkeyMessageWindow>();
+        var settings = services.GetRequiredService<SettingsWorkflow>();
+        await settings.LoadAsync(globalHotkeys.Handle);
         _ = services.GetRequiredService<IPlaylistImportService>();
         cancellationToken.ThrowIfCancellationRequested();
     }

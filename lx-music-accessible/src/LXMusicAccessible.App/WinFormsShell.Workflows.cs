@@ -126,7 +126,8 @@ public partial class WinFormsShell
             _services.Settings?.Current.Settings.DefaultPlayQuality ?? _services.Playback.DefaultQuality,
             origin,
             Trigger: PlaybackTrigger.UserInitiated));
-        ShowPlayback(music);
+        if (result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted)
+            ShowPlayback(music);
         Announce(result.Status == PlaybackResultStatus.Playing ? $"正在播放：{music.Artist}，{music.Title}" : $"播放失败：{result.Message}", "playback-song", result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
@@ -136,6 +137,7 @@ public partial class WinFormsShell
         CurrentTitle.Text = music.Title;
         CurrentArtist.Text = music.Artist;
         CurrentAlbum.Text = music.Album;
+        Text = string.IsNullOrWhiteSpace(music.Artist) ? $"{music.Title} - {BaseTitle}" : $"{music.Artist} - {music.Title} - {BaseTitle}";
         RefreshPlaybackStatus();
     }
 
@@ -326,6 +328,9 @@ public partial class WinFormsShell
     private void StopPlayback()
     {
         _services.Playback?.Stop();
+        _current = null;
+        CurrentTitle.Text = "未播放";
+        Text = BaseTitle;
         PlaybackInfoText.Text = "未播放";
         Announce("已停止播放", "playback-state");
     }
@@ -469,7 +474,7 @@ public partial class WinFormsShell
     {
         if (_services.Windows is null) return;
         var window = _services.Windows.CreateLyrics(HandleHotkey);
-        if (CurrentTitle.Text != "未播放") _ = _services.Lyrics?.LoadAsync(_current!);
+        if (_current is not null) _ = _services.Lyrics?.LoadAsync(_current);
         window.Show(this);
     }
 
@@ -569,6 +574,11 @@ public partial class WinFormsShell
         if (keyData == (Keys.Alt | Keys.P)) { SelectTab(1); return true; }
         if (keyData == (Keys.Alt | Keys.S)) { SelectTab(MainTabs.SelectedIndex == 2 ? 2 : 3); (MainTabs.SelectedIndex == 2 ? (Control)CategorySongs : RankingSongs).Focus(); return true; }
         if (keyData == (Keys.Alt | Keys.R)) { SelectTab(3); RankingList.Focus(); return true; }
+        if (keyData == Keys.F10)
+        {
+            ChangeVolume(-0.1);
+            return true;
+        }
         ExecuteLocalHotkey(keyData);
         return base.ProcessCmdKey(ref msg, keyData);
     }

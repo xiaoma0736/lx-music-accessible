@@ -208,7 +208,7 @@ public sealed class WinFormsAccessibilityAuditTests
     }
 
     [Fact]
-    public void Shell_does_not_intercept_f10_away_from_the_native_menu()
+    public void Shell_handles_f10_locally_instead_of_menu_activation()
     {
         WinFormsTestRunner.Run(() =>
         {
@@ -222,8 +222,10 @@ public sealed class WinFormsAccessibilityAuditTests
             });
             shell.Show();
             Application.DoEvents();
-            InvokeProcessCmdKey(shell, Keys.F10);
-            Assert.Equal(0, audio.VolumeChanges);
+            var method = typeof(Form).GetMethod("ProcessCmdKey", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var arguments = new object?[] { new Message(), Keys.F10 };
+            Assert.True((bool)method!.Invoke(shell, arguments)!);
+            Assert.Equal(1, audio.VolumeChanges);
         });
     }
 

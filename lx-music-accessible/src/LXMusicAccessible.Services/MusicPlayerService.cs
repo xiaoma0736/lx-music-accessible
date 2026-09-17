@@ -292,7 +292,17 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         }
     }
 
-    public Task<PlaybackResult> ReplayAsync()
+    public async Task<PlaybackResult> ReplayAsync()
+    {
+        bool resumeRequested;
+        lock (_gate) resumeRequested = _state == PlayerState.Paused && _currentMusic is not null;
+        if (resumeRequested)
+            return await ResumePlaybackAsync(_queueOrigin, PlaybackTrigger.UserInitiated);
+
+        return await ReplayFromStartAsync();
+    }
+
+    private Task<PlaybackResult> ReplayFromStartAsync()
     {
         MusicInfo? music;
         int index;
@@ -946,13 +956,18 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         }
     }
 
-    public async Task ResumeAsync()
+    public Task ResumeAsync() => ResumePlaybackAsync(_queueOrigin, PlaybackTrigger.UserInitiated);
+
+    private async Task<PlaybackResult> ResumePlaybackAsync(
+        PlaybackQueueOrigin origin,
+        PlaybackTrigger trigger)
     {
         MusicInfo? music;
         PlayerState oldState;
         lock (_gate)
         {
-            if (_state != PlayerState.Paused || _currentMusic is null) return;
+            if (_state != PlayerState.Paused || _currentMusic is null)
+                return new(PlaybackResultStatus.NoChange, _currentMusic, origin, "当前没有可继续播放的歌曲", trigger);
             music = _currentMusic;
             oldState = _state;
         }
@@ -962,11 +977,13 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
             await _audioPlayer.PlayAsync();
             lock (_gate)
             {
-                if (_state != PlayerState.Paused) return;
+                if (_state != PlayerState.Paused)
+                    return new(PlaybackResultStatus.Superseded, music, origin, "播放状态已更新", trigger);
                 _state = PlayerState.Playing;
                 _resumePosition = TimeSpan.Zero;
                 RaiseStateChanged(StateChange(oldState, _state, music));
             }
+            return new(PlaybackResultStatus.Playing, music, origin, "已继续播放", trigger);
         }
         catch (Exception exception)
         {
@@ -983,6 +1000,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                 });
             }
             SafeAnnounce(new("无法继续播放当前歌曲", AnnouncementKind.Error));
+            return new(PlaybackResultStatus.Failed, music, origin, "无法继续播放当前歌曲", trigger);
         }
     }
 

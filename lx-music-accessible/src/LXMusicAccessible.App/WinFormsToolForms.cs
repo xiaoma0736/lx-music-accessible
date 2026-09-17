@@ -470,7 +470,7 @@ public class LyricsForm : Form
 {
     private readonly IAccessibleAnnouncer _announcer;
     private readonly LyricsWorkflow _lyrics;
-    private readonly TextBox _text = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window };
+    private readonly TextBox _text = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window, AccessibleRole = AccessibleRole.None };
     private readonly Label _title = new() { Text = "暂无歌词", AutoSize = true, TabStop = false, Dock = DockStyle.Top, AccessibleName = "歌词标题" };
     private readonly Button _copy = new() { Text = "复制歌词", Dock = DockStyle.Bottom };
 
@@ -492,8 +492,8 @@ public class LyricsForm : Form
             Clipboard.SetText(_text.Text.Length == 0 ? string.Empty : _text.Text);
             Announce("歌词已复制", "lyrics", AnnouncementKind.Success);
         };
-        lyrics.StateChanged += (_, state) => BeginInvoke(() => Render(state));
-        Render(lyrics.Current);
+        if (lyrics is not null) lyrics.StateChanged += (_, state) => BeginInvoke(() => Render(state));
+        Render(lyrics?.Current ?? LyricsState.Empty);
         Shown += (_, _) => _text.Focus();
     }
 

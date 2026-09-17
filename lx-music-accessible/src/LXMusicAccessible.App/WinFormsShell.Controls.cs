@@ -42,6 +42,7 @@ public partial class WinFormsShell : Form
     private List<MusicInfo> _favoriteSongs = new();
         private PlayMode _playMode = PlayMode.Sequential;
     private MusicInfo? _current;
+    private const string BaseTitle = "落雪音乐无障碍版";
 
     protected TabControl MainTabs;
     protected ComboBox SearchSource;
@@ -80,7 +81,7 @@ public partial class WinFormsShell : Form
             services.Playback!,
             new LocalSearchHistoryStore(System.IO.Path.Combine(services.TemporaryDirectory ?? System.IO.Path.GetTempPath(), "file-storage")),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<MusicBrowseWorkflow>.Instance);
-        Text = "落雪音乐无障碍版";
+        Text = BaseTitle;
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(1120, 700);
         Size = new Size(1280, 760);
@@ -338,6 +339,7 @@ public partial class WinFormsShell : Form
 
     internal IAccessibleAnnouncer AnnouncerForTests => _announcer;
     internal Label StatusTextForTests => StatusText;
+    internal Label PlaybackInfoForTests => PlaybackInfoText;
     internal void LoadCategoryPlaylistsForTests() => LoadCategoryPlaylists();
     internal Task LoadCategorySongsForTests() => LoadCategorySongs();
     internal Task LoadRankingSongsForTests() => LoadRankingSongs();
