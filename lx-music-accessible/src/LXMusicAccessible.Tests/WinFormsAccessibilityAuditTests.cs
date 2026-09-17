@@ -281,8 +281,7 @@ public sealed class WinFormsAccessibilityAuditTests
                 results.Focus();
 
                 RaiseKeyDown(results, Keys.Enter);
-                WaitUntil(() => ByAccessibleName(shell, "正在播放标题").Text == "Song" &&
-                    announcer.Announcements.Any(item => item.Text.StartsWith("正在播放：", StringComparison.Ordinal)));
+                WaitUntil(() => ByAccessibleName(shell, "播放信息").Text.Contains("Song", StringComparison.Ordinal) && announcer.Announcements.Any(item => item.Text.StartsWith("正在播放：", StringComparison.Ordinal)));
                 Assert.Equal(1, playback.PlayCalls);
             }
             finally

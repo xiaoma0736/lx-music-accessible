@@ -42,7 +42,6 @@ public partial class WinFormsShell : Form
     private List<MusicInfo> _favoriteSongs = new();
         private PlayMode _playMode = PlayMode.Sequential;
     private MusicInfo? _current;
-    private string _playbackLabel = "播放/暂停";
 
     protected TabControl MainTabs;
     protected ComboBox SearchSource;
@@ -110,25 +109,18 @@ public partial class WinFormsShell : Form
         {
             if (MainTabs.SelectedIndex == 1 && services.SavedPlaylists is not null && FavoriteSongs.Items.Count == 0)
                 _ = RunAsync(() => services.SavedPlaylists.LoadAsync(), result => RenderSaved(result.Snapshot, result.Message), "刷新播放列表");
+            else if (MainTabs.SelectedIndex == 2 && CategoryList.Items.Count == 0)
+                LoadCategories();
+            else if (MainTabs.SelectedIndex == 3 && RankingList.Items.Count == 0)
+                LoadRankings();
         };
 
-        var right = CreatePlaybackPanel();
-        var content = new SplitContainer
-        {
-            Dock = DockStyle.Fill,
-            FixedPanel = FixedPanel.Panel2,
-            SplitterDistance = 890,
-            TabStop = false,
-            TabIndex = 0
-        };
-        content.Panel1.Controls.Add(MainTabs);
-        content.Panel2.Controls.Add(right);
+        CreatePlaybackState();
 
         LiveRegion = new Label { Text = string.Empty, Size = new Size(1, 1), TabStop = false, TabIndex = 999 };
-        Controls.Add(content);
+        Controls.Add(MainTabs);
         Controls.Add(status);
         Controls.Add(LiveRegion);
-        AcceptButton = SearchButton;
         if (services.Announcer is WinFormsAccessibleAnnouncer native) native.Attach(LiveRegion);
         AssignSongContextMenu(FavoriteSongs);
         AssignSongContextMenu(CategorySongs);
@@ -238,6 +230,14 @@ public partial class WinFormsShell : Form
             else if (e.Control && e.KeyCode == Keys.Delete) _ = DeleteHistory(false);
             else if (e.Alt && e.KeyCode == Keys.Delete) _ = DeleteHistory(true);
         };
+        SearchText.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter && e.Modifiers == Keys.None)
+            {
+                e.SuppressKeyPress = true;
+                _ = SearchAsync(true);
+            }
+        };
         SearchResults.DoubleClick += (_, _) => _ = ActivateSong(SearchResults);
         SearchResults.KeyDown += (_, e) =>
         {
@@ -338,6 +338,9 @@ public partial class WinFormsShell : Form
 
     internal IAccessibleAnnouncer AnnouncerForTests => _announcer;
     internal Label StatusTextForTests => StatusText;
+    internal void LoadCategoryPlaylistsForTests() => LoadCategoryPlaylists();
+    internal Task LoadCategorySongsForTests() => LoadCategorySongs();
+    internal Task LoadRankingSongsForTests() => LoadRankingSongs();
     private TabPage CreateRankingPage()
     {
         var page = new TabPage("排行榜") { AccessibleName = "排行榜", Padding = new Padding(10) };
@@ -361,34 +364,17 @@ public partial class WinFormsShell : Form
         return page;
     }
 
-    private Control CreatePlaybackPanel()
+    private void CreatePlaybackState()
     {
-        var panel = new Panel { Dock = DockStyle.Fill, TabStop = false, TabIndex = 800 };
-        CurrentTitle = new Label { Text = "未播放", AutoSize = true, TabStop = false, TabIndex = 801, AccessibleName = "正在播放标题", MaximumSize = new Size(230, 0) };
-        CurrentArtist = new Label { Text = string.Empty, AutoSize = true, TabStop = false, TabIndex = 802, AccessibleName = "艺术家" };
-        CurrentAlbum = new Label { Text = string.Empty, AutoSize = true, TabStop = false, TabIndex = 803, AccessibleName = "专辑" };
-        CurrentPlayModeText = new Label { Text = "播放模式：顺序播放", AutoSize = true, TabStop = false, TabIndex = 804, AccessibleName = "播放模式" };
-        PositionText = new Label { Text = "00:00 / 00:00", AutoSize = true, TabStop = false, TabIndex = 805, AccessibleName = "播放位置" };
-        var playPause = CreateButton(_playbackLabel, 806, (_, _) => TogglePlayback());
-        var stop = CreateButton("停止", 807, (_, _) => StopPlayback());
-        var previous = CreateButton("上一首", 808, (_, _) => _ = MovePlayback(true));
-        var next = CreateButton("下一首", 809, (_, _) => _ = MovePlayback(false));
-        playPause.SetBounds(10, 10, 90, 28);
-        stop.SetBounds(105, 10, 65, 28);
-        previous.SetBounds(10, 45, 90, 28);
-        next.SetBounds(105, 45, 65, 28);
-        CurrentTitle.SetBounds(10, 84, 230, 22);
-        CurrentArtist.SetBounds(10, 110, 230, 22);
-        CurrentAlbum.SetBounds(10, 136, 230, 22);
-        CurrentPlayModeText.SetBounds(10, 168, 230, 22);
-        PositionText.SetBounds(10, 196, 230, 22);
-        panel.Controls.AddRange(new Control[] { playPause, stop, previous, next, CurrentTitle, CurrentArtist, CurrentAlbum, CurrentPlayModeText, PositionText });
+        CurrentTitle = new Label { Text = "未播放", Visible = false, TabStop = false };
+        CurrentArtist = new Label { Visible = false, TabStop = false };
+        CurrentAlbum = new Label { Visible = false, TabStop = false };
+        CurrentPlayModeText = new Label { Text = "播放模式：顺序播放", Visible = false, TabStop = false };
+        PositionText = new Label { Text = "00:00 / 00:00", Visible = false, TabStop = false };
         var positionTimer = new System.Windows.Forms.Timer { Interval = 500 };
         positionTimer.Tick += (_, _) => RefreshPlaybackStatus();
         positionTimer.Start();
-        return panel;
     }
-
     protected static Button CreateButton(string text, int tabIndex, EventHandler onClick, Func<bool, bool>? state = null)
     {
         var button = new Button { Text = text };
@@ -435,15 +421,19 @@ public partial class WinFormsShell : Form
 
     protected void RefreshPlaybackStatus()
     {
-        if (_services.Audio is null) return;
+        if (_services.Audio is null)
+        {
+            PlaybackInfoText.Text = _current is null ? "未播放" : $"{_current.Artist} - {_current.Title}";
+            return;
+        }
         try { _services.Audio.SyncVolumeFromDevice(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex.GetType().Name); }
         PositionText.Text = $"{FormatTime(_services.Audio.Position)} / {FormatTime(_services.Audio.Duration)}";
         if (!_services.Playback?.IsPlaying == true)
         {
-            PlaybackInfoText.Text = "未播放";
+            PlaybackInfoText.Text = _current is null ? "未播放" : $"{_current.Artist} - {_current.Title}";
             return;
         }
-        PlaybackInfoText.Text = $"{TranslateQuality(_services.Audio.ActualQuality)}，总时长 {FormatTime(_services.Audio.Duration)}，当前位置 {FormatTime(_services.Audio.Position)}";
+        PlaybackInfoText.Text = $"{_current?.Artist} - {_current?.Title}，{TranslateQuality(_services.Audio.ActualQuality)}，总时长 {FormatTime(_services.Audio.Duration)}，当前位置 {FormatTime(_services.Audio.Position)}";
     }
 
     protected void ApplyHistory(SearchHistoryNavigation navigation)

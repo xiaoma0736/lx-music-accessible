@@ -20,16 +20,11 @@ internal static class AccessibleSpeechPolicy
     {
         if (announcement.ActivityId is not { Length: > 0 } activityId)
             return false;
-        return activityId.Equals(SettingsActivityId, StringComparison.Ordinal)
-            || activityId.Equals(HotkeyRecordingActivityId, StringComparison.Ordinal)
-            || activityId.Equals("play-mode", StringComparison.Ordinal)
-            || activityId.Equals("audio-device", StringComparison.Ordinal)
-            || activityId.Equals("playback-song", StringComparison.Ordinal)
+        return activityId.Equals("playback-song", StringComparison.Ordinal)
             || activityId.Equals("lyrics", StringComparison.Ordinal)
             || activityId.Equals("lyrics-offset", StringComparison.Ordinal)
             || activityId.StartsWith("download:", StringComparison.Ordinal)
             || activityId.StartsWith("download-list:", StringComparison.Ordinal)
-            || activityId.StartsWith("manual-source-query:", StringComparison.Ordinal)
             || activityId.StartsWith("manual-source-playback:", StringComparison.Ordinal);
     }
 }
