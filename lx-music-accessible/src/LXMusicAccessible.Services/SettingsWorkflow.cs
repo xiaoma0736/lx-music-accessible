@@ -132,10 +132,18 @@ public sealed class SettingsWorkflow
         _store = store;
         _hotkeys = hotkeys;
         _logger = logger;
+        _hotkeys.RegistrationFailed += (_, e) => LastRegistrationFailures = e.FailedHotkeys;
         var settings = Normalize(new UserSettings());
         settings.CustomHotkeys = _hotkeys.Snapshot().ToList();
         _current = new SettingsEditState(0, settings);
     }
+
+    /// <summary>
+    /// The enabled globals whose native registration failed in the most recent attach. Production
+    /// resolves WinFormsShell after startup registration has already run, so the shell reads this
+    /// instead of the event, which fires before any shell subscriber exists.
+    /// </summary>
+    public IReadOnlyList<Hotkey> LastRegistrationFailures { get; private set; } = Array.Empty<Hotkey>();
 
     public event EventHandler<HotkeyPressedEventArgs>? HotkeyPressed
     {
@@ -225,6 +233,7 @@ public sealed class SettingsWorkflow
             // schema 2 without an automatic write during startup.
             _persistedVersion = requiresHotkeyMigration ? _version - 1 : _version;
         }
+        LastRegistrationFailures = Array.Empty<Hotkey>();
         _hotkeys.AttachWindow(windowHandle);
         PublishSettingsChanged(previous: null, current);
         return current;

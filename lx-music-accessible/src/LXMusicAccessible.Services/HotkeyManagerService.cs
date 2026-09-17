@@ -31,17 +31,32 @@ internal sealed class Win32GlobalHotkeyAdapter : IGlobalHotkeyAdapter
     public bool Register(IntPtr windowHandle, int id, PlatformKey key, PlatformModifiers modifiers)
     {
         LastRegisterError = 0;
+        var virtualKey = ToVirtualKey(key);
+        if (virtualKey == 0)
+        {
+            LastRegisterError = 1400;
+            return false;
+        }
         var registered = RegisterHotKey(
             windowHandle,
             id,
             ToFlags(modifiers) | ModNoRepeat,
-            (uint)key);
+            virtualKey);
         if (!registered)
             LastRegisterError = Marshal.GetLastWin32Error();
         return registered;
     }
 
     public bool Unregister(IntPtr windowHandle, int id) => UnregisterHotKey(windowHandle, id);
+
+    /// <summary>
+    /// Persisted hotkeys keep the legacy menu-era numbering (<c>Home</c> is 22), while
+    /// <c>RegisterHotKey</c> and WM_KEYDOWN need Win32 virtual-key codes (<c>VK_HOME</c> is 0x24).
+    /// Sending the raw number silently binds the wrong key or fails, so native registration and
+    /// keyboard dispatch share one translation table. A zero result means the key cannot be
+    /// registered natively; the caller reports that instead of registering a wrong binding.
+    /// </summary>
+    internal static uint ToVirtualKey(PlatformKey key) => KeyboardKeys.ToVirtualKey(key);
 
     private static uint ToFlags(PlatformModifiers modifiers)
     {
@@ -166,9 +181,14 @@ internal sealed class HotkeyManagerService
 
     internal IReadOnlyList<Hotkey> Snapshot() => _hotkeys.Select(Clone).ToArray();
 
+    /// <summary>
+    /// True only while the native registration for an enabled global binding is live, so a missing
+    /// message window or a failed RegisterHotKey reports "not registered" instead of claiming the
+    /// binding works.
+    /// </summary>
     internal bool IsGlobalRegistered(string actionId) =>
-        _windowHandle == IntPtr.Zero
-        || _registered.Values.Any(item => item.ActionId == actionId && item.IsGlobal);
+        _windowHandle != IntPtr.Zero
+        && _registered.Values.Any(item => item.ActionId == actionId && item.IsGlobal);
 
     internal Hotkey? MatchFallback(PlatformKey key, PlatformModifiers modifiers)
     {

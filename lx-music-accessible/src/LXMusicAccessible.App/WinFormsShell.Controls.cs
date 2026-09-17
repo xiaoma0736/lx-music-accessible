@@ -503,13 +503,30 @@ public partial class WinFormsShell : Form
         if (_services.Settings is not null)
         {
             _services.Settings.HotkeyPressed += (_, e) => ExecuteHotkey(e.Hotkey.ActionId);
+            _services.Settings.HotkeysRegistrationFailed += (_, e) => AnnounceRegistrationFailures(e.FailedHotkeys);
             _services.Settings.SettingsChanged += (_, _) => ApplySettings();
+            // Startup registration runs before this shell is resolved, so its failures are reported
+            // from the recorded list as well; the event above only covers later re-attaches.
+            AnnounceRegistrationFailures(_services.Settings.LastRegistrationFailures);
         }
         if (_services.Playback is not null)
             _services.Playback.QueueCompleted += (_, e) => BeginInvoke(() =>
             {
                 Announce("播放队列已完成", "playback-queue");
             });
+    }
+
+    /// <summary>
+    /// Reports each binding whose native registration failed, naming the actions and the likely cause,
+    /// so a configured hotkey that cannot work is never silently dead.
+    /// </summary>
+    private void AnnounceRegistrationFailures(IReadOnlyList<Hotkey> failed)
+    {
+        if (failed.Count == 0) return;
+        var names = string.Join("、", failed.Select(hotkey => string.IsNullOrWhiteSpace(hotkey.Name) ? hotkey.ActionId : hotkey.Name));
+        var message = "以下全局快捷键注册失败，可能已被其他程序占用：" + names;
+        if (InvokeRequired && IsHandleCreated) BeginInvoke(() => Announce(message, "hotkey-registration", AnnouncementKind.Error));
+        else Announce(message, "hotkey-registration", AnnouncementKind.Error);
     }
 
     protected void ApplySettings()

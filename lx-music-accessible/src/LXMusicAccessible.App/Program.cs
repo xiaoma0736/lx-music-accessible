@@ -33,6 +33,12 @@ internal static class Program
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            // Startup awaits must resume on this thread: the main window and the global-hotkey message
+            // window are only ever pumped by this thread's message loop. Without an installed WinForms
+            // context the first await hops to an MTA thread-pool thread, where the message window is
+            // created but never receives WM_HOTKEY and the main window never responds.
+            WindowsFormsSynchronizationContext.AutoInstall = true;
+            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
 
             _mutex = new Mutex(true, MutexName, out var createdNew);
             if (!createdNew)
@@ -43,13 +49,20 @@ internal static class Program
             StartActivationListener();
             AppDataPaths.MigrateLegacyNestedDataDirectory();
 
-            await using var runtime = ApplicationHost.Create();
-            var outcome = runtime.StartAsync().GetAwaiter().GetResult();
-            if (outcome == ApplicationStartOutcome.ExitRequested) return 0;
-            _shell = runtime.Services!.GetRequiredService<WinFormsShell>();
-            Application.Run(_shell);
-            runtime.StopAsync().GetAwaiter().GetResult();
-            return 0;
+            var runtime = ApplicationHost.Create();
+            try
+            {
+                var outcome = await PumpAsync(runtime.StartAsync());
+                if (outcome == ApplicationStartOutcome.ExitRequested) return 0;
+                _shell = runtime.Services!.GetRequiredService<WinFormsShell>();
+                Application.Run(_shell);
+                await PumpAsync(runtime.StopAsync());
+                return 0;
+            }
+            finally
+            {
+                await PumpDisposalAsync(runtime);
+            }
         }
         finally
         {
@@ -60,6 +73,50 @@ internal static class Program
             try { _mutex?.Dispose(); } catch (Exception ex) { Debug.WriteLine(ex.GetType().Name); }
             Log.CloseAndFlush();
         }
+    }
+
+    /// <summary>
+    /// Waits for startup or shutdown work whose continuations are posted back to this thread. The
+    /// thread has to keep pumping while it waits: <see cref="Application.Run(Form)"/> does not own the
+    /// message loop yet, so a blocked thread would wait forever for a continuation it never dispatches.
+    /// The bound keeps a stuck pipeline from hanging the process indefinitely.
+    /// </summary>
+    private static async Task<T> PumpAsync<T>(Task<T> task)
+    {
+        PumpWhileIncomplete(task);
+        return await task;
+    }
+
+    private static async Task PumpAsync(Task task)
+    {
+        PumpWhileIncomplete(task);
+        await task;
+    }
+
+    /// <summary>
+    /// Pumps the message queue by hand until the awaited pipeline finishes. The loop is synchronous on
+    /// purpose: the work it waits for posts continuations back to this thread, and only
+    /// <see cref="Application.DoEvents"/> can dispatch them before the main message loop starts.
+    /// </summary>
+    private static void PumpWhileIncomplete(Task task)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (!task.IsCompleted)
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException("启动或退出流程超时。");
+            Application.DoEvents();
+            Thread.Sleep(1);
+        }
+    }
+
+    /// <summary>
+    /// Releases the host through the same pumped wait. A disposal failure is diagnostic only: the
+    /// shutdown pipeline already reported its own result and the process is about to exit.
+    /// </summary>
+    private static async Task PumpDisposalAsync(ApplicationRuntime runtime)
+    {
+        try { await PumpAsync(runtime.DisposeAsync().AsTask()); }
+        catch (Exception ex) { Debug.WriteLine("Runtime disposal failed: " + ex.GetType().Name); }
     }
 
     private static void SignalExisting()

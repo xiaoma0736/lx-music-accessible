@@ -444,15 +444,19 @@ internal sealed class ProductionStartupInitializer(string dataDirectory) : IStar
         _ = services.GetRequiredService<IAccessibleAnnouncer>();
         _ = services.GetRequiredService<IPlaybackCoordinator>();
         _ = services.GetRequiredService<IAudioPlaybackControl>();
+        // The message window and the persisted bindings are wired before source initialization:
+        // registration needs a live window handle, and source scripts can spin up work that must not
+        // delay the global hotkeys the user asked for. The window handle is created on the message
+        // loop thread, so bindings stay active for the whole session.
+        var globalHotkeys = services.GetRequiredService<GlobalHotkeyMessageWindow>();
+        var settings = services.GetRequiredService<SettingsWorkflow>();
+        globalHotkeys.HotkeyReceived += (_, id) => settings.RaiseGlobalHotkey(id);
+        await settings.LoadAsync(globalHotkeys.Handle);
         var sources = services.GetRequiredService<IMusicSourceService>();
         await sources.InitializeScriptSourcesAsync(cancellationToken);
         _ = services.GetRequiredService<IDownloadWorkflow>();
         _ = services.GetRequiredService<ILyricService>();
         _ = services.GetRequiredService<LyricsWorkflow>();
-        var globalHotkeys = services.GetRequiredService<GlobalHotkeyMessageWindow>();
-        var settings = services.GetRequiredService<SettingsWorkflow>();
-        globalHotkeys.HotkeyReceived += (_, id) => settings.RaiseGlobalHotkey(id);
-        await settings.LoadAsync(globalHotkeys.Handle);
         _ = services.GetRequiredService<IPlaylistImportService>();
         cancellationToken.ThrowIfCancellationRequested();
     }

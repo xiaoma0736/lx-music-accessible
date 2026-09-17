@@ -246,7 +246,7 @@ public class SettingsForm : Form
         reset.Click += async (_, _) =>
         {
             var result = await _settings.ResetHotkeysAsync();
-        Announce(result.Applied ? "快捷键已恢复默认" : "快捷键恢复失败", "settings", result.Applied ? AnnouncementKind.Success : AnnouncementKind.Error);
+            Announce(result.Applied ? "快捷键已恢复默认" : StatusMessage("快捷键恢复默认", result), "settings", result.Applied ? AnnouncementKind.Success : AnnouncementKind.Error);
         };
         return page;
     }
@@ -364,7 +364,8 @@ public class SettingsForm : Form
     {
         _recording = null;
         var result = await _settings.ClearHotkeyAsync(item.ActionId, item.IsGlobal);
-        Announce(result.Applied ? $"{item.ActionName}快捷键已清除" : "快捷键清除失败", "hotkey-recording", result.Applied ? AnnouncementKind.Success : AnnouncementKind.Error);
+        Announce(result.Applied ? item.ActionName + "快捷键已清除" : StatusMessage(item.ActionName + "快捷键", result), "hotkey-recording", result.Applied ? AnnouncementKind.Success : AnnouncementKind.Error);
+        _hotkeys.Focus();
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -375,34 +376,52 @@ public class SettingsForm : Form
             if (e.KeyCode == Keys.Escape) Close();
             return;
         }
-        if (e.KeyCode == Keys.Escape) { EndRecording("已取消，快捷键未更改"); return; }
-        if (e.KeyCode == Keys.Delete) { var item = _recording; _ = ClearHotkey(item); return; }
-        var key = (PlatformKey)e.KeyCode;
+        if (e.KeyCode == Keys.Escape) { EndRecording("已取消快捷键录制"); return; }
+        if (e.KeyCode == Keys.Delete) { var clearing = _recording; _ = ClearHotkey(clearing); return; }
         if (e.KeyCode is Keys.ShiftKey or Keys.ControlKey or Keys.Menu or Keys.LWin or Keys.RWin) return;
+        // The recorder sees Forms key numbers while native registration and dispatch need Win32 virtual
+        // keys, so translate once here instead of persisting a number that binds the wrong native key.
+        var key = KeyboardKeys.FromVirtualKey((uint)(e.KeyCode & Keys.KeyCode));
+        if (key == PlatformKey.None) { EndRecording("此按键不能注册为快捷键"); return; }
         var modifiers = (e.Control ? PlatformModifiers.Control : PlatformModifiers.None) | (e.Alt ? PlatformModifiers.Alt : PlatformModifiers.None) | (e.Shift ? PlatformModifiers.Shift : PlatformModifiers.None);
+        var target = _recording;
         _recording = null;
-        _ = ReplaceHotkey(_recordingItem!, key, modifiers);
-    }
-
-    private HotkeySettingItem? _recordingItem;
-
-    private void StartRecordingCapture(HotkeySettingItem item)
-    {
-        _recording = item;
-        _recordingItem = item;
+        _ = ReplaceHotkey(target, key, modifiers);
     }
 
     private async Task ReplaceHotkey(HotkeySettingItem item, PlatformKey key, PlatformModifiers modifiers)
     {
         var result = await _settings.ReplaceHotkeyAsync(item.ActionId, item.IsGlobal, key, modifiers);
-        Announce(result.Applied ? $"{item.ActionName}快捷键设置完成" : "快捷键设置失败", "hotkey-recording", result.Applied ? AnnouncementKind.Success : AnnouncementKind.Error);
+        Announce(EditMessage(item, result), "hotkey-recording", result.Applied ? AnnouncementKind.Success : AnnouncementKind.Error);
         _hotkeys.Focus();
     }
+
+    private static string EditMessage(HotkeySettingItem item, HotkeyEditResult result) =>
+        StatusMessage((item.IsGlobal ? "全局" : string.Empty) + item.ActionName + "快捷键", result);
+
+    /// <summary>
+    /// One accessible sentence per edit outcome, so a rejected or rolled-back edit is never silent:
+    /// conflicts name the other actions, a registration failure states the previous binding is intact,
+    /// and a save failure says the binding works but the choice was not persisted.
+    /// </summary>
+    private static string StatusMessage(string subject, HotkeyEditResult result) => result.Status switch
+    {
+        HotkeyEditStatus.Applied => subject + "已更新",
+        HotkeyEditStatus.Unchanged => subject + "未发生变化",
+        HotkeyEditStatus.Invalid => subject + "无效：该按键不能注册为快捷键",
+        HotkeyEditStatus.Conflict => subject + "与其他快捷键冲突：" + DescribeHotkeys(result.Conflicts),
+        HotkeyEditStatus.RegistrationFailed => subject + "注册失败：系统可能已占用该按键，原有设置保持不变",
+        HotkeyEditStatus.RollbackFailed => subject + "注册失败且无法恢复原有快捷键，请重新设置",
+        HotkeyEditStatus.PersistenceFailed => subject + "已生效但保存失败，退出前请检查设置",
+        _ => subject + "更新失败"
+    };
+
+    private static string DescribeHotkeys(IReadOnlyList<Hotkey> hotkeys) =>
+        hotkeys.Count == 0 ? "无" : string.Join("、", hotkeys.Select(hotkey => string.IsNullOrWhiteSpace(hotkey.Name) ? hotkey.ActionId : hotkey.Name));
 
     private void EndRecording(string message)
     {
         _recording = null;
-        _recordingItem = null;
         Announce(message, "hotkey-recording");
         _hotkeys.Focus();
     }

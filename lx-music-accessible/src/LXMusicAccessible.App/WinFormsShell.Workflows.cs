@@ -732,10 +732,21 @@ public partial class WinFormsShell
         previousFocus?.Focus();
     }
 
+    /// <summary>
+    /// Single entry point for hotkeys raised by child windows. It routes through the same
+    /// configuration-driven lookup as ProcessCmdKey so a rebound key behaves identically wherever it
+    /// is pressed, and it returns false for keys it did not handle so the window keeps its own keys,
+    /// such as Escape closing the lyrics reader.
+    /// </summary>
     private bool HandleHotkey(System.Windows.Forms.KeyEventArgs args)
     {
-        ExecuteLocalHotkey(args.KeyCode);
-        return true;
+        if (IsHotkeySuppressed(IntPtr.Zero)) return false;
+        if (_services.Settings is null)
+        {
+            ExecuteLocalHotkey(args.KeyCode);
+            return false;
+        }
+        return ExecuteConfiguredHotkey(args.KeyCode);
     }
 
     private void ExecuteHotkey(string actionId)
@@ -746,6 +757,8 @@ public partial class WinFormsShell
             case HotkeyActions.Stop: StopPlayback(); break;
             case HotkeyActions.Previous: _ = MovePlayback(true); break;
             case HotkeyActions.Next: _ = MovePlayback(false); break;
+            case HotkeyActions.Rewind: Seek(-10); break;
+            case HotkeyActions.Forward: Seek(10); break;
             case HotkeyActions.VolumeDown: ChangeVolume(-VolumeStep); break;
             case HotkeyActions.VolumeUp: ChangeVolume(VolumeStep); break;
             case HotkeyActions.LyricDelay: _services.Lyrics?.AdjustOffset(500); break;
@@ -754,11 +767,59 @@ public partial class WinFormsShell
             case HotkeyActions.Download: DownloadSelected(); break;
             case HotkeyActions.SwitchPreviousOutputDevice: SwitchDevice(-1); break;
             case HotkeyActions.SwitchNextOutputDevice: SwitchDevice(1); break;
+            case HotkeyActions.ToggleWindow: ToggleVisibility(); break;
+            case HotkeyActions.ToggleVoiceAnnouncement: _services.Announcements?.ToggleVoiceAnnouncement(); break;
+            case HotkeyActions.ToggleLyricAnnouncement: _services.Announcements?.ToggleLyricAnnouncement(); break;
         }
+    }
+
+    /// <summary>
+    /// Resolves one key against the configured bindings. A local binding wins; a global binding whose
+    /// native registration is not live runs here as a fallback; a natively registered global binding
+    /// is deliberately left to the message window so the action runs exactly once instead of twice.
+    /// </summary>
+    private bool ExecuteConfiguredHotkey(Keys keyData)
+    {
+        var settings = _services.Settings;
+        if (settings is null) return false;
+        var key = KeyboardKeys.FromVirtualKey((uint)(keyData & Keys.KeyCode));
+        if (key == PlatformKey.None) return false;
+        var modifiers = ModifiersOf(keyData);
+        var hotkey = settings.MatchLocalHotkey(key, modifiers) ?? settings.MatchFallback(key, modifiers);
+        if (hotkey is null) return false;
+        ExecuteHotkey(hotkey.ActionId);
+        return true;
+    }
+
+    private static PlatformModifiers ModifiersOf(Keys keyData)
+    {
+        var modifiers = PlatformModifiers.None;
+        if ((keyData & Keys.Control) != 0) modifiers |= PlatformModifiers.Control;
+        if ((keyData & Keys.Alt) != 0) modifiers |= PlatformModifiers.Alt;
+        if ((keyData & Keys.Shift) != 0) modifiers |= PlatformModifiers.Shift;
+        return modifiers;
+    }
+
+    /// <summary>
+    /// Keeps hotkeys silent while a writable text box owns the keyboard, so typing in the search box
+    /// or a settings path never fires an action. Read-only readers such as the lyrics window keep
+    /// their playback keys, and Escape is handled by each window before this check runs.
+    /// </summary>
+    private static bool IsHotkeySuppressed(IntPtr messageTarget)
+    {
+        var focused = messageTarget != IntPtr.Zero ? Control.FromHandle(messageTarget) : null;
+        if (focused is null)
+        {
+            var handle = GetFocus();
+            focused = handle == IntPtr.Zero ? null : Control.FromHandle(handle);
+        }
+        return focused is TextBoxBase { ReadOnly: false };
     }
 
     private void ExecuteLocalHotkey(Keys key)
     {
+        // Legacy table for shells composed without a SettingsWorkflow (deterministic UI tests).
+        // Production shells resolve every local key through the configured bindings above.
         switch (key)
         {
             case Keys.F5: TogglePlayback(); break;
@@ -801,14 +862,33 @@ public partial class WinFormsShell
         if (keyData == (Keys.Alt | Keys.P)) { SelectTab(1); return true; }
         if (keyData == (Keys.Alt | Keys.S)) { SelectTab(MainTabs.SelectedIndex == 2 ? 2 : 3); (MainTabs.SelectedIndex == 2 ? (Control)CategorySongs : RankingSongs).Focus(); return true; }
         if (keyData == (Keys.Alt | Keys.R)) { SelectTab(3); RankingList.Focus(); return true; }
-        if (keyData == Keys.F10)
+        if (keyData == (Keys.Control | Keys.Up))
         {
-            ChangeVolume(VolumeStep);
+            MainTabs.SelectedIndex = Math.Max(0, MainTabs.SelectedIndex - 1);
             return true;
         }
-        ExecuteLocalHotkey(keyData);
+        if (keyData == (Keys.Control | Keys.Down))
+        {
+            MainTabs.SelectedIndex = Math.Min(MainTabs.TabPages.Count - 1, MainTabs.SelectedIndex + 1);
+            return true;
+        }
+        if (_services.Settings is null)
+        {
+            if (keyData == Keys.F10)
+            {
+                ChangeVolume(VolumeStep);
+                return true;
+            }
+            ExecuteLocalHotkey(keyData);
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+        if (IsHotkeySuppressed(msg.HWnd)) return base.ProcessCmdKey(ref msg, keyData);
+        if (ExecuteConfiguredHotkey(keyData)) return true;
         return base.ProcessCmdKey(ref msg, keyData);
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetFocus();
 
     private void AttachSongList(ListBox list)
     {
