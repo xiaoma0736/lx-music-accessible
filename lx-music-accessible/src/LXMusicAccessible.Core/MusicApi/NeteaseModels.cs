@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 
 namespace LXMusicAccessible.Core.MusicApi;
 
@@ -161,6 +161,9 @@ public class NeteaseTopList
     [JsonPropertyName("code")]
     public int Code { get; set; }
 
+    [JsonPropertyName("message")]
+    public string? Message { get; set; }
+
     [JsonPropertyName("list")]
     public List<NeteaseTopListDetail>? List { get; set; }
 
@@ -232,6 +235,9 @@ public class NeteasePlaylistResult
 {
     [JsonPropertyName("code")]
     public int Code { get; set; }
+
+    [JsonPropertyName("message")]
+    public string? Message { get; set; }
 
     [JsonPropertyName("playlists")]
     public List<NeteasePlaylist>? Playlists { get; set; }
@@ -380,8 +386,15 @@ public class NeteasePlaylistTrackResponse
     [JsonPropertyName("code")]
     public int Code { get; set; }
 
+    [JsonPropertyName("message")]
+    public string? Message { get; set; }
+
     [JsonPropertyName("songs")]
     public List<NeteaseSong>? Songs { get; set; }
+
+    /// <summary>weapi /v3/song/detail 的 privileges 同样位于响应根节点，按歌曲 id 关联。</summary>
+    [JsonPropertyName("privileges")]
+    public List<NeteasePrivilege>? Privileges { get; set; }
 
     [JsonPropertyName("total")]
     public int Total { get; set; }
@@ -452,8 +465,18 @@ public class NeteaseLinuxApiResp
     [JsonPropertyName("code")]
     public int Code { get; set; }
 
+    [JsonPropertyName("message")]
+    public string? Message { get; set; }
+
     [JsonPropertyName("playlist")]
     public NeteasePlaylistDetailInfo? Playlist { get; set; }
+
+    /// <summary>
+    /// 歌曲权限（音质）信息。linuxapi v6 详情把 privileges 放在响应根节点上，
+    /// 而不是挂在 playlist.tracks[] 的每首歌上，因此必须单独读取并按歌曲 id 关联。
+    /// </summary>
+    [JsonPropertyName("privileges")]
+    public List<NeteasePrivilege>? Privileges { get; set; }
 }
 
 // ========== 歌词 ==========

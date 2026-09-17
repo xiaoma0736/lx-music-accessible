@@ -313,14 +313,17 @@ public class NeteaseMusicService : IMusicApi
     {
         try
         {
+            var endpoint = $"{WeapiBaseUrl}/toplist";
             var result = await _httpClient.PostWeapiAsync<NeteaseTopList>(
-                $"{WeapiBaseUrl}/toplist",
+                endpoint,
                 new { },
                 DefaultHeaders,
                 cancellationToken);
 
+            ThrowIfNeteaseCodeFailed(result?.Code, result?.Message, "获取排行榜列表", endpoint);
             if (result?.List == null)
-                return GetDefaultRankings();
+                throw new InvalidOperationException(
+                    $"获取排行榜列表失败：网易云未返回排行榜数据 (code={result?.Code ?? 0}){NeteaseMessageSuffix(result?.Message)}（接口：{endpoint}）。");
 
             return result.List.Select(board => new Ranking
             {
@@ -332,74 +335,43 @@ public class NeteaseMusicService : IMusicApi
                 UpdateDate = DateTimeOffset.FromUnixTimeMilliseconds(board.UpdateTime).DateTime
             }).ToList();
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            _logger.LogError(ex, "获取排行榜列表失败，使用内置列表");
-            return GetDefaultRankings();
-        }
-    }
-
-    public async Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            var result = await _httpClient.PostWeapiAsync<NeteasePlaylistDetailResp>(
-                $"{WeapiBaseUrl}/v3/playlist/detail",
-                new { id = rankingId, n = pageSize, p = page, s = 8 },
-                DefaultHeaders,
-                cancellationToken);
-
-            if (result?.Playlist?.Tracks == null)
-                return PagedResult<MusicInfo>.Empty(page, pageSize);
-
-            var musicList = result.Playlist.Tracks.Select(song => new MusicInfo
-            {
-                Id = song.Id.ToString(),
-                Title = song.Name ?? "未知歌曲",
-                Artist = song.GetArtistNames(),
-                Album = song.Album?.Name ?? "未知专辑",
-                Duration = song.GetDurationString(),
-                Source = "netease",
-                CoverUrl = song.Album?.PicUrl ?? "",
-                Quality = GetQualityLevel(song.Privilege)
-            }).ToList();
-
-            return new PagedResult<MusicInfo>
-            {
-                CurrentPage = page,
-                PageSize = pageSize,
-                TotalItems = result.Playlist.TrackCount,
-                Items = musicList
-            };
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "获取排行榜详情失败: {RankingId}", rankingId);
-            return PagedResult<MusicInfo>.Empty(page, pageSize);
+            _logger.LogError(ex, "获取排行榜列表失败");
+            throw;
         }
     }
+
+    public Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string rankingId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
+        => GetDetailPageAsync(rankingId, page, pageSize, "获取排行榜详情", cancellationToken);
 
     // ========== 歌单分类 ==========
 
-        public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
+    public async Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(CancellationToken cancellationToken = default)
     {
-        var officialTask = _httpClient.PostWeapiAsync<JsonElement?>($"{WeapiBaseUrl}/playlist/catalogue", new { }, DefaultHeaders, cancellationToken);
-        var hotTask = _httpClient.PostWeapiAsync<JsonElement?>($"{WeapiBaseUrl}/playlist/hottags", new { }, DefaultHeaders, cancellationToken);
+        var catalogueEndpoint = $"{WeapiBaseUrl}/playlist/catalogue";
+        var hotTagsEndpoint = $"{WeapiBaseUrl}/playlist/hottags";
+        var officialTask = _httpClient.PostWeapiAsync<JsonElement?>(catalogueEndpoint, new { }, DefaultHeaders, cancellationToken);
+        var hotTask = _httpClient.PostWeapiAsync<JsonElement?>(hotTagsEndpoint, new { }, DefaultHeaders, cancellationToken);
         await Task.WhenAll(officialTask, hotTask);
         var official = await officialTask;
         var hot = await hotTask;
         if (official is null || official.Value.ValueKind != JsonValueKind.Object || !official.Value.TryGetProperty("sub", out var subs) || subs.ValueKind != JsonValueKind.Array ||
             !official.Value.TryGetProperty("categories", out var categoryNames) || categoryNames.ValueKind != JsonValueKind.Object)
-            throw new InvalidOperationException("Netease playlist catalogue returned no data.");
+            throw new InvalidOperationException($"获取歌单分类失败：网易云未返回分类数据 (endpoint={catalogueEndpoint})。");
 
         var grouped = subs.EnumerateArray()
-            .Where(item => item.TryGetProperty("category", out var _) && item.TryGetProperty("name", out var tagName) && tagName.GetString()?.Length > 0)
-            .GroupBy(item => item.GetProperty("category").GetString() ?? "", StringComparer.Ordinal)
+            .Where(item => item.TryGetProperty("category", out var _) && JsonHelpers.GetString(item, "name")?.Length > 0)
+            .GroupBy(item => JsonHelpers.GetString(item, "category") ?? "", StringComparer.Ordinal)
             .Select(group => new PlaylistCategory
             {
                 Id = group.Key,
                 Name = categoryNames.TryGetProperty(group.Key, out var name) ? name.GetString() ?? "其他" : "其他",
-                Tags = group.Select(item => new PlaylistTag { Id = item.GetProperty("name").GetString() ?? "", Name = item.GetProperty("name").GetString() ?? "" }).ToList()
+                Tags = group.Select(item => new PlaylistTag { Id = JsonHelpers.GetString(item, "name") ?? "", Name = JsonHelpers.GetString(item, "name") ?? "" }).ToList()
             })
             .Where(category => category.Tags.Count > 0)
             .ToList();
@@ -425,80 +397,42 @@ public class NeteaseMusicService : IMusicApi
 
     public async Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string categoryId, int page = 1, int pageSize = 30, CancellationToken cancellationToken = default)
     {
+        var endpoint = $"{WeapiBaseUrl}/playlist/list";
+        var result = await _httpClient.PostWeapiAsync<NeteasePlaylistResult>(
+            endpoint,
+            new { cat = categoryId, order = "hot", limit = pageSize, offset = pageSize * (page - 1), total = true },
+            DefaultHeaders,
+            cancellationToken);
 
-            var result = await _httpClient.PostWeapiAsync<NeteasePlaylistResult>(
-                $"{WeapiBaseUrl}/playlist/list",
-                new { cat = categoryId, order = "hot", limit = pageSize, offset = pageSize * (page - 1), total = true },
-                DefaultHeaders,
-                cancellationToken);
+        ThrowIfNeteaseCodeFailed(result?.Code, result?.Message, "获取歌单列表", endpoint);
+        if (result?.Playlists == null)
+            throw new InvalidOperationException(
+                $"获取歌单列表失败：网易云未返回歌单数据 (cat={categoryId}, code={result?.Code ?? 0}){NeteaseMessageSuffix(result?.Message)}（接口：{endpoint}）。");
 
-            if (result?.Playlists == null)
-                return PagedResult<Playlist>.Empty(page, pageSize);
+        var playlists = result.Playlists.Select(pl => new Playlist
+        {
+            Id = $"netease_{pl.Id}",
+            Name = pl.Name ?? "未知歌单",
+            Description = pl.Description ?? "",
+            Tags = pl.Tags ?? new List<string>(),
+            Type = PlaylistType.Recommend,
+            CreatedDate = DateTime.Now,
+            ModifiedDate = DateTime.Now
+        }).ToList();
 
-            var playlists = result.Playlists.Select(pl => new Playlist
-            {
-                Id = $"netease_{pl.Id}",
-                Name = pl.Name ?? "未知歌单",
-                Description = pl.Description ?? "",
-                Tags = pl.Tags ?? new List<string>(),
-                Type = PlaylistType.Recommend,
-                CreatedDate = DateTime.Now,
-                ModifiedDate = DateTime.Now
-            }).ToList();
-
-            return new PagedResult<Playlist>
-            {
-                CurrentPage = page,
-                PageSize = pageSize,
-                TotalItems = result.Total,
-                Items = playlists
-            };
-
+        return new PagedResult<Playlist>
+        {
+            CurrentPage = page,
+            PageSize = pageSize,
+            TotalItems = result.Total,
+            Items = playlists
+        };
     }
 
     // ========== 歌单详情 ==========
 
-    public async Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
-    {
-
-            var result = await _httpClient.PostLinuxApiAsync<NeteaseLinuxApiResp>(
-                new
-                {
-                    method = "POST",
-                    url = "https://music.163.com/api/v3/playlist/detail",
-                    @params = new { id = playlistId, n = pageSize, s = 8 }
-                },
-                DefaultHeaders,
-                cancellationToken);
-
-            if (result?.Playlist?.Tracks == null)
-                return PagedResult<MusicInfo>.Empty(page, pageSize);
-
-            var tracks = result.Playlist.Tracks;
-            var start = (page - 1) * pageSize;
-            var pageItems = tracks.Skip(start).Take(pageSize);
-
-            var musicList = pageItems.Select(song => new MusicInfo
-            {
-                Id = song.Id.ToString(),
-                Title = song.Name ?? "未知歌曲",
-                Artist = song.GetArtistNames(),
-                Album = song.Album?.Name ?? "未知专辑",
-                Duration = song.GetDurationString(),
-                Source = "netease",
-                CoverUrl = song.Album?.PicUrl ?? "",
-                Quality = GetQualityLevel(song.Privilege)
-            }).ToList();
-
-            return new PagedResult<MusicInfo>
-            {
-                CurrentPage = page,
-                PageSize = pageSize,
-                TotalItems = result.Playlist.TrackCount,
-                Items = musicList
-            };
-
-    }
+    public Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page = 1, int pageSize = 50, CancellationToken cancellationToken = default)
+        => GetDetailPageAsync(playlistId, page, pageSize, "获取歌单详情", cancellationToken);
 
     // ========== 辅助方法 ==========
 
@@ -559,33 +493,136 @@ public class NeteaseMusicService : IMusicApi
         return map;
     }
 
-    // ========== 备用数据 ==========
+    // ========== 详情分页（歌单/排行榜共用） ==========
 
-    private static List<PlaylistCategory> GetDefaultCategories()
+    private const int SongDetailChunkSize = 200;
+    private const string PlaylistDetailEndpoint = "https://music.163.com/api/v6/playlist/detail";
+
+    /// <summary>
+    /// linuxapi v6 详情只内嵌少量 tracks，完整的曲目顺序在 trackIds 中（大歌单尤其明显），
+    /// 因此必须按页码切片 trackIds，再用 weapi /v3/song/detail 解析本页歌曲。
+    /// </summary>
+    private async Task<PagedResult<MusicInfo>> GetDetailPageAsync(
+        string id,
+        int page,
+        int pageSize,
+        string action,
+        CancellationToken cancellationToken)
     {
-        return new List<PlaylistCategory>
+        var requestId = long.TryParse(id, out var numericId) ? (object)numericId : id;
+        var response = await _httpClient.PostLinuxApiAsync<NeteaseLinuxApiResp>(new
         {
-            new() { Id = "all", Name = "全部歌单", Tags = new() { new() { Id = "全部", Name = "全部" } } },
-            new() { Id = "1", Name = "语种", Tags = new() { new() { Id = "华语", Name = "华语" }, new() { Id = "欧美", Name = "欧美" }, new() { Id = "日语", Name = "日语" }, new() { Id = "韩语", Name = "韩语" }, new() { Id = "粤语", Name = "粤语" } } },
-            new() { Id = "2", Name = "风格", Tags = new() { new() { Id = "流行", Name = "流行" }, new() { Id = "摇滚", Name = "摇滚" }, new() { Id = "民谣", Name = "民谣" }, new() { Id = "电子", Name = "电子" }, new() { Id = "说唱", Name = "说唱" } } },
-            new() { Id = "3", Name = "场景", Tags = new() { new() { Id = "清晨", Name = "清晨" }, new() { Id = "夜晚", Name = "夜晚" }, new() { Id = "学习", Name = "学习" }, new() { Id = "运动", Name = "运动" } } },
-            new() { Id = "4", Name = "情感", Tags = new() { new() { Id = "怀旧", Name = "怀旧" }, new() { Id = "浪漫", Name = "浪漫" }, new() { Id = "伤感", Name = "伤感" }, new() { Id = "快乐", Name = "快乐" } } },
-            new() { Id = "5", Name = "主题", Tags = new() { new() { Id = "影视原声", Name = "影视原声" }, new() { Id = "游戏", Name = "游戏" }, new() { Id = "网络歌曲", Name = "网络歌曲" }, new() { Id = "经典", Name = "经典" } } }
+            method = "POST",
+            url = PlaylistDetailEndpoint,
+            @params = new { id = requestId, n = pageSize, s = 8 }
+        }, DefaultHeaders, cancellationToken);
+
+        ThrowIfNeteaseCodeFailed(response?.Code, response?.Message, action, PlaylistDetailEndpoint);
+        if (response?.Playlist == null)
+            throw new InvalidOperationException(
+                $"{action}失败：网易云未返回歌单数据 (id={id}, code={response?.Code ?? 0}){NeteaseMessageSuffix(response?.Message)}。");
+
+        var playlist = response.Playlist;
+        var ids = playlist.TrackIds?.Select(track => track.Id).ToList()
+                  ?? playlist.Tracks?.Select(track => track.Id).ToList()
+                  ?? new List<long>();
+        var total = playlist.TrackCount > 0 ? playlist.TrackCount : ids.Count;
+        var pageIds = ids.Skip(Math.Max(0, (page - 1) * pageSize)).Take(pageSize).ToList();
+
+        var songsById = new Dictionary<long, NeteaseSong>();
+        var qualityById = new Dictionary<long, NeteasePrivilege>();
+        if (playlist.Tracks != null)
+        {
+            foreach (var song in playlist.Tracks)
+            {
+                songsById[song.Id] = song;
+                if (song.Privilege != null) qualityById[song.Id] = song.Privilege;
+            }
+        }
+        if (response.Privileges != null)
+        {
+            foreach (var privilege in response.Privileges) qualityById[privilege.Id] = privilege;
+        }
+
+        var items = new List<MusicInfo>();
+        if (pageIds.All(songsById.ContainsKey))
+        {
+            // 本页曲目已内嵌在详情响应里，无需额外请求
+            foreach (var songId in pageIds) items.Add(MapSong(songsById[songId], qualityById));
+            return BuildDetailPage(page, pageSize, total, items);
+        }
+
+        var missingIds = pageIds.Where(songId => !songsById.ContainsKey(songId)).ToList();
+        var detailEndpoint = $"{WeapiBaseUrl}/v3/song/detail";
+        foreach (var chunk in Chunk(missingIds, SongDetailChunkSize))
+        {
+            var cJson = "[" + string.Join(",", chunk.Select(songId => "{\"id\":" + songId + "}")) + "]";
+            var idsJson = "[" + string.Join(",", chunk) + "]";
+            var detail = await _httpClient.PostWeapiAsync<NeteasePlaylistTrackResponse>(
+                detailEndpoint,
+                new { c = cJson, ids = idsJson },
+                DefaultHeaders,
+                cancellationToken);
+
+            ThrowIfNeteaseCodeFailed(detail?.Code, detail?.Message, action, detailEndpoint);
+            if (detail?.Privileges != null)
+            {
+                foreach (var privilege in detail.Privileges) qualityById[privilege.Id] = privilege;
+            }
+            if (detail?.Songs != null)
+            {
+                foreach (var song in detail.Songs) songsById[song.Id] = song;
+            }
+        }
+
+        // 按本页曲目顺序输出；详情缺失的曲目直接跳过，绝不为“数量不足”抛错
+        foreach (var songId in pageIds)
+        {
+            if (songsById.TryGetValue(songId, out var song)) items.Add(MapSong(song, qualityById));
+        }
+
+        return BuildDetailPage(page, pageSize, total, items);
+    }
+
+    private static PagedResult<MusicInfo> BuildDetailPage(int page, int pageSize, int total, List<MusicInfo> items)
+        => new()
+        {
+            CurrentPage = page,
+            PageSize = pageSize,
+            TotalItems = total,
+            Items = items
+        };
+
+    private static MusicInfo MapSong(NeteaseSong song, IReadOnlyDictionary<long, NeteasePrivilege> qualityById)
+    {
+        qualityById.TryGetValue(song.Id, out var privilege);
+        return new MusicInfo
+        {
+            Id = song.Id.ToString(),
+            Title = song.Name ?? "未知歌曲",
+            Artist = song.GetArtistNames(),
+            Album = song.Album?.Name ?? "未知专辑",
+            Duration = song.GetDurationString(),
+            Source = "netease",
+            CoverUrl = song.Album?.PicUrl ?? "",
+            Quality = GetQualityLevel(privilege)
         };
     }
 
-    private static List<Ranking> GetDefaultRankings()
+    private static IEnumerable<List<long>> Chunk(List<long> source, int size)
     {
-        return new List<Ranking>
-        {
-            new() { Id = "19723756", Name = "飙升榜", Source = "netease", Type = RankingType.Rising },
-            new() { Id = "3778678", Name = "热歌榜", Source = "netease", Type = RankingType.Hot },
-            new() { Id = "3779629", Name = "新歌榜", Source = "netease", Type = RankingType.New },
-            new() { Id = "2884035", Name = "原创榜", Source = "netease", Type = RankingType.Original },
-            new() { Id = "2250011882", Name = "抖音排行榜", Source = "netease", Type = RankingType.Hot },
-            new() { Id = "745956260", Name = "电音榜", Source = "netease", Type = RankingType.Other },
-            new() { Id = "1899724", Name = "说唱榜", Source = "netease", Type = RankingType.Other },
-            new() { Id = "5453912201", Name = "爵士榜", Source = "netease", Type = RankingType.Other }
-        };
+        for (var index = 0; index < source.Count; index += size)
+            yield return source.GetRange(index, Math.Min(size, source.Count - index));
+    }
+
+    private static string NeteaseMessageSuffix(string? message)
+        => string.IsNullOrWhiteSpace(message) ? string.Empty : $"，message={message}";
+
+    /// <summary>校验网易云业务状态码：0（部分接口省略）与 200 视为成功，其余抛出可读错误。</summary>
+    private static void ThrowIfNeteaseCodeFailed(int? code, string? message, string action, string endpoint)
+    {
+        if (code is null or 0 or SuccessCode) return;
+        throw new InvalidOperationException(
+            $"{action}失败：网易云返回 code={code}{NeteaseMessageSuffix(message)}（接口：{endpoint}）。");
     }
 }

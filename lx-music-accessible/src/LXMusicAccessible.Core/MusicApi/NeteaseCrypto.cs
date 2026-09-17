@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace LXMusicAccessible.Core.MusicApi;
@@ -103,17 +103,10 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDgtQn2JZ34ZC28NWYpAUd98iZ37BUrX/aKzmFbt7cl
             .Split('\n')
             .Select(line => line.Trim())
             .Where(line => !line.StartsWith("-----", StringComparison.Ordinal)));
-        var keyBytes = Convert.FromBase64String(pemBody);
-        using var rsa = RSA.Create();
-        rsa.ImportParameters(new RSAParameters
-        {
-            Modulus = GetFirst128(keyBytes),
-            Exponent = GetLast3(keyBytes)
-        });
-        var parameters = rsa.ExportParameters(false);
-        var modulus = new System.Numerics.BigInteger(parameters.Modulus!.Reverse().ToArray());
-        var exponent = new System.Numerics.BigInteger(parameters.Exponent!.Reverse().ToArray());
-        var plain = new System.Numerics.BigInteger(padded.Reverse().ToArray());
+        var (modulusBytes, exponentBytes) = ReadRsaPublicKey(Convert.FromBase64String(pemBody));
+        var modulus = ToBigInteger(modulusBytes);
+        var exponent = ToBigInteger(exponentBytes);
+        var plain = ToBigInteger(padded);
         var cipher = System.Numerics.BigInteger.ModPow(plain, exponent, modulus);
         var cipherBytes = cipher.ToByteArray();
         if (cipherBytes.Length > 0 && cipherBytes[cipherBytes.Length - 1] == 0)
@@ -130,18 +123,71 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDgtQn2JZ34ZC28NWYpAUd98iZ37BUrX/aKzmFbt7cl
         return FrameworkCompatibility.ToHexString(result).ToLower();
     }
 
-    private static byte[] GetFirst128(byte[] value)
+    /// <summary>
+    /// 从 SubjectPublicKeyInfo DER 中读出 RSA 模数和指数。
+    /// 旧实现直接取 DER 头部的前 128 字节，取到的是结构头而非模数，
+    /// 因此 encSecKey 无效，网易云对 weapi 请求返回 HTTP 200 空响应（歌单/排行榜全部加载失败）。
+    /// </summary>
+    private static (byte[] Modulus, byte[] Exponent) ReadRsaPublicKey(byte[] der)
     {
-        var result = new byte[128];
-        Array.Copy(value, result, Math.Min(128, value.Length));
-        return result;
+        var outerIndex = 0;
+        var outer = ReadDerElement(der, ref outerIndex, 0x30);         // SubjectPublicKeyInfo
+        var algorithmIndex = 0;
+        ReadDerElement(outer, ref algorithmIndex, 0x30);               // AlgorithmIdentifier
+        var subjectPublicKey = ReadDerElement(outer, ref algorithmIndex, 0x03); // BIT STRING
+        var keyIndex = 1;                                              // 跳过 unused-bits 字节
+        var rsaPublicKey = ReadDerElement(subjectPublicKey, ref keyIndex, 0x30); // RSAPublicKey
+        var valueIndex = 0;
+        var modulus = TrimLeadingZeroPadding(ReadDerElement(rsaPublicKey, ref valueIndex, 0x02));
+        var exponent = TrimLeadingZeroPadding(ReadDerElement(rsaPublicKey, ref valueIndex, 0x02));
+        if (modulus.Length != 128)
+            throw new CryptographicException($"Unexpected Netease RSA modulus length: {modulus.Length}.");
+        return (modulus, exponent);
     }
 
-    private static byte[] GetLast3(byte[] value)
+    private static byte[] ReadDerElement(byte[] data, ref int index, byte expectedTag)
     {
-        var result = new byte[3];
-        Array.Copy(value, value.Length - 3, result, 0, 3);
-        return result;
+        if (index + 1 >= data.Length || data[index] != expectedTag)
+            throw new CryptographicException("Malformed DER while reading the Netease RSA public key.");
+        index++;
+        var length = ReadDerLength(data, ref index);
+        if (index + length > data.Length)
+            throw new CryptographicException("Truncated DER while reading the Netease RSA public key.");
+        var value = new byte[length];
+        Array.Copy(data, index, value, 0, length);
+        index += length;
+        return value;
+    }
+
+    private static int ReadDerLength(byte[] data, ref int index)
+    {
+        if (index >= data.Length)
+            throw new CryptographicException("Truncated DER while reading the Netease RSA public key.");
+        var first = data[index++];
+        if (first < 0x80) return first;
+        var count = first & 0x7F;
+        if (count == 0 || count > 4 || index + count > data.Length)
+            throw new CryptographicException("Malformed DER length while reading the Netease RSA public key.");
+        var length = 0;
+        for (var i = 0; i < count; i++) length = (length << 8) | data[index++];
+        return length;
+    }
+
+    private static byte[] TrimLeadingZeroPadding(byte[] value)
+    {
+        var offset = 0;
+        while (offset < value.Length - 1 && value[offset] == 0) offset++;
+        var trimmed = new byte[value.Length - offset];
+        Array.Copy(value, offset, trimmed, 0, trimmed.Length);
+        return trimmed;
+    }
+
+    /// <summary>Big-endian 字节转非负 BigInteger（net48 缺少 isUnsigned/isBigEndian 重载）。</summary>
+    private static System.Numerics.BigInteger ToBigInteger(byte[] bigEndian)
+    {
+        var littleEndian = new byte[bigEndian.Length + 1];
+        for (var i = 0; i < bigEndian.Length; i++) littleEndian[i] = bigEndian[bigEndian.Length - 1 - i];
+        return new System.Numerics.BigInteger(littleEndian);
     }
 
     private static string Md5Hash(string input)

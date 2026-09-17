@@ -1025,7 +1025,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         {
             try { return await api.GetRankingsAsync(cancellationToken).WaitAsync(cancellationToken); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception ex) { _logger.LogError(ex, "获取排行榜失败: {SourceId}", sourceId); }
+            catch (Exception ex) { _logger.LogError(ex, "获取排行榜失败: {SourceId}", sourceId); throw; }
         }
         return new List<Ranking>();
     }
@@ -1041,7 +1041,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         {
             try { return await api.GetRankingDetailAsync(cleanId, page, pageSize, cancellationToken).WaitAsync(cancellationToken); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception ex) { _logger.LogError(ex, "获取排行榜详情失败: {RankingId}", rankingId); }
+            catch (Exception ex) { _logger.LogError(ex, "获取排行榜详情失败: {RankingId}", rankingId); throw; }
         }
         return PagedResult<MusicInfo>.Empty(page, pageSize);
     }
