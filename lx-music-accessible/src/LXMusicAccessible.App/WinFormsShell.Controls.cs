@@ -40,8 +40,15 @@ public partial class WinFormsShell : Form
     private List<MusicInfo> _categorySongs = new();
     private List<MusicInfo> _rankingSongs = new();
     private List<MusicInfo> _favoriteSongs = new();
-        private PlayMode _playMode = PlayMode.Sequential;
+    private PlayMode _playMode = PlayMode.Sequential;
     private MusicInfo? _current;
+    private bool _searchLoading;
+    private bool _categoryPlaylistsLoading;
+    private int _categoryPlaylistsRevision;
+    private bool _categorySongsLoading;
+    private bool _rankingSongsLoading;
+    private bool _savedSongsLoading;
+    private MusicInfo? _openAlbum;
     private const double VolumeStep = 0.05;
     private int _lastPlaybackToggleTick;
     private const string BaseTitle = "落雪音乐无障碍版";
@@ -71,6 +78,9 @@ public partial class WinFormsShell : Form
     protected Label PositionText;
     protected Label LiveRegion;
     protected Button CategorySongsLoadMore;
+    protected Button SearchLoadMore;
+    protected Button CategoryPlaylistsLoadMore;
+    protected Button SavedPlaylistLoadMore;
     protected Button RankingSongsLoadMore;
 
     public WinFormsShell(WinFormsShellServices services)
@@ -127,6 +137,7 @@ public partial class WinFormsShell : Form
         Controls.Add(status);
         Controls.Add(LiveRegion);
         if (services.Announcer is WinFormsAccessibleAnnouncer native) native.Attach(LiveRegion);
+        AssignSongContextMenu(SearchResults);
         AssignSongContextMenu(FavoriteSongs);
         AssignSongContextMenu(CategorySongs);
         AssignSongContextMenu(RankingSongs);
@@ -209,10 +220,10 @@ public partial class WinFormsShell : Form
         WinFormsUi.Name(SearchButton, "搜索", 6);
         SearchClearButton = new Button { Text = "清空", Width = 80 };
         WinFormsUi.Name(SearchClearButton, "清空搜索", 7);
-        SearchResults = WinFormsUi.ListBox("搜索结果", 8);
+        SearchResults = WinFormsUi.ListBox("SearchResults", "搜索结果", 8);
         SearchResults.Size = new Size(830, 450);
         var previous = new Button { Text = "上一页", Width = 80, TabStop = false, TabIndex = 9 };
-        var next = new Button { Text = "加载更多歌曲", Width = 150, TabStop = false, TabIndex = 10, Name = "SearchLoadMore", AccessibleName = "加载更多歌曲" };
+        SearchLoadMore = new Button { Text = "加载更多歌曲", Width = 150, TabStop = false, TabIndex = 10, Name = "SearchLoadMore", AccessibleName = "加载更多搜索歌曲", Enabled = false };
         var pageInfo = new Label { Text = "第 1 页", AutoSize = true, TabStop = false, TabIndex = 11, AccessibleName = "搜索页码" };
         sourceLabel.SetBounds(10, 14, 0, 0);
         SearchSource.SetBounds(65, 10, 150, 24);
@@ -224,8 +235,8 @@ public partial class WinFormsShell : Form
         SearchResults.SetBounds(10, 78, 830, 450);
         previous.Visible = false;
         pageInfo.Visible = false;
-        next.SetBounds(340, 536, 160, 26);
-        page.Controls.AddRange(new Control[] { sourceLabel, SearchSource, typeLabel, SearchType, SearchText, SearchButton, SearchClearButton, SearchResults, previous, pageInfo, next });
+        SearchLoadMore.SetBounds(340, 536, 160, 26);
+        page.Controls.AddRange(new Control[] { sourceLabel, SearchSource, typeLabel, SearchType, SearchText, SearchButton, SearchClearButton, SearchResults, previous, pageInfo, SearchLoadMore });
         SearchButton.Click += (_, _) => _ = SearchAsync(true);
         SearchClearButton.Click += (_, _) => ClearSearch();
         SearchText.KeyDown += (_, e) =>
@@ -258,19 +269,19 @@ public partial class WinFormsShell : Form
             }
         };
         previous.Click += (_, _) => Announce("已到第一页", "search-page");
-        next.Click += (_, _) => _ = SearchAsync(false);
+        SearchLoadMore.Click += (_, _) => _ = SearchAsync(false);
         return page;
     }
 
     private TabPage CreatePlaylistPage()
     {
         var page = new TabPage("播放列表") { AccessibleName = "播放列表", Padding = new Padding(10) };
-        OnlinePlaylists = WinFormsUi.ListBox("播放列表", 2);
-        FavoriteSongs = WinFormsUi.ListBox("收藏歌曲", 3);
+        OnlinePlaylists = WinFormsUi.ListBox("OnlinePlaylists", "播放列表", 2);
+        FavoriteSongs = WinFormsUi.ListBox("FavoriteSongs", "收藏歌曲", 3);
         var newButton = CreateButton("新建歌单", 4, (_, _) => _ = ManagePlaylistAsync("新建歌单名称", name => _services.SavedPlaylists!.CreateAsync(name!)));
         var renameButton = CreateButton("重命名歌单", 5, (_, _) => _ = ManagePlaylistAsync("重命名歌单", name => _services.SavedPlaylists!.RenameSelectedAsync(name!)));
         var deleteButton = CreateButton("删除歌单", 6, (_, _) => _ = DeleteSavedPlaylistAsync());
-        var refresh = CreateButton("刷新", 7, (_, _) => _ = RunAsync(() => _services.SavedPlaylists!.LoadAsync(), r => RenderSaved(r.Snapshot, r.Message), "刷新播放列表"));
+        var refresh = CreateButton("刷新", 7, (_, _) => _ = RefreshSavedAsync());
         var remove = CreateButton("移除歌曲", 8, (_, _) => _ = RemoveFavoriteAsync());
         var clear = CreateButton("清空歌曲", 9, (_, _) => ClearFavorites());
         newButton.SetBounds(10, 10, 95, 27);
@@ -280,12 +291,19 @@ public partial class WinFormsShell : Form
         remove.SetBounds(403, 10, 90, 27);
         clear.SetBounds(500, 10, 90, 27);
         OnlinePlaylists.SetBounds(10, 45, 250, 520);
+        SavedPlaylistLoadMore = new Button { Text = "加载更多歌曲", Width = 160, TabStop = false, TabIndex = 10, Name = "SavedPlaylistLoadMore", AccessibleName = "加载更多收藏歌曲", Enabled = false };
+        SavedPlaylistLoadMore.SetBounds(270, 570, 160, 26);
         FavoriteSongs.SetBounds(270, 45, 680, 520);
-        page.Controls.AddRange(new Control[] { OnlinePlaylists, FavoriteSongs, newButton, renameButton, deleteButton, refresh, remove, clear });
-        OnlinePlaylists.SelectedIndexChanged += (_, _) => _services.SavedPlaylists?.Select(WinFormsUi.Selected<Playlist>(OnlinePlaylists));
+        page.Controls.AddRange(new Control[] { OnlinePlaylists, FavoriteSongs, SavedPlaylistLoadMore, newButton, renameButton, deleteButton, refresh, remove, clear });
+        OnlinePlaylists.SelectedIndexChanged += (_, _) =>
+        {
+            _services.SavedPlaylists?.Select(WinFormsUi.Selected<Playlist>(OnlinePlaylists));
+            SavedPlaylistLoadMore.Enabled = false;
+        };
         OnlinePlaylists.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) _ = LoadSelectedSavedAsync(); };
         OnlinePlaylists.DoubleClick += (_, _) => _ = LoadSelectedSavedAsync();
         FavoriteSongs.DoubleClick += (_, _) => _ = ActivateSong(FavoriteSongs);
+        SavedPlaylistLoadMore.Click += (_, _) => _ = LoadMoreSavedSongsAsync();
         FavoriteSongs.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(FavoriteSongs); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         return page;
     }
@@ -296,9 +314,9 @@ public partial class WinFormsShell : Form
         var sourceLabel = WinFormsUi.Caption("音源：", 1);
         CategorySource = WinFormsUi.Combo("分类歌单音源", 2, "网易云音乐", "QQ音乐", "酷狗音乐", "酷我音乐", "咪咕音乐");
         var refresh = CreateButton("刷新", 3, (_, _) => LoadCategories());
-        CategoryList = WinFormsUi.ListBox("分类", 4);
-        CategoryPlaylists = WinFormsUi.ListBox("歌单", 5);
-        CategorySongs = WinFormsUi.ListBox("分类歌曲", 6);
+        CategoryList = WinFormsUi.ListBox("CategoryList", "分类", 4);
+        CategoryPlaylists = WinFormsUi.ListBox("CategoryPlaylists", "歌单", 5);
+        CategorySongs = WinFormsUi.ListBox("CategorySongs", "分类歌曲", 6);
 
         var playlistPrevious = CreateButton("上一页", 20, (_, _) => LoadCategoryPlaylists(GetCurrentCategoryPage() - 1));
         var playlistNext = CreateButton("下一页", 21, (_, _) => LoadCategoryPlaylists(GetCurrentCategoryPage() + 1));
@@ -308,9 +326,18 @@ public partial class WinFormsShell : Form
         playlistNext.Name = playlistNext.AccessibleName = "CategoryPlaylistNextPage";
         playlistPrevious.TabStop = playlistNext.TabStop = false;
         playlistPrevious.TabIndex = 20; playlistNext.TabIndex = 21;
+        playlistPrevious.Visible = playlistNext.Visible = playlistPage.Visible = false;
+
+        CategoryPlaylistsLoadMore = CreateButton("加载更多歌单", 21, (_, _) => _ = LoadCategoryPlaylistsAsync(GetCurrentCategoryPage() + 1, append: true));
+        CategoryPlaylistsLoadMore.Name = "CategoryPlaylistsLoadMore";
+        CategoryPlaylistsLoadMore.AccessibleName = "加载更多歌单";
+        CategoryPlaylistsLoadMore.TabStop = false;
+        CategoryPlaylistsLoadMore.Enabled = false;
 
         CategorySongsLoadMore = CreateButton("加载更多歌曲", 23, (_, _) => _ = LoadMoreCategorySongsAsync());
-        CategorySongsLoadMore.Name = CategorySongsLoadMore.AccessibleName = "CategorySongsLoadMore";
+        CategorySongsLoadMore.Name = "CategorySongsLoadMore";
+        CategorySongsLoadMore.AccessibleName = "加载更多歌单歌曲";
+        CategorySongsLoadMore.Enabled = false;
         CategorySongsLoadMore.TabStop = false;
 
         sourceLabel.SetBounds(10, 14, 0, 0);
@@ -319,6 +346,7 @@ public partial class WinFormsShell : Form
         playlistPrevious.SetBounds(310, 9, 70, 26);
         playlistNext.SetBounds(385, 9, 70, 26);
         playlistPage.SetBounds(460, 13, 80, 20);
+        CategoryPlaylistsLoadMore.SetBounds(310, 9, 140, 26);
         CategoryList.SetBounds(10, 44, 175, 500);
         CategoryPlaylists.SetBounds(195, 44, 250, 500);
         CategorySongs.SetBounds(455, 44, 495, 500);
@@ -326,7 +354,7 @@ public partial class WinFormsShell : Form
         page.Controls.AddRange(new Control[]
         {
             sourceLabel, CategorySource, refresh, playlistPrevious, playlistNext, playlistPage,
-            CategorySongsLoadMore, CategoryList, CategoryPlaylists, CategorySongs
+            CategoryPlaylistsLoadMore, CategorySongsLoadMore, CategoryList, CategoryPlaylists, CategorySongs
         });
         CategoryList.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) LoadCategoryPlaylists(); };
         CategoryPlaylists.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) _ = LoadCategorySongs(); };
@@ -342,10 +370,23 @@ public partial class WinFormsShell : Form
     internal IAccessibleAnnouncer AnnouncerForTests => _announcer;
     internal Label StatusTextForTests => StatusText;
     internal Label PlaybackInfoForTests => PlaybackInfoText;
+    internal void SelectTabForTests(int index) => SelectTab(index);
     internal void LoadCategoryPlaylistsForTests() => LoadCategoryPlaylists();
+    internal Task LoadMoreCategoryPlaylistsForTests() => LoadCategoryPlaylistsAsync(GetCurrentCategoryPage() + 1, append: true);
     internal Task LoadCategorySongsForTests() => LoadCategorySongs();
     internal Task LoadMoreCategorySongsForTests() => LoadMoreCategorySongsAsync();
     internal Task LoadRankingSongsForTests() => LoadRankingSongs();
+    internal Task LoadMoreRankingSongsForTests() => LoadMoreRankingSongsAsync();
+    internal Task RefreshSavedPlaylistsForTests() => RefreshSavedAsync();
+    internal Task LoadSelectedSavedForTests() => LoadSelectedSavedAsync();
+    internal Task LoadMoreSavedSongsForTests() => LoadMoreSavedSongsAsync();
+    internal Task ActivateSelectedSearchSongForTests() => ActivateSong(SearchResults);
+    internal Task LoadMoreSearchResultsForTests() => SearchAsync(false);
+    internal ListBox SearchResultsForTests => SearchResults;
+    internal ListBox FavoriteSongsForTests => FavoriteSongs;
+    internal ListBox RankingSongsForTests => RankingSongs;
+    internal Button SearchLoadMoreForTests => SearchLoadMore;
+    internal Button SavedPlaylistLoadMoreForTests => SavedPlaylistLoadMore;
     internal ListBox CategoryListForTests => CategoryList;
     internal ListBox CategoryPlaylistsForTests => CategoryPlaylists;
     internal ListBox CategorySongsForTests => CategorySongs;
@@ -355,10 +396,12 @@ public partial class WinFormsShell : Form
         var sourceLabel = WinFormsUi.Caption("音源：", 1);
         RankingSource = WinFormsUi.Combo("排行榜音源", 2, "网易云音乐", "QQ音乐", "酷狗音乐", "酷我音乐", "咪咕音乐");
         var refresh = CreateButton("刷新", 3, (_, _) => LoadRankings());
-        RankingList = WinFormsUi.ListBox("排行榜", 4);
-        RankingSongs = WinFormsUi.ListBox("排行榜歌曲", 5);
+        RankingList = WinFormsUi.ListBox("RankingList", "排行榜", 4);
+        RankingSongs = WinFormsUi.ListBox("RankingSongs", "排行榜歌曲", 5);
         RankingSongsLoadMore = CreateButton("加载更多歌曲", 6, (_, _) => _ = LoadMoreRankingSongsAsync());
-        RankingSongsLoadMore.Name = RankingSongsLoadMore.AccessibleName = "RankingSongsLoadMore";
+        RankingSongsLoadMore.Name = "RankingSongsLoadMore";
+        RankingSongsLoadMore.AccessibleName = "加载更多榜单歌曲";
+        RankingSongsLoadMore.Enabled = false;
         RankingSongsLoadMore.TabStop = false;
         sourceLabel.SetBounds(10, 14, 0, 0);
         RankingSource.SetBounds(60, 10, 150, 24);

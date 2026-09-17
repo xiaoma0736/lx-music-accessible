@@ -108,14 +108,12 @@ public sealed class WinFormsAccessibilityAuditTests
     }
 
     [Fact]
-    public async Task Shell_selection_changes_do_not_start_browse_or_playback_work()
+    public void Shell_selection_changes_do_not_start_browse_or_playback_work()
     {
         var source = new FakeBrowseSource();
         var playback = new RecordingPlayback();
-        await Task.Yield();
-        WinFormsTestRunner.Run(async () =>
+        WinFormsTestRunner.Run(() =>
         {
-            await Task.Yield();
             using var shell = CreateShell(source, playback);
             shell.Show();
             Application.DoEvents();
@@ -277,7 +275,7 @@ public sealed class WinFormsAccessibilityAuditTests
             {
                 shell.Show();
                 Application.DoEvents();
-                var results = Assert.IsType<ListBox>(Required(shell, "搜索结果"));
+                var results = Assert.IsType<ListBox>(Required(shell, "SearchResults"));
                 WinFormsUi.FillSongs(results, new[] { Song() });
                 results.SelectedIndex = 0;
                 results.Focus();
@@ -312,7 +310,7 @@ public sealed class WinFormsAccessibilityAuditTests
             {
                 shell.Show();
                 Application.DoEvents();
-                var results = Assert.IsType<ListBox>(Required(shell, "搜索结果"));
+                var results = Assert.IsType<ListBox>(Required(shell, "SearchResults"));
                 WinFormsUi.FillSongs(results, new[] { Song() });
                 results.SelectedIndex = 0;
                 results.Focus();

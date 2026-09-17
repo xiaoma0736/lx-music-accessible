@@ -6,7 +6,8 @@ namespace LXMusicAccessible.Services;
 public sealed record SavedPlaylistSnapshot(
     IReadOnlyList<Playlist> Playlists,
     Playlist? Selected,
-    IReadOnlyList<MusicInfo> Songs);
+    IReadOnlyList<MusicInfo> Songs,
+    bool HasMore = false);
 
 public sealed record SavedPlaylistResult(
     SavedPlaylistSnapshot Snapshot,
@@ -72,7 +73,7 @@ public sealed class SavedPlaylistWorkflow(
         }
     }
 
-    public async Task<SavedPlaylistResult> ActivateAsync()
+    public async Task<SavedPlaylistResult> ActivateAsync(int page = 1, bool append = false)
     {
         Playlist? selected;
         long revision;
@@ -82,15 +83,19 @@ public sealed class SavedPlaylistWorkflow(
             revision = _revision;
         }
         if (selected is null) return Failure("请先选择在线歌单");
+        var remote = !selected.IsSnapshot && !string.IsNullOrWhiteSpace(selected.RemoteId);
+        if (append && !remote) return Failure("该歌单没有更多歌曲");
 
-        IReadOnlyList<MusicInfo> songs = await data.GetPlaylistItemsAsync(selected.Id);
         var focus = BrowseFocusTarget.SavedPlaylistSongs;
-        if (songs.Count == 0 && !selected.IsSnapshot && !string.IsNullOrWhiteSpace(selected.RemoteId))
+        var hasMore = false;
+        IReadOnlyList<MusicInfo> songs = append ? [] : await data.GetPlaylistItemsAsync(selected.Id);
+        if (remote && (append || songs.Count == 0))
         {
-            var remote = await browse.ActivateSavedPlaylistAsync(selected);
-            if (!remote.Succeeded || remote.Value is null) return Failure(remote.Message);
-            songs = remote.Value.Items;
-            focus = remote.FocusTarget;
+            var result = await browse.ActivateSavedPlaylistAsync(selected, page, append);
+            if (!result.Succeeded || result.Value is null) return Failure(result.Message);
+            songs = browse.CurrentSavedPlaylistPage?.Items ?? result.Value.Items;
+            hasMore = result.Value.HasMore || songs.Count < result.Value.TotalItems;
+            focus = result.FocusTarget;
         }
 
         lock (_gate)
@@ -98,7 +103,10 @@ public sealed class SavedPlaylistWorkflow(
             if (revision != _revision || _selected?.Id != selected.Id)
                 return Failure(string.Empty);
             _songs = songs.ToArray();
-            return new(Snapshot(), $"已加载 {_songs.Count} 首收藏歌曲", focus);
+            return new(
+                Snapshot() with { HasMore = hasMore },
+                _songs.Count == 0 ? "该歌单暂无歌曲" : "加载完成",
+                focus);
         }
     }
 

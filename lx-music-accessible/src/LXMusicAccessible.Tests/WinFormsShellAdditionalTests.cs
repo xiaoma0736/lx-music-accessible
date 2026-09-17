@@ -41,10 +41,10 @@ public sealed class WinFormsShellAdditionalTests
     }
 
     [Fact]
-    public async Task Category_songs_append_when_load_more_is_used()
+    public void Category_songs_append_when_load_more_is_used()
     {
         var source = new CountingBrowseSource();
-        await StaAsync(async () =>
+        WinFormsTestRunner.RunStaAsync(async () =>
         {
             using var shell = CreateShell(source, new StatefulPlayback());
             shell.Show();
@@ -104,21 +104,6 @@ public sealed class WinFormsShellAdditionalTests
             await Task.Delay(25);
         }
         Assert.True(condition(), "condition was not reached");
-    }
-
-    private static Task StaAsync(Func<Task> test)
-    {
-        Exception? failure = null;
-        var thread = new Thread(async () =>
-        {
-            try { await test(); }
-            catch (Exception exception) { failure = exception; }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        thread.Join();
-        if (failure is not null) throw failure;
-        return Task.CompletedTask;
     }
 }
 

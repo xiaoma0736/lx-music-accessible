@@ -29,6 +29,71 @@ public static class WinFormsTestRunner
         thread.Join();
         if (failure is not null) throw failure;
     }
+
+    /// <summary>
+    /// Runs an asynchronous UI body on a dedicated STA thread while pumping the WinForms message loop
+    /// until the body finishes, so awaited continuations and failures are never lost. The body and every
+    /// continuation it awaits stay on the STA thread, which is the only thread that may read control
+    /// focus and selection state.
+    /// </summary>
+    public static void RunStaAsync(Func<Task> test, int timeoutSeconds = 30)
+    {
+        if (test is null) throw new ArgumentNullException(nameof(test));
+        Exception? failure = null;
+        // Not disposed: a timed-out run releases the pumping thread with Set instead, and disposing the
+        // handle under that thread would surface as an ObjectDisposedException that kills the test host.
+        var done = new ManualResetEventSlim(false);
+        var thread = new Thread(() =>
+        {
+            // Install the context before anything can hand this thread a thread-pool posting one.
+            SynchronizationContext.SetSynchronizationContext(new StaSynchronizationContext());
+            _ = CompleteAsync(test, exception => failure = exception, done);
+            while (!done.IsSet)
+            {
+                Application.DoEvents();
+                Thread.Sleep(5);
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        if (!done.Wait(TimeSpan.FromSeconds(timeoutSeconds)))
+        {
+            done.Set();
+            throw new TimeoutException("The asynchronous STA UI test did not complete.");
+        }
+        thread.Join(TimeSpan.FromSeconds(5));
+        if (failure is not null) throw new InvalidOperationException("STA UI test failure", failure);
+    }
+
+    private static async Task CompleteAsync(Func<Task> test, Action<Exception> capture, ManualResetEventSlim done)
+    {
+        try { await test(); }
+        catch (Exception exception) { capture(exception); }
+        finally { done.Set(); }
+    }
+
+    /// <summary>
+    /// Pins every awaited continuation of a UI test body to the STA thread that pumps the message loop.
+    /// A thread that has no context of its own is handed a plain thread-pool posting context the first
+    /// time the message loop runs, so a body that yields would quietly resume - and read or write
+    /// controls - on a pool thread, where focus and selection state cannot be observed. WinForms leaves
+    /// an already installed context alone, and this one marshals through a control created on this
+    /// thread, which is what the message loop of a real WinForms application provides.
+    /// </summary>
+    private sealed class StaSynchronizationContext : SynchronizationContext
+    {
+        private readonly Control _marshaller = new();
+
+        public StaSynchronizationContext() => _ = _marshaller.Handle;
+
+        public override void Post(SendOrPostCallback callback, object? state) => _marshaller.BeginInvoke(callback, state);
+
+        public override void Send(SendOrPostCallback callback, object? state)
+        {
+            if (_marshaller.InvokeRequired) _marshaller.Invoke(callback, state);
+            else callback(state);
+        }
+    }
 }
 
 public sealed class RecordingAnnouncer : IAccessibleAnnouncer
@@ -109,9 +174,9 @@ public class WinFormsShellAccessibilityTests
             var tabs = Assert.IsType<TabControl>(shell.Controls.Find("MainTabs", true)[0]);
             Assert.Equal(4, tabs.TabPages.Count);
             Assert.Equal("搜索关键词", shell.Controls.Find("搜索关键词", true)[0].AccessibleName);
-            Assert.Equal("播放列表", shell.Controls.Find("播放列表", true)[0].AccessibleName);
-            Assert.Equal("分类歌曲", shell.Controls.Find("分类歌曲", true)[0].AccessibleName);
-            Assert.Equal("排行榜歌曲", shell.Controls.Find("排行榜歌曲", true)[0].AccessibleName);
+            Assert.Equal("播放列表", shell.Controls.Find("OnlinePlaylists", true)[0].AccessibleName);
+            Assert.Equal("分类歌曲", shell.Controls.Find("CategorySongs", true)[0].AccessibleName);
+            Assert.Equal("排行榜歌曲", shell.Controls.Find("RankingSongs", true)[0].AccessibleName);
             WinFormsAccessibilityAudit.AssertAccessible(shell);
             WinFormsAccessibilityAudit.AssertNoForbiddenControls(shell);
         });

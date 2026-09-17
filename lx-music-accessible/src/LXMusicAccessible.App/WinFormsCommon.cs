@@ -35,9 +35,12 @@ internal static class WinFormsUi
         TabIndex = tabIndex
     };
 
-    public static ListBox ListBox(string name, int tabIndex) => new()
+    public static ListBox ListBox(string name, int tabIndex) => ListBox(name, name, tabIndex);
+
+    public static ListBox ListBox(string name, string accessibleName, int tabIndex) => new()
     {
-        Name = name,        AccessibleName = name,
+        Name = name,
+        AccessibleName = accessibleName,
         TabStop = true,
         TabIndex = tabIndex,
         IntegralHeight = false,

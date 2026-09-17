@@ -17,11 +17,11 @@ namespace LXMusicAccessible.Tests;
 public sealed class WinFormsShellInteractionTests
 {
     [Fact]
-    public async Task Category_and_ranking_pages_load_content_when_opened()
+    public void Category_and_ranking_pages_load_content_when_opened()
     {
         var source = new InteractionBrowseSource();
         var announcer = new RecordingAnnouncer();
-        await RunStaAsync(async () =>
+        WinFormsTestRunner.RunStaAsync(async () =>
         {
             using var shell = CreateShell(source, announcer);
             shell.Show();
@@ -29,38 +29,38 @@ public sealed class WinFormsShellInteractionTests
 
             var shellLists = Lists(shell);
             Tabs(shell).SelectedIndex = 2;
-            var categories = AwaitList(shell, shellLists[3], () => source.CategoryCalls > 0);
+            var categories = await AwaitList(shellLists[3], () => source.CategoryCalls > 0);
             Assert.Equal("netease", source.LastBrowseSource);
             Assert.NotEmpty(categories.Items);
 
             Select(categories, 0);
             shell.LoadCategoryPlaylistsForTests();
-            var playlists = AwaitList(shell, shellLists[4], () => source.PlaylistCalls > 0);
+            var playlists = await AwaitList(shellLists[4], () => source.PlaylistCalls > 0);
             Assert.NotEmpty(playlists.Items);
 
             Select(playlists, 0);
             await shell.LoadCategorySongsForTests();
-            var categorySongs = AwaitList(shell, shellLists[5], () => source.PlaylistSongCalls > 0);
+            var categorySongs = await AwaitList(shellLists[5], () => source.PlaylistSongCalls > 0);
             Assert.NotEmpty(categorySongs.Items);
 
             Tabs(shell).SelectedIndex = 3;
-            var rankings = AwaitList(shell, shellLists[6], () => source.RankingCalls > 0);
+            var rankings = await AwaitList(shellLists[6], () => source.RankingCalls > 0);
             Assert.NotEmpty(rankings.Items);
 
             Select(rankings, 0);
             await shell.LoadRankingSongsForTests();
-            var rankingSongs = AwaitList(shell, shellLists[7], () => source.RankingSongCalls > 0);
+            var rankingSongs = await AwaitList(shellLists[7], () => source.RankingSongCalls > 0);
             Assert.NotEmpty(rankingSongs.Items);
         });
     }
 
     [Fact]
-    public async Task Search_result_enter_plays_the_selected_song()
+    public void Search_result_enter_plays_the_selected_song()
     {
         var source = new InteractionBrowseSource();
         var playback = new RecordingPlayback();
         var announcer = new RecordingAnnouncer();
-        await RunStaAsync(async () =>
+        WinFormsTestRunner.RunStaAsync(async () =>
         {
             using var shell = CreateShell(source, announcer, playback);
             shell.Show();
@@ -69,8 +69,8 @@ public sealed class WinFormsShellInteractionTests
 
             var searchBox = Descendants<TextBox>(shell).Single();
             searchBox.Text = "song";
-            Invoke(shell, "SearchAsync", true);
-            var results = AwaitList(shell, Lists(shell)[0], () => source.SearchCalls > 0);
+            await InvokeAsync(shell, "SearchAsync", true);
+            var results = await AwaitList(Lists(shell)[0], () => source.SearchCalls > 0);
             Assert.NotEmpty(results.Items);
             Select(results, 0);
 
@@ -136,9 +136,10 @@ public sealed class WinFormsShellInteractionTests
         }
     }
 
-    private static ListBox AwaitList(Form shell, ListBox list, Func<bool> loaded)
+    /// <summary>Waits for background work to land in the list without blocking the message loop.</summary>
+    private static async Task<ListBox> AwaitList(ListBox list, Func<bool> loaded)
     {
-        WaitFor(loaded).GetAwaiter().GetResult();
+        await WaitFor(loaded);
         return list;
     }
 
@@ -148,7 +149,11 @@ public sealed class WinFormsShellInteractionTests
         Application.DoEvents();
     }
 
-    private static void Invoke(Form shell, string method, params object?[] arguments)
+    /// <summary>
+    /// Invokes a shell command that starts background work and awaits it, so a command whose continuation
+    /// belongs to this STA thread can never deadlock the test against its own message loop.
+    /// </summary>
+    private static async Task InvokeAsync(Form shell, string method, params object?[] arguments)
     {
         var target = shell.GetType().GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)
             .First(candidate => candidate.Name == method && candidate.GetParameters().Length >= arguments.Length);
@@ -156,14 +161,7 @@ public sealed class WinFormsShellInteractionTests
         var invokeArguments = parameters.Select((parameter, index) => index < arguments.Length
             ? arguments[index]
             : parameter.HasDefaultValue ? parameter.DefaultValue : Type.Missing).ToArray();
-        var result = target.Invoke(shell, invokeArguments);
-        if (result is Task task) task.GetAwaiter().GetResult();
-    }
-
-    private static async Task InvokeAsync(Form shell, string method)
-    {
-        var target = shell.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance) ?? throw new MissingMethodException(method);
-        await (Task)target.Invoke(shell, Array.Empty<object?>())!;
+        await (Task)target.Invoke(shell, invokeArguments)!;
     }
 
     private static void RaiseKeyDown(Control control, Keys key)
@@ -189,21 +187,6 @@ public sealed class WinFormsShellInteractionTests
             await Task.Delay(25);
         }
         Assert.True(condition(), "shell condition was not reached");
-    }
-
-    private static Task RunStaAsync(Func<Task> test)
-    {
-        Exception? failure = null;
-        var thread = new Thread(async () =>
-        {
-            try { await test(); }
-            catch (Exception ex) { failure = ex; }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        thread.Join();
-        if (failure is not null) throw failure;
-        return Task.CompletedTask;
     }
 
     private static void RunSta(Action test) => WinFormsTestRunner.Run(test);

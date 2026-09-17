@@ -108,6 +108,18 @@ public sealed record RankingBrowseSnapshot(
     int Page,
     int TotalItems);
 
+public sealed record AlbumBrowseSnapshot(
+    MusicInfo Album,
+    IReadOnlyList<MusicInfo> Items,
+    int Page,
+    int TotalItems);
+
+public sealed record SavedPlaylistBrowseSnapshot(
+    Playlist Playlist,
+    IReadOnlyList<MusicInfo> Items,
+    int Page,
+    int TotalItems);
+
 public readonly record struct SearchHistoryNavigation(bool Handled, string Text);
 
 public sealed record BrowsePlaybackContinuation(
@@ -147,6 +159,8 @@ public sealed class MusicBrowseWorkflow
     private string _rankingSource = "netease";
     private Ranking? _ranking;
     private RankingBrowseSnapshot? _rankingSnapshot;
+    private AlbumBrowseSnapshot? _albumSnapshot;
+    private SavedPlaylistBrowseSnapshot? _savedPlaylistSnapshot;
     private bool _continuingPlayback;
 
     public MusicBrowseWorkflow(
@@ -211,6 +225,32 @@ public sealed class MusicBrowseWorkflow
                 return _rankingSnapshot is null
                     ? null
                     : _rankingSnapshot with { Items = _rankingSnapshot.Items.ToArray() };
+            }
+        }
+    }
+
+    public AlbumBrowseSnapshot? CurrentAlbumPage
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _albumSnapshot is null
+                    ? null
+                    : _albumSnapshot with { Items = _albumSnapshot.Items.ToArray() };
+            }
+        }
+    }
+
+    public SavedPlaylistBrowseSnapshot? CurrentSavedPlaylistPage
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _savedPlaylistSnapshot is null
+                    ? null
+                    : _savedPlaylistSnapshot with { Items = _savedPlaylistSnapshot.Items.ToArray() };
             }
         }
     }
@@ -463,40 +503,37 @@ public sealed class MusicBrowseWorkflow
             snapshot => snapshot.Items.Count == 0
                 ? $"未找到与 {request.Query} 相关的结果"
                 : snapshot.HasMore
-                    ? $"已加载 {snapshot.Items.Count} 首，还有更多"
-                    : $"已加载全部结果，共 {snapshot.Items.Count} 首",
+                    ? "加载完成，还有更多"
+                    : "加载完成",
             BrowseFocusTarget.SearchResults,
             snapshot => _searchSnapshot = snapshot);
     }
 
-    public Task<BrowseResult<IReadOnlyList<MusicInfo>>> ActivateAlbumAsync(MusicInfo album)
+    public Task<BrowseResult<PagedResult<MusicInfo>>> ActivateAlbumAsync(MusicInfo album, int page = 1, bool append = false)
     {
         FrameworkCompatibility.ThrowIfNull(album);
         var revision = BeginActivation();
+        AlbumBrowseSnapshot? previous;
+        lock (_gate)
+        {
+            previous = append && _albumSnapshot?.Album.Id == album.Id
+                ? _albumSnapshot with { Items = _albumSnapshot.Items.ToArray() }
+                : null;
+        }
+        var requestedPage = Math.Max(1, page);
         return RunLatestAsync(
             revision,
             $"正在打开专辑《{album.Title}》",
-            async cancellationToken =>
-            {
-                var songs = new List<MusicInfo>();
-                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                const int pageSize = 50;
-                for (var page = 1; page <= 200; page++)
-                {
-                    var result = await _source.GetAlbumDetailAsync(album, page, pageSize, cancellationToken);
-                    var before = songs.Count;
-                    foreach (var song in result.Items)
-                    {
-                        if (seen.Add($"{song.Source}|{song.Id}")) songs.Add(song);
-                    }
-                    if (result.Items.Count == 0 || songs.Count == before) break;
-                }
-                return (IReadOnlyList<MusicInfo>)songs;
-            },
-            songs => songs.Count == 0
+            cancellationToken => _source.GetAlbumDetailAsync(album, requestedPage, BrowsePageSize, cancellationToken),
+            result => result.Items.Count == 0
                 ? $"专辑《{album.Title}》暂无歌曲可显示"
-                : $"专辑《{album.Title}》共 {songs.Count} 首歌曲",
-            BrowseFocusTarget.SearchResults);
+                : "加载完成",
+            BrowseFocusTarget.SearchResults,
+            result =>
+            {
+                var items = previous is null ? result.Items.ToArray() : previous.Items.Concat(result.Items).ToArray();
+                _albumSnapshot = new(album, items, requestedPage, result.TotalItems);
+            });
     }
 
     public Task<BrowseResult<IReadOnlyList<PlaylistCategory>>> ActivateCategorySourceAsync()
@@ -507,16 +544,23 @@ public sealed class MusicBrowseWorkflow
             "正在加载歌单分类",
             async cancellationToken =>
                 (IReadOnlyList<PlaylistCategory>)await _source.GetPlaylistCategoriesAsync(sourceId, cancellationToken),
-            categories => categories.Count == 0 ? "暂无歌单分类" : $"已加载 {categories.Count} 个歌单分类",
+            categories => categories.Count == 0 ? "暂无歌单分类" : "加载完成",
             BrowseFocusTarget.CategoryList);
     }
 
-    public Task<BrowseResult<PagedResult<Playlist>>> ActivateCategoryAsync(int page = 1)
+    public Task<BrowseResult<PagedResult<Playlist>>> ActivateCategoryAsync(int page = 1, bool append = false)
     {
         var (revision, selection) = Snapshot(() => (_categorySource, _category));
         if (selection._category is null)
             return Task.FromResult(Invalid<PagedResult<Playlist>>(revision, "请选择歌单分类"));
 
+        CategoryBrowseSnapshot? previous;
+        lock (_gate)
+        {
+            previous = append && _categorySnapshot?.Category.Id == selection._category.Id
+                ? _categorySnapshot with { Items = _categorySnapshot.Items.ToArray() }
+                : null;
+        }
         var tag = selection._category.Tags.FirstOrDefault()?.Id ?? "all";
         var requestedPage = Math.Max(1, page);
         return RunLatestAsync(
@@ -528,53 +572,74 @@ public sealed class MusicBrowseWorkflow
                 BrowsePageSize,
                 selection._categorySource,
                 cancellationToken),
-            result => result.Items.Count == 0 ? "该音源暂时没有可用歌单" : $"已加载 {result.Items.Count} 个歌单",
+            result => result.Items.Count == 0 ? "该音源暂时没有可用歌单" : "加载完成",
             BrowseFocusTarget.CategoryPlaylists,
-            result => _categorySnapshot = new(
-                selection._category,
-                result.Items.ToArray(),
-                requestedPage,
-                result.TotalItems));
+            result =>
+            {
+                var items = previous is null ? result.Items.ToArray() : previous.Items.Concat(result.Items).ToArray();
+                _categorySnapshot = new(selection._category, items, requestedPage, result.TotalItems);
+            });
     }
 
-    public Task<BrowseResult<PagedResult<MusicInfo>>> ActivatePlaylistAsync(int page = 1)
+    public Task<BrowseResult<PagedResult<MusicInfo>>> ActivatePlaylistAsync(int page = 1, bool append = false)
     {
         var (revision, playlist) = Snapshot(() => _playlist);
         if (playlist is null)
             return Task.FromResult(Invalid<PagedResult<MusicInfo>>(revision, "请选择歌单"));
 
+        PlaylistBrowseSnapshot? previous;
+        lock (_gate)
+        {
+            previous = append && _playlistSnapshot?.Playlist.Id == playlist.Id
+                ? _playlistSnapshot with { Items = _playlistSnapshot.Items.ToArray() }
+                : null;
+        }
+        var requestedPage = Math.Max(1, page);
         return RunLatestAsync(
             revision,
             $"正在加载歌单：{playlist.Name}",
             cancellationToken => _source.GetPlaylistDetailAsync(
                 playlist.Id,
-                Math.Max(1, page),
+                requestedPage,
                 BrowsePageSize,
                 cancellationToken),
-            result => result.Items.Count == 0 ? "该歌单暂无歌曲" : $"已加载 {result.Items.Count} 首歌单歌曲",
+            result => result.Items.Count == 0 ? "该歌单暂无歌曲" : "加载完成",
             BrowseFocusTarget.CategorySongs,
-            result => _playlistSnapshot = new(
-                playlist,
-                result.Items.ToArray(),
-                Math.Max(1, page),
-                result.TotalItems));
+            result =>
+            {
+                var items = previous is null ? result.Items.ToArray() : previous.Items.Concat(result.Items).ToArray();
+                _playlistSnapshot = new(playlist, items, requestedPage, result.TotalItems);
+            });
     }
 
-    public Task<BrowseResult<PagedResult<MusicInfo>>> ActivateSavedPlaylistAsync(Playlist playlist)
+    public Task<BrowseResult<PagedResult<MusicInfo>>> ActivateSavedPlaylistAsync(Playlist playlist, int page = 1, bool append = false)
     {
         FrameworkCompatibility.ThrowIfNull(playlist);
         var revision = BeginActivation();
         if (string.IsNullOrWhiteSpace(playlist.RemoteId))
             return Task.FromResult(Invalid<PagedResult<MusicInfo>>(revision, "该歌单没有远程内容"));
 
+        SavedPlaylistBrowseSnapshot? previous;
+        lock (_gate)
+        {
+            previous = append && _savedPlaylistSnapshot?.Playlist.Id == playlist.Id
+                ? _savedPlaylistSnapshot with { Items = _savedPlaylistSnapshot.Items.ToArray() }
+                : null;
+        }
+        var requestedPage = Math.Max(1, page);
         return RunLatestAsync(
             revision,
             $"正在加载远程歌单：{playlist.Name}",
             cancellationToken => playlist.Type == PlaylistType.Recommend
-                ? _source.GetRankingDetailAsync(playlist.RemoteId, 1, 50, cancellationToken)
-                : _source.GetPlaylistDetailAsync(playlist.RemoteId, 1, 50, cancellationToken),
-            result => result.Items.Count == 0 ? "该歌单暂无歌曲" : $"已加载 {result.Items.Count} 首收藏歌曲",
-            BrowseFocusTarget.SavedPlaylistSongs);
+                ? _source.GetRankingDetailAsync(playlist.RemoteId, requestedPage, BrowsePageSize, cancellationToken)
+                : _source.GetPlaylistDetailAsync(playlist.RemoteId, requestedPage, BrowsePageSize, cancellationToken),
+            result => result.Items.Count == 0 ? "该歌单暂无歌曲" : "加载完成",
+            BrowseFocusTarget.SavedPlaylistSongs,
+            result =>
+            {
+                var items = previous is null ? result.Items.ToArray() : previous.Items.Concat(result.Items).ToArray();
+                _savedPlaylistSnapshot = new(playlist, items, requestedPage, result.TotalItems);
+            });
     }
 
     public Task<BrowseResult<IReadOnlyList<Ranking>>> ActivateRankingSourceAsync()
@@ -585,31 +650,39 @@ public sealed class MusicBrowseWorkflow
             "正在加载排行榜",
             async cancellationToken =>
                 (IReadOnlyList<Ranking>)await _source.GetRankingsAsync(sourceId, cancellationToken),
-            rankings => rankings.Count == 0 ? "暂无排行榜" : $"已加载 {rankings.Count} 个排行榜",
+            rankings => rankings.Count == 0 ? "暂无排行榜" : "加载完成",
             BrowseFocusTarget.RankingList);
     }
 
-    public Task<BrowseResult<PagedResult<MusicInfo>>> ActivateRankingAsync(int page = 1)
+    public Task<BrowseResult<PagedResult<MusicInfo>>> ActivateRankingAsync(int page = 1, bool append = false)
     {
         var (revision, ranking) = Snapshot(() => _ranking);
         if (ranking is null)
             return Task.FromResult(Invalid<PagedResult<MusicInfo>>(revision, "请选择排行榜"));
 
+        RankingBrowseSnapshot? previous;
+        lock (_gate)
+        {
+            previous = append && _rankingSnapshot?.Ranking.Id == ranking.Id
+                ? _rankingSnapshot with { Items = _rankingSnapshot.Items.ToArray() }
+                : null;
+        }
+        var requestedPage = Math.Max(1, page);
         return RunLatestAsync(
             revision,
             $"正在加载排行榜：{ranking.Name}",
             cancellationToken => _source.GetRankingDetailAsync(
                 ranking.Id,
-                Math.Max(1, page),
+                requestedPage,
                 BrowsePageSize,
                 cancellationToken),
-            result => result.Items.Count == 0 ? "该排行榜暂无歌曲" : $"已加载 {result.Items.Count} 首排行榜歌曲",
+            result => result.Items.Count == 0 ? "该排行榜暂无歌曲" : "加载完成",
             BrowseFocusTarget.RankingSongs,
-            result => _rankingSnapshot = new(
-                ranking,
-                result.Items.ToArray(),
-                Math.Max(1, page),
-                result.TotalItems));
+            result =>
+            {
+                var items = previous is null ? result.Items.ToArray() : previous.Items.Concat(result.Items).ToArray();
+                _rankingSnapshot = new(ranking, items, requestedPage, result.TotalItems);
+            });
     }
 
     public async Task<BrowsePlaybackContinuation?> ContinuePlaybackAsync(PlaybackQueueOrigin origin)
@@ -656,14 +729,15 @@ public sealed class MusicBrowseWorkflow
     private async Task<BrowsePlaybackContinuation?> ContinuePlaylistPlaybackAsync()
     {
         var before = CurrentPlaylistPage;
-        if (before is null || !HasNextPage(before.TotalItems, before.Page, before.Items.Count)) return null;
-        var result = await ActivatePlaylistAsync(before.Page + 1);
+        if (before is null || !HasNextPage(before.TotalItems, before.Items.Count)) return null;
+        var result = await ActivatePlaylistAsync(before.Page + 1, append: true);
         var page = CurrentPlaylistPage;
-        if (!result.Succeeded || page is null || page.Items.Count == 0) return null;
-        _announcer.Announce(new($"已自动翻页到第 {page.Page} 页，继续播放"));
+        // Appending extends the accumulated snapshot, so playback resumes at the first song that was not loaded before.
+        if (!result.Succeeded || page is null || page.Items.Count <= before.Items.Count) return null;
+        _announcer.Announce(new("已加载下一页，继续播放"));
         await _playback.PlayAsync(new(
             page.Items,
-            page.Items[0],
+            page.Items[before.Items.Count],
             _playback.DefaultQuality,
             PlaybackQueueOrigin.Category,
             Trigger: PlaybackTrigger.AutoContinuation));
@@ -673,22 +747,23 @@ public sealed class MusicBrowseWorkflow
     private async Task<BrowsePlaybackContinuation?> ContinueRankingPlaybackAsync()
     {
         var before = CurrentRankingPage;
-        if (before is null || !HasNextPage(before.TotalItems, before.Page, before.Items.Count)) return null;
-        var result = await ActivateRankingAsync(before.Page + 1);
+        if (before is null || !HasNextPage(before.TotalItems, before.Items.Count)) return null;
+        var result = await ActivateRankingAsync(before.Page + 1, append: true);
         var page = CurrentRankingPage;
-        if (!result.Succeeded || page is null || page.Items.Count == 0) return null;
-        _announcer.Announce(new($"已自动翻页到第 {page.Page} 页，继续播放"));
+        // Appending extends the accumulated snapshot, so playback resumes at the first song that was not loaded before.
+        if (!result.Succeeded || page is null || page.Items.Count <= before.Items.Count) return null;
+        _announcer.Announce(new("已加载下一页，继续播放"));
         await _playback.PlayAsync(new(
             page.Items,
-            page.Items[0],
+            page.Items[before.Items.Count],
             _playback.DefaultQuality,
             PlaybackQueueOrigin.Ranking,
             Trigger: PlaybackTrigger.AutoContinuation));
         return new(PlaybackQueueOrigin.Ranking, Ranking: page);
     }
 
-    private static bool HasNextPage(int totalItems, int page, int loadedCount) =>
-        totalItems > 0 ? page * BrowsePageSize < totalItems : loadedCount >= BrowsePageSize;
+    private static bool HasNextPage(int totalItems, int loadedCount) =>
+        totalItems > 0 ? loadedCount < totalItems : loadedCount >= BrowsePageSize;
 
     private async Task SaveHistoryAsync(
         IReadOnlyList<SearchHistory> history,
