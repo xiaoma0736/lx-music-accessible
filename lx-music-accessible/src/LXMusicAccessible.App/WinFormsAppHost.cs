@@ -441,6 +441,7 @@ internal sealed class ProductionStartupInitializer(string dataDirectory) : IStar
         _ = services.GetRequiredService<LyricsWorkflow>();
         var globalHotkeys = services.GetRequiredService<GlobalHotkeyMessageWindow>();
         var settings = services.GetRequiredService<SettingsWorkflow>();
+        globalHotkeys.HotkeyReceived += (_, id) => settings.RaiseGlobalHotkey(id);
         await settings.LoadAsync(globalHotkeys.Handle);
         _ = services.GetRequiredService<IPlaylistImportService>();
         cancellationToken.ThrowIfCancellationRequested();

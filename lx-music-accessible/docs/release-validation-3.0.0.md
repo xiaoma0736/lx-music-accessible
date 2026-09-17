@@ -31,11 +31,11 @@ SHA-256 均为小写。`release-manifest.json` 记录 15 个载荷文件及以�
 
 | 产物 | 字节 | SHA-256 |
 | --- | ---: | --- |
-| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 22,005,015 | `8bb42a7632b8f908b27938a33240084ffe4fb8612a77bbee3030e4de6618cf9f` |
-| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 22,637,568 | `62e7023a94ebbe172f850f29a5b23f2c734d6c39c7e33be3677e6046c072074d` |
+| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 22,006,165 | `23f494a79ce67409aab20d25fe41b221a9f22584c616123078e85f174c9b10d1` |
+| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 22,639,104 | `f873620b453092bfaeb54678fd54c7d2ba6208b5ee91ac8637ebb24773dd533c` |
 | `release-manifest.json`（清单，不入哈希清单） | 4,587 | 构建内逐字段校验 |
 
-清单运行时元数据：`version=3.0.0`、`runtime=win-x64`、`framework=net48`、`sqliteVersion=3.53.3`；生成时间 `2026-09-17T03:25:04.3186299Z`。
+清单运行时元数据：`version=3.0.0`、`runtime=win-x64`、`framework=net48`、`sqliteVersion=3.53.3`；生成时间 `2026-09-17T04:05:30.1681085Z`。
 
 ## 自动化回归与最终质量门
 
@@ -45,9 +45,9 @@ SHA-256 均为小写。`release-manifest.json` 记录 15 个载荷文件及以�
   - Restore：通过。
   - 依赖审计：High/Critical advisories 为 0。
   - Release build：通过；warnings treated as errors，未出现 warning/error。
-  - 离线测试：**executed 212，passed 212，failed 0，skipped 0**。
-  - 文本检查：通过，181 个 tracked text files；`git diff --check` 通过。
-  - 主机/异常静态检查：通过，138 个 C# source files。
+  - 离线测试：**executed 216，passed 216，failed 0，skipped 0**。
+  - 文本检查：通过，183 个 tracked text files；`git diff --check` 通过。
+  - 主机/异常静态检查：通过，139 个 C# source files。
   - 发布重建/产物/SQLite/native/hash 检查：通过。
 - 安装器 smoke 全部通过：first install 成功；upgrade 成功且 ownership ID 不变；preserving uninstall `accepted=True; failures=0; preserved=True`；complete uninstall `accepted=True; failures=0; preserved=False`；repeat uninstall `accepted=True; failures=0; preserved=False`。
 - 验证中仅有 Git 的 CRLF working-copy 提示，非测试/构建错误；UTF-8 检查通过。没有其他警告或错误。

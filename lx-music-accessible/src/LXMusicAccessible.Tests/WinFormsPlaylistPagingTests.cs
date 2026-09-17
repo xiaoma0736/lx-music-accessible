@@ -22,7 +22,7 @@ public sealed class WinFormsPlaylistPagingTests
         RunSta(() =>
         {
             using var shell = CreateShell(new CountingBrowseSource());
-            foreach (var name in new[] { "CategoryPlaylistPreviousPage", "CategoryPlaylistNextPage", "CategoryPlaylistPage", "CategorySongPreviousPage", "CategorySongNextPage", "CategorySongPage" })
+            foreach (var name in new[] { "CategoryPlaylistPreviousPage", "CategoryPlaylistNextPage", "CategoryPlaylistPage", "CategorySongsLoadMore" })
             {
                 var controls = shell.Controls.Find(name, true);
                 Assert.True(controls.Length == 1, name + " was not found");
@@ -64,6 +64,30 @@ public sealed class WinFormsPlaylistPagingTests
             PerformClick(shell.Controls.Find("CategorySongNextPage", true)[0]);
             await WaitForAsync(() => source.SongCalls == 1);
             Assert.Equal(2, source.LastSongPage);
+        });
+    }
+
+    [Fact]
+    public async Task Category_songs_append_when_load_more_is_used()
+    {
+        var source = new CountingBrowseSource();
+        await Task.Yield();
+        RunSta(async () =>
+        {
+            await Task.Yield();
+            using var shell = CreateShell(source);
+            shell.Show();
+            AddCategory(shell);
+            shell.LoadCategoryPlaylistsForTests();
+            await WaitForAsync(() => source.CategoryCalls == 1);
+            var playlists = Assert.IsType<ListBox>(shell.Controls.Find("CategoryPlaylists", true)[0]);
+            playlists.SelectedIndex = 0;
+            await shell.LoadCategorySongsForTests();
+            await shell.LoadMoreCategorySongsForTests();
+            var songs = Assert.IsType<ListBox>(shell.Controls.Find("CategorySongs", true)[0]);
+            Assert.Equal(2, songs.Items.Count);
+            Assert.Equal(2, source.SongCalls);
+            Assert.False(((Button)shell.Controls.Find("CategorySongsLoadMore", true)[0]).Enabled);
         });
     }
 

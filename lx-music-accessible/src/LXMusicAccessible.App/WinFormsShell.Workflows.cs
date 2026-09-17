@@ -235,19 +235,24 @@ public partial class WinFormsShell
         }, "加载歌单");
     }
 
-    private async Task LoadCategorySongs(int page = 1)
+    private Task LoadCategorySongs() => LoadCategorySongsAsync(1, append: false);
+
+    private Task LoadMoreCategorySongsAsync() => LoadCategorySongsAsync((_browse.CurrentPlaylistPage?.Page ?? 0) + 1, append: true);
+
+    private async Task LoadCategorySongsAsync(int page, bool append)
     {
         var playlist = WinFormsUi.Selected<Playlist>(CategoryPlaylists);
         if (playlist is null) return;
         var requestedPage = Math.Max(1, page);
+        var previous = append ? _categorySongs : [];
         _browse.SelectPlaylist(playlist);
         var result = await _browse.ActivatePlaylistAsync(requestedPage);
         if (result.Succeeded && result.Value is not null)
         {
-            _categorySongs = result.Value.Items.ToList();
+            _categorySongs = previous.Concat(result.Value.Items).ToList();
             WinFormsUi.FillSongs(CategorySongs, _categorySongs);
-            PageControl("CategorySongPreviousPage", "CategorySongNextPage", "CategorySongPage", requestedPage, result.Value.TotalItems);
-            SetBrowseStatus(result.Message, AnnouncementKind.Success);
+            CategorySongsLoadMore.Enabled = result.Value.TotalItems > requestedPage * 20;
+            SetBrowseStatus($"已加载 {_categorySongs.Count} 首歌单歌曲", AnnouncementKind.Success);
             if (ContainsFocus) CategorySongs.Focus();
         }
         else SetBrowseStatus(result.Message, AnnouncementKind.Error);
@@ -284,19 +289,27 @@ public partial class WinFormsShell
         }, "加载排行榜");
     }
 
-    private async Task LoadRankingSongs()
+    private Task LoadRankingSongs() => LoadRankingSongsAsync(1, append: false);
+
+    private Task LoadMoreRankingSongsAsync() => LoadRankingSongsAsync((_browse.CurrentRankingPage?.Page ?? 0) + 1, append: true);
+
+    private async Task LoadRankingSongsAsync(int page, bool append)
     {
         var ranking = WinFormsUi.Selected<Ranking>(RankingList);
         if (ranking is null) return;
+        var requestedPage = Math.Max(1, page);
+        var previous = append ? _rankingSongs : [];
         _browse.SelectRanking(ranking);
-        var result = await _browse.ActivateRankingAsync();
+        var result = await _browse.ActivateRankingAsync(requestedPage);
         if (result.Succeeded && result.Value is not null)
         {
-            _rankingSongs = result.Value.Items.ToList();
+            _rankingSongs = previous.Concat(result.Value.Items).ToList();
             WinFormsUi.FillSongs(RankingSongs, _rankingSongs);
-            Announce(result.Message, "ranking-songs");
+            RankingSongsLoadMore.Enabled = result.Value.TotalItems > requestedPage * 20;
+            SetBrowseStatus($"已加载 {_rankingSongs.Count} 首榜单歌曲", AnnouncementKind.Success);
             if (ContainsFocus) RankingSongs.Focus();
         }
+        else SetBrowseStatus(result.Message, AnnouncementKind.Error);
     }
 
     private async void FavoriteCategoryPlaylist()
@@ -318,11 +331,27 @@ public partial class WinFormsShell
         Announce(result.Message, "remote-favorite", result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
+    private bool BeginPlaybackToggle()
+    {
+        var tick = Environment.TickCount;
+        if (tick - _lastPlaybackToggleTick is > -250 and < 250) return false;
+        _lastPlaybackToggleTick = tick;
+        return true;
+    }
+
     private void TogglePlayback()
     {
         if (_services.Playback is null) return;
-        if (_services.Playback.IsPlaying) { _services.Playback.Pause(); Announce("已暂停", "playback-state"); }
-        else _ = RunAsync(async () => await _services.Playback.ReplayAsync(), _ => { }, "恢复播放");
+        if (!BeginPlaybackToggle()) return;
+        if (_services.Playback.IsPlaying)
+        {
+            _services.Playback.Pause();
+            Announce("已暂停", "playback-state");
+        }
+        else
+        {
+            _ = RunAsync(async () => await _services.Playback.ReplayAsync(), _ => { }, "恢复播放");
+        }
     }
 
     private void StopPlayback()
@@ -521,8 +550,8 @@ public partial class WinFormsShell
             case "stop": StopPlayback(); break;
             case "previous": _ = MovePlayback(true); break;
             case "next": _ = MovePlayback(false); break;
-            case "volume-down": ChangeVolume(-0.1); break;
-            case "volume-up": ChangeVolume(0.1); break;
+            case "volume-down": ChangeVolume(-VolumeStep); break;
+            case "volume-up": ChangeVolume(VolumeStep); break;
             case "lyrics-delay": _services.Lyrics?.AdjustOffset(500); break;
             case "lyrics-advance": _services.Lyrics?.AdjustOffset(-500); break;
             case "play-mode": TogglePlayMode(); break;
@@ -540,7 +569,7 @@ public partial class WinFormsShell
             case Keys.F4: _ = MovePlayback(false); break;
             case Keys.F7: Seek(-10); break;
             case Keys.F8: Seek(10); break;
-            case Keys.F9: ChangeVolume(-0.1); break;
+            case Keys.F9: ChangeVolume(-VolumeStep); break;
             case Keys.F11: SwitchDevice(-1); break;
             case Keys.F12: SwitchDevice(1); break;
             case Keys.F1: TogglePlayMode(); break;
@@ -576,7 +605,7 @@ public partial class WinFormsShell
         if (keyData == (Keys.Alt | Keys.R)) { SelectTab(3); RankingList.Focus(); return true; }
         if (keyData == Keys.F10)
         {
-            ChangeVolume(-0.1);
+            ChangeVolume(VolumeStep);
             return true;
         }
         ExecuteLocalHotkey(keyData);
@@ -586,7 +615,7 @@ public partial class WinFormsShell
     private void AttachSongList(ListBox list)
     {
         AssignSongContextMenu(list);
-        list.KeyDown += (_, e) => { if (e.KeyCode is Keys.Enter or Keys.Space) { e.Handled = true; _ = ActivateSong(list); } };
+        list.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(list); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
     }
 
     private void DetachSongList(ListBox list)

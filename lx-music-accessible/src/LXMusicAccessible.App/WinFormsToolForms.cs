@@ -470,7 +470,8 @@ public class LyricsForm : Form
 {
     private readonly IAccessibleAnnouncer _announcer;
     private readonly LyricsWorkflow _lyrics;
-    private readonly TextBox _text = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window, AccessibleRole = AccessibleRole.None };
+    private readonly Func<KeyEventArgs, bool> _handleHotkey;
+    private readonly SilentTextBox _text = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window };
     private readonly Label _title = new() { Text = "暂无歌词", AutoSize = true, TabStop = false, Dock = DockStyle.Top, AccessibleName = "歌词标题" };
     private readonly Button _copy = new() { Text = "复制歌词", Dock = DockStyle.Bottom };
 
@@ -478,6 +479,7 @@ public class LyricsForm : Form
     {
         _announcer = announcer;
         _lyrics = lyrics;
+        _handleHotkey = handleHotkey;
         Text = "歌词";
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(760, 600);
@@ -500,8 +502,14 @@ public class LyricsForm : Form
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (_handleHotkey(e))
+        {
+            e.Handled = true;
+            return;
+        }
         if (e.KeyCode == Keys.Escape) Close();
     }
+
     private void Render(LyricsState state)
     {
         _title.Text = state.Music is null ? "暂无歌词" : $"歌词：{state.Music.Artist}，{state.Music.Title}";
@@ -511,6 +519,21 @@ public class LyricsForm : Form
 
     private void Announce(string message, string activity, AnnouncementKind kind = AnnouncementKind.Status) =>
         _announcer.Announce(new AccessibleAnnouncement(message, kind, activity));
+}
+
+/// <summary>Text box whose automation object is intentionally invisible to screen readers.</summary>
+public sealed class SilentTextBox : TextBox
+{
+    protected override AccessibleObject CreateAccessibilityInstance() => new SilentAccessibleObject(this);
+
+    private sealed class SilentAccessibleObject : ControlAccessibleObject
+    {
+        public SilentAccessibleObject(Control owner) : base(owner) { }
+    public override AccessibleRole Role => AccessibleRole.None;
+        public override AccessibleStates State => AccessibleStates.Invisible;
+        public override string Name => string.Empty;
+        public override string Value => string.Empty;
+    }
 }
 
 /// <summary>Manual exact source switching window.</summary>

@@ -42,6 +42,8 @@ public partial class WinFormsShell : Form
     private List<MusicInfo> _favoriteSongs = new();
         private PlayMode _playMode = PlayMode.Sequential;
     private MusicInfo? _current;
+    private const double VolumeStep = 0.05;
+    private int _lastPlaybackToggleTick;
     private const string BaseTitle = "落雪音乐无障碍版";
 
     protected TabControl MainTabs;
@@ -68,6 +70,8 @@ public partial class WinFormsShell : Form
     protected Label CurrentPlayModeText;
     protected Label PositionText;
     protected Label LiveRegion;
+    protected Button CategorySongsLoadMore;
+    protected Button RankingSongsLoadMore;
 
     public WinFormsShell(WinFormsShellServices services)
     {
@@ -150,15 +154,15 @@ public partial class WinFormsShell : Form
         file.MenuItems.Add(new MenuItem("-"));
         file.MenuItems.Add(new MenuItem("退出(&X)", (_, _) => _ = RequestExit(), Shortcut.CtrlQ));
         var play = new MenuItem("&播放");
-        play.MenuItems.Add(new MenuItem("播放/暂停(&P)", (_, _) => TogglePlayback(), Shortcut.F5));
+        play.MenuItems.Add(new MenuItem("播放/暂停(&P)", (_, _) => TogglePlayback()));
         play.MenuItems.Add(new MenuItem("停止(&S)", (_, _) => StopPlayback(), Shortcut.F6));
         play.MenuItems.Add(new MenuItem("上一首(&V)", (_, _) => _ = MovePlayback(true), Shortcut.F3));
         play.MenuItems.Add(new MenuItem("下一首(&N)", (_, _) => _ = MovePlayback(false), Shortcut.F4));
         play.MenuItems.Add(new MenuItem("-"));
         play.MenuItems.Add(new MenuItem("快退十秒(&R)", (_, _) => Seek(-10), Shortcut.F7));
         play.MenuItems.Add(new MenuItem("快进十秒(&F)", (_, _) => Seek(10), Shortcut.F8));
-        play.MenuItems.Add(new MenuItem("音量减(&L)", (_, _) => ChangeVolume(-0.1), Shortcut.F9));
-        play.MenuItems.Add(new MenuItem("音量加(&G)", (_, _) => ChangeVolume(0.1)));
+        play.MenuItems.Add(new MenuItem("音量减(&L)", (_, _) => ChangeVolume(-VolumeStep), Shortcut.F9));
+        play.MenuItems.Add(new MenuItem("音量加(&G)", (_, _) => ChangeVolume(VolumeStep)));
         play.MenuItems.Add(new MenuItem("上一个播放设备(&E)", (_, _) => SwitchDevice(-1), Shortcut.F11));
         play.MenuItems.Add(new MenuItem("下一个播放设备(&X)", (_, _) => SwitchDevice(1), Shortcut.F12));
         play.MenuItems.Add(new MenuItem("切换播放模式(&M)", (_, _) => TogglePlayMode(), Shortcut.F1));
@@ -208,7 +212,7 @@ public partial class WinFormsShell : Form
         SearchResults = WinFormsUi.ListBox("搜索结果", 8);
         SearchResults.Size = new Size(830, 450);
         var previous = new Button { Text = "上一页", Width = 80, TabStop = false, TabIndex = 9 };
-        var next = new Button { Text = "下一页", Width = 80, TabStop = false, TabIndex = 10 };
+        var next = new Button { Text = "加载更多歌曲", Width = 150, TabStop = false, TabIndex = 10, Name = "SearchLoadMore", AccessibleName = "加载更多歌曲" };
         var pageInfo = new Label { Text = "第 1 页", AutoSize = true, TabStop = false, TabIndex = 11, AccessibleName = "搜索页码" };
         sourceLabel.SetBounds(10, 14, 0, 0);
         SearchSource.SetBounds(65, 10, 150, 24);
@@ -218,9 +222,9 @@ public partial class WinFormsShell : Form
         SearchButton.SetBounds(320, 43, 90, 26);
         SearchClearButton.SetBounds(420, 43, 80, 26);
         SearchResults.SetBounds(10, 78, 830, 450);
-        previous.SetBounds(340, 536, 80, 26);
-        pageInfo.SetBounds(428, 541, 80, 20);
-        next.SetBounds(515, 536, 80, 26);
+        previous.Visible = false;
+        pageInfo.Visible = false;
+        next.SetBounds(340, 536, 160, 26);
         page.Controls.AddRange(new Control[] { sourceLabel, SearchSource, typeLabel, SearchType, SearchText, SearchButton, SearchClearButton, SearchResults, previous, pageInfo, next });
         SearchButton.Click += (_, _) => _ = SearchAsync(true);
         SearchClearButton.Click += (_, _) => ClearSearch();
@@ -242,10 +246,15 @@ public partial class WinFormsShell : Form
         SearchResults.DoubleClick += (_, _) => _ = ActivateSong(SearchResults);
         SearchResults.KeyDown += (_, e) =>
         {
-            if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space)
+            if (e.KeyCode == Keys.Enter)
             {
                 e.Handled = true;
                 _ = ActivateSong(SearchResults);
+            }
+            else if (e.KeyCode == Keys.Space)
+            {
+                e.Handled = true;
+                TogglePlayback();
             }
         };
         previous.Click += (_, _) => Announce("已到第一页", "search-page");
@@ -277,7 +286,7 @@ public partial class WinFormsShell : Form
         OnlinePlaylists.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) _ = LoadSelectedSavedAsync(); };
         OnlinePlaylists.DoubleClick += (_, _) => _ = LoadSelectedSavedAsync();
         FavoriteSongs.DoubleClick += (_, _) => _ = ActivateSong(FavoriteSongs);
-        FavoriteSongs.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space) { e.Handled = true; _ = ActivateSong(FavoriteSongs); } };
+        FavoriteSongs.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(FavoriteSongs); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         return page;
     }
 
@@ -300,14 +309,9 @@ public partial class WinFormsShell : Form
         playlistPrevious.TabStop = playlistNext.TabStop = false;
         playlistPrevious.TabIndex = 20; playlistNext.TabIndex = 21;
 
-        var songPrevious = CreateButton("上一页", 23, (_, _) => _ = LoadCategorySongs(GetCurrentSongPage() - 1));
-        var songNext = CreateButton("下一页", 24, (_, _) => _ = LoadCategorySongs(GetCurrentSongPage() + 1));
-        var songPage = new Label { Text = "第 1 页", AutoSize = true, TabStop = false };
-        WinFormsUi.Name(songPage, "CategorySongPage", 25, false);
-        songPrevious.Name = songPrevious.AccessibleName = "CategorySongPreviousPage";
-        songNext.Name = songNext.AccessibleName = "CategorySongNextPage";
-        songPrevious.TabStop = songNext.TabStop = false;
-        songPrevious.TabIndex = 23; songNext.TabIndex = 24;
+        CategorySongsLoadMore = CreateButton("加载更多歌曲", 23, (_, _) => _ = LoadMoreCategorySongsAsync());
+        CategorySongsLoadMore.Name = CategorySongsLoadMore.AccessibleName = "CategorySongsLoadMore";
+        CategorySongsLoadMore.TabStop = false;
 
         sourceLabel.SetBounds(10, 14, 0, 0);
         CategorySource.SetBounds(60, 10, 150, 24);
@@ -318,18 +322,16 @@ public partial class WinFormsShell : Form
         CategoryList.SetBounds(10, 44, 175, 500);
         CategoryPlaylists.SetBounds(195, 44, 250, 500);
         CategorySongs.SetBounds(455, 44, 495, 500);
-        songPrevious.SetBounds(455, 550, 70, 26);
-        songNext.SetBounds(530, 550, 70, 26);
-        songPage.SetBounds(605, 555, 80, 20);
+        CategorySongsLoadMore.SetBounds(455, 550, 160, 26);
         page.Controls.AddRange(new Control[]
         {
             sourceLabel, CategorySource, refresh, playlistPrevious, playlistNext, playlistPage,
-            songPrevious, songNext, songPage, CategoryList, CategoryPlaylists, CategorySongs
+            CategorySongsLoadMore, CategoryList, CategoryPlaylists, CategorySongs
         });
         CategoryList.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) LoadCategoryPlaylists(); };
         CategoryPlaylists.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) _ = LoadCategorySongs(); };
         CategorySongs.DoubleClick += (_, _) => _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category);
-        CategorySongs.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space) { e.Handled = true; _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category); } };
+        CategorySongs.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         var playlistMenu = new ContextMenu();
         var favorite = new MenuItem("收藏整个歌单到在线收藏", (_, _) => FavoriteCategoryPlaylist());
         playlistMenu.MenuItems.Add(favorite);
@@ -342,7 +344,11 @@ public partial class WinFormsShell : Form
     internal Label PlaybackInfoForTests => PlaybackInfoText;
     internal void LoadCategoryPlaylistsForTests() => LoadCategoryPlaylists();
     internal Task LoadCategorySongsForTests() => LoadCategorySongs();
+    internal Task LoadMoreCategorySongsForTests() => LoadMoreCategorySongsAsync();
     internal Task LoadRankingSongsForTests() => LoadRankingSongs();
+    internal ListBox CategoryListForTests => CategoryList;
+    internal ListBox CategoryPlaylistsForTests => CategoryPlaylists;
+    internal ListBox CategorySongsForTests => CategorySongs;
     private TabPage CreateRankingPage()
     {
         var page = new TabPage("排行榜") { AccessibleName = "排行榜", Padding = new Padding(10) };
@@ -351,15 +357,19 @@ public partial class WinFormsShell : Form
         var refresh = CreateButton("刷新", 3, (_, _) => LoadRankings());
         RankingList = WinFormsUi.ListBox("排行榜", 4);
         RankingSongs = WinFormsUi.ListBox("排行榜歌曲", 5);
+        RankingSongsLoadMore = CreateButton("加载更多歌曲", 6, (_, _) => _ = LoadMoreRankingSongsAsync());
+        RankingSongsLoadMore.Name = RankingSongsLoadMore.AccessibleName = "RankingSongsLoadMore";
+        RankingSongsLoadMore.TabStop = false;
         sourceLabel.SetBounds(10, 14, 0, 0);
         RankingSource.SetBounds(60, 10, 150, 24);
         refresh.SetBounds(220, 9, 80, 26);
         RankingList.SetBounds(10, 44, 280, 520);
-        RankingSongs.SetBounds(300, 44, 650, 520);
-        page.Controls.AddRange(new Control[] { sourceLabel, RankingSource, refresh, RankingList, RankingSongs });
+        RankingSongs.SetBounds(300, 44, 650, 490);
+        RankingSongsLoadMore.SetBounds(300, 540, 160, 26);
+        page.Controls.AddRange(new Control[] { sourceLabel, RankingSource, refresh, RankingList, RankingSongs, RankingSongsLoadMore });
         RankingList.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) _ = LoadRankingSongs(); };
         RankingSongs.DoubleClick += (_, _) => _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking);
-        RankingSongs.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space) { e.Handled = true; _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking); } };
+        RankingSongs.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         var rankingMenu = new ContextMenu();
         rankingMenu.MenuItems.Add(new MenuItem("收藏整个榜单到在线收藏", (_, _) => FavoriteRanking()));
         RankingList.ContextMenu = rankingMenu;

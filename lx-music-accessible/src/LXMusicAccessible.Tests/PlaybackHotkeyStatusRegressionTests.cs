@@ -89,7 +89,8 @@ public sealed class PlaybackHotkeyStatusRegressionTests
         {
             using var form = new LyricsForm(new RecordingAnnouncer(), null!, _ => false);
             var text = form.Controls.OfType<TextBox>().Single();
-            Assert.Equal(AccessibleRole.None, text.AccessibleRole);
+            Assert.Equal(AccessibleRole.None, text.AccessibilityObject.Role);
+            Assert.Equal(AccessibleStates.Invisible, text.AccessibilityObject.State & AccessibleStates.Invisible);
         });
     }
 
