@@ -1067,6 +1067,33 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         RaiseSourcesChanged();
     }
 
+    /// <summary>设置唯一默认音源并立即持久化；保存失败时回滚并保持原默认音源。</summary>
+    public async Task<bool> SetDefaultSourceAsync(string id, CancellationToken cancellationToken = default)
+    {
+        var target = _sources.FirstOrDefault(source =>
+            string.Equals(source.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (target is null || target.TrustState == ScriptTrustState.Untrusted) return false;
+
+        var previous = _sources.Select(source => (Source: source, source.IsDefault)).ToArray();
+        foreach (var source in _sources)
+            source.IsDefault = string.Equals(source.Id, id, StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            foreach (var (source, wasDefault) in previous) source.IsDefault = wasDefault;
+            _logger.LogError(ex, "默认音源保存失败，已回滚: {Id}", id);
+            return false;
+        }
+
+        _defaultTouchedByUser = true;
+        ClearCache();
+        RaiseSourcesChanged();
+        return true;
+    }
+
     /// <summary>获取指定音源支持的音质列表</summary>
 
     public IReadOnlyList<ManualSourceInterface> GetPlaybackInterfaces(MusicInfo target)
@@ -1309,12 +1336,73 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         StartPersistence();
         RaiseSourcesChanged();
     }
+
+    /// <summary>禁用音源并立即持久化；保存失败时回滚启用状态。</summary>
+    public async Task<bool> DisableSourceAsync(MusicSource s, CancellationToken cancellationToken = default)
+    {
+        FrameworkCompatibility.ThrowIfNull(s);
+        var previousEnabled = s.IsEnabled;
+        s.IsEnabled = false;
+        try
+        {
+            await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            s.IsEnabled = previousEnabled;
+            _logger.LogError(ex, "音源禁用保存失败，已回滚: {Id}", s.Id);
+            return false;
+        }
+
+        ClearCache();
+        RaiseSourcesChanged();
+        return true;
+    }
+
+    /// <summary>删除音源并立即持久化；保存失败时恢复音源位置与已注册脚本。</summary>
+    public async Task<bool> RemoveSourceAsync(MusicSource s, CancellationToken cancellationToken = default)
+    {
+        FrameworkCompatibility.ThrowIfNull(s);
+        var index = _sources.IndexOf(s);
+        if (index < 0) return false;
+        var script = _scriptSource.GetScript(s.Id);
+        _sources.RemoveAt(index);
+        _scriptSource.Remove(s.Id);
+        try
+        {
+            await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _sources.Insert(index, s);
+            if (script?.RawScript is not null)
+                _scriptSource.RegisterVerified(script, ScriptMusicSource.ComputeSha256(script.RawScript));
+            _logger.LogError(ex, "音源删除保存失败，已恢复: {Id}", s.Id);
+            return false;
+        }
+
+        ClearCache();
+        RaiseSourcesChanged();
+        return true;
+    }
+
     private void ClearCache() { _searchSessions.Clear(); }
     public async Task<bool> UpdateSourceAsync(MusicSource s)
     {
+        var previousUpdateDate = s.LastUpdateDate;
         s.LastUpdateDate = DateTime.Now;
+        try
+        {
+            await PersistSourcesOrThrowAsync();
+        }
+        catch (Exception ex)
+        {
+            s.LastUpdateDate = previousUpdateDate;
+            _logger.LogError(ex, "音源更新保存失败，已回滚: {Id}", s.Id);
+            return false;
+        }
+
         ClearCache();
-        await PersistSourcesAsync();
         RaiseSourcesChanged();
         return true;
     }
@@ -1492,6 +1580,14 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex) { _logger.LogError(ex, "音源配置保存失败"); }
+    }
+
+    /// <summary>持久化全部音源配置，失败时向上抛出，供退出流程播报并保留既有数据</summary>
+    public async Task PersistSourcesOrThrowAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     private void StartPersistence() =>

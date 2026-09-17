@@ -151,24 +151,44 @@ public sealed class SavedPlaylistWorkflow(
     public async Task<SavedPlaylistResult> AddSongsAsync(IEnumerable<MusicInfo> songs)
     {
         FrameworkCompatibility.ThrowIfNull(songs);
-        var candidates = songs
-            .Where(song => song is not null
-                && !string.Equals(song.Source, "Local", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        if (candidates.Length == 0) return Failure("本地歌曲无需收藏，请收藏网络歌曲");
+        var candidates = songs.Where(song => song is not null).ToArray();
+        if (candidates.Length == 0) return Failure("没有可收藏的歌曲");
 
-        var selected = SelectedOrNull() ?? await data.GetOrCreateDefaultPlaylistAsync(local: false);
-        if (selected is null) return Failure("无法创建默认收藏歌单");
-        lock (_gate) _selected = selected;
-        var addition = await data.AddSongsToPlaylistAsync(selected.Id, candidates);
-        await LoadAsync();
-        return new(
-            Current,
-            addition.AddedCount == 0
+        // Local files have their own default playlist; both kinds are written durably here so the
+        // favourite survives a crash or an orderly shutdown instead of waiting for exit.
+        var remote = candidates.Where(song => !IsLocalSong(song)).ToArray();
+        var local = candidates.Where(IsLocalSong).ToArray();
+        var messages = new List<string>();
+
+        if (remote.Length > 0)
+        {
+            var selected = SelectedOrNull() ?? await data.GetOrCreateDefaultPlaylistAsync(local: false);
+            if (selected is null) return Failure("无法创建默认收藏歌单");
+            lock (_gate) _selected = selected;
+            var addition = await data.AddSongsToPlaylistAsync(selected.Id, remote);
+            messages.Add(addition.AddedCount == 0
                 ? $"所选歌曲已在在线收藏中：{selected.Name}"
                 : $"已添加 {addition.AddedCount} 首歌曲到在线收藏：{selected.Name}"
                     + (addition.SkippedCount == 0 ? string.Empty : $"，跳过 {addition.SkippedCount} 首重复歌曲"));
+        }
+
+        if (local.Length > 0)
+        {
+            var localPlaylist = await data.GetOrCreateDefaultPlaylistAsync(local: true);
+            if (localPlaylist is null) return Failure("无法创建本地歌曲歌单");
+            var addition = await data.AddSongsToPlaylistAsync(localPlaylist.Id, local);
+            messages.Add(addition.AddedCount == 0
+                ? $"所选歌曲已在本地歌曲中：{localPlaylist.Name}"
+                : $"已添加 {addition.AddedCount} 首歌曲到本地歌曲：{localPlaylist.Name}"
+                    + (addition.SkippedCount == 0 ? string.Empty : $"，跳过 {addition.SkippedCount} 首重复歌曲"));
+        }
+
+        await LoadAsync();
+        return new(Current, string.Join("；", messages));
     }
+
+    private static bool IsLocalSong(MusicInfo song) =>
+        string.Equals(song.Source, "Local", StringComparison.OrdinalIgnoreCase);
 
     public async Task<SavedPlaylistResult> RemoveSongAsync(MusicInfo music)
     {

@@ -410,9 +410,19 @@ public interface IMusicSourceService
     void DisableSource(MusicSource source);
 
     /// <summary>
+    /// 禁用音源并立即持久化；保存失败时回滚并返回 false
+    /// </summary>
+    Task<bool> DisableSourceAsync(MusicSource source, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// 删除音源
     /// </summary>
     void RemoveSource(MusicSource source);
+
+    /// <summary>
+    /// 删除音源并立即持久化；保存失败时恢复音源与脚本并返回 false
+    /// </summary>
+    Task<bool> RemoveSourceAsync(MusicSource source, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 更新音源
@@ -438,14 +448,29 @@ public interface IMusicSourceService
     void SetDefaultSource(string id);
 
     /// <summary>
+    /// 设置唯一默认音源并立即持久化；保存失败时回滚并返回 false
+    /// </summary>
+    Task<bool> SetDefaultSourceAsync(string id, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// 获取指定音源支持的音质列表，合并脚本源与内置源结果
     /// </summary>
     Task<List<string>> GetQualitiesForSourceAsync(string sourceId);
 
     /// <summary>
+    /// 加载持久化音源并刷新内置订阅
+    /// </summary>
+    Task InitializeScriptSourcesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// 持久化全部音源
     /// </summary>
     Task PersistSourcesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 持久化全部音源；失败时抛出异常，供退出流程播报并保留既有数据
+    /// </summary>
+    Task PersistSourcesOrThrowAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取已启用的音源

@@ -573,8 +573,26 @@ public partial class WinFormsShell
     {
         _playMode = (PlayMode)(((int)_playMode + 1) % 4);
         CurrentPlayModeText.Text = "播放模式：" + PlayModeName(_playMode);
-        _services.Settings?.Edit(settings => settings.DefaultPlayMode = _playMode);
+        var edit = _services.Settings?.Edit(settings => settings.DefaultPlayMode = _playMode);
         Announce(PlayModeName(_playMode), "play-mode", AnnouncementKind.Status, AnnouncementSpeech.Always);
+        if (edit is not null) _ = SaveSettingsAsync(edit);
+    }
+
+    /// <summary>Persists a settings edit at the moment of the user action and reports a failed write.</summary>
+    private async Task SaveSettingsAsync(SettingsEditResult edit)
+    {
+        var settings = _services.Settings;
+        if (settings is null || !edit.Accepted) return;
+        try
+        {
+            var result = await settings.SaveAsync(edit.State);
+            if (result.Succeeded) return;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        Announce("设置保存失败，将在退出时重试。", "settings", AnnouncementKind.Error);
     }
 
     private async void DownloadSelected()
@@ -817,7 +835,12 @@ public partial class WinFormsShell
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (e.CloseReason == CloseReason.UserClosing && _services.Settings?.Current.Settings.HideToTrayOnAltF4 == true)
+        // The hide-on-close preference only governs the user closing the window. An explicit exit
+        // (tray menu, Ctrl+Q, Alt+F4 after the window is gone) must always be able to close it,
+        // otherwise the message loop never ends and the pending save never runs.
+        if (e.CloseReason == CloseReason.UserClosing
+            && _services.Desktop?.AllowWindowClose == false
+            && _services.Settings?.Current.Settings.HideToTrayOnAltF4 == true)
         {
             e.Cancel = true;
             _services.Desktop?.ExecuteAsync(DesktopCommand.Escape);

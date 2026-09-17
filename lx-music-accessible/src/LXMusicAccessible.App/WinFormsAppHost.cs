@@ -36,27 +36,6 @@ public enum DesktopFocusTarget { None, PreviousControl, PrimaryContent, MainWind
 
 public readonly record struct DesktopCommandResult(DesktopLifecycleState State, DesktopFocusTarget FocusTarget = DesktopFocusTarget.None, bool Applied = true);
 
-public sealed class ApplicationShutdownRequest : IApplicationShutdown
-{
-    private Func<Task>? _request;
-    public void Bind(Func<Task> request) => _request = request;
-    public Task RequestAsync() => _request?.Invoke() ?? Task.CompletedTask;
-}
-
-public sealed record ApplicationShutdownSnapshot(SettingsEditState Settings);
-
-public interface IApplicationShutdown
-{
-    Task RequestAsync();
-}
-
-public interface IApplicationShutdownParticipant
-{
-    ApplicationShutdownSnapshot CaptureAndBlock();
-    Task PersistAsync(ApplicationShutdownSnapshot snapshot, CancellationToken cancellationToken);
-}
-
-internal interface IShutdownFeedback { void Report(string message); }
 
 /// <summary>Owns tray visibility, window-group hiding and desktop playback commands.</summary>
 public sealed class DesktopLifecycleWorkflow : IDisposable
@@ -65,7 +44,9 @@ public sealed class DesktopLifecycleWorkflow : IDisposable
     private readonly IApplicationShutdown _shutdown;
     private readonly IPlaybackCoordinator _playback;
     private readonly IAccessibleAnnouncer _announcer;
-    private DesktopLifecycleState _state = DesktopLifecycleState.Visible;
+    private readonly object _exitGate = new();
+    private volatile DesktopLifecycleState _state = DesktopLifecycleState.Visible;
+    private Task<DesktopCommandResult>? _exit;
     private bool _disposed;
 
     public DesktopLifecycleWorkflow(
@@ -82,7 +63,12 @@ public sealed class DesktopLifecycleWorkflow : IDisposable
     }
 
     public DesktopLifecycleState State => _state;
-    internal bool AllowWindowClose => _state == DesktopLifecycleState.Exiting;
+
+    /// <summary>Outcome of the single shutdown request, for diagnostics and tests.</summary>
+    internal ShutdownResult? LastShutdownResult { get; private set; }
+
+    /// <summary>Programmatic exit owns the window close; the hide-on-close preference only applies to the user.</summary>
+    internal bool AllowWindowClose => _state != DesktopLifecycleState.Visible;
     public void Attach(WinFormsShell shell) => _desktop.Attach(shell);
 
     public Task<DesktopCommandResult> ExecuteAsync(DesktopCommand command, bool hideOnAltF4 = false) => command switch
@@ -134,12 +120,27 @@ public sealed class DesktopLifecycleWorkflow : IDisposable
         return new(_state);
     }
 
-    private async Task<DesktopCommandResult> ExitAsync()
+    private Task<DesktopCommandResult> ExitAsync()
     {
+        lock (_exitGate) return _exit ??= ExitCoreAsync();
+    }
+
+    private async Task<DesktopCommandResult> ExitCoreAsync()
+    {
+        // The shutdown pipeline never throws: it persists every pending change, releases the
+        // application host and reports a failure. Exit therefore always completes and a failed
+        // save leaves the previously stored data intact.
         PrepareForShutdown();
-        await _shutdown.RequestAsync();
-        _state = DesktopLifecycleState.Closed;
-        _desktop.CompleteExit();
+        var result = await _shutdown.RequestAsync().ConfigureAwait(false);
+        try
+        {
+            _state = DesktopLifecycleState.Closed;
+            _desktop.CompleteExit();
+        }
+        finally
+        {
+            LastShutdownResult = result;
+        }
         return new(_state);
     }
 
@@ -219,7 +220,14 @@ public sealed class WinFormsDesktopIntegration : IDisposable
 
     public void CompleteExit()
     {
-        if (_shell is { IsDisposed: false }) _shell.Close();
+        var shell = _shell;
+        if (shell is { IsDisposed: false })
+        {
+            // The exit workflow can finish on a background thread. Closing the window from there
+            // disposes it without ending the message loop, so marshal onto the owning UI thread.
+            if (shell.IsHandleCreated && shell.InvokeRequired) shell.BeginInvoke(new Action(shell.Close));
+            else shell.Close();
+        }
         _tray?.Dispose();
         _tray = null;
     }
@@ -364,6 +372,7 @@ public static class ApplicationHost
                     sp.GetRequiredService<IPlaybackCoordinator>(),
                     sp.GetRequiredService<IAccessibleAnnouncer>()));
                 services.AddSingleton<IApplicationShutdownParticipant, ShellShutdownParticipant>();
+                services.AddSingleton<IShutdownFeedback, ShutdownFeedback>();
                 services.AddSingleton<WinFormsShell>(sp => new WinFormsShell(new WinFormsShellServices
                 {
                     Announcer = sp.GetRequiredService<IAccessibleAnnouncer>(),
@@ -402,7 +411,7 @@ internal sealed class ShellShutdownParticipant(
     {
         var saved = await settings.SaveAsync(snapshot.Settings, cancellationToken);
         if (!saved.Succeeded) throw new InvalidOperationException("Settings persistence failed");
-        await sources.PersistSourcesAsync(cancellationToken);
+        await sources.PersistSourcesOrThrowAsync(cancellationToken);
     }
 }
 
@@ -435,7 +444,8 @@ internal sealed class ProductionStartupInitializer(string dataDirectory) : IStar
         _ = services.GetRequiredService<IAccessibleAnnouncer>();
         _ = services.GetRequiredService<IPlaybackCoordinator>();
         _ = services.GetRequiredService<IAudioPlaybackControl>();
-        _ = services.GetRequiredService<IMusicSourceService>();
+        var sources = services.GetRequiredService<IMusicSourceService>();
+        await sources.InitializeScriptSourcesAsync(cancellationToken);
         _ = services.GetRequiredService<IDownloadWorkflow>();
         _ = services.GetRequiredService<ILyricService>();
         _ = services.GetRequiredService<LyricsWorkflow>();
@@ -457,7 +467,9 @@ public sealed class ApplicationRuntime : IAsyncDisposable
     private readonly IStartupInitializer _initializer;
     private readonly IStartupFailurePresenter _failurePresenter;
     private readonly Action<IServiceCollection>? _replaceAdapters;
+    private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(15);
     private IHost? _host;
+    private ApplicationShutdownCoordinator? _shutdown;
     private bool _started;
     private bool _disposed;
 
@@ -485,6 +497,7 @@ public sealed class ApplicationRuntime : IAsyncDisposable
                 _host = _createHost();
                 await _host.StartAsync(cancellationToken);
                 await _initializer.InitializeAsync(_host.Services, cancellationToken);
+                BindShutdown(_host);
                 var shell = _host.Services.GetRequiredService<WinFormsShell>();
                 _host.Services.GetRequiredService<DesktopLifecycleWorkflow>().Attach(shell);
                 shell.Show();
@@ -493,6 +506,7 @@ public sealed class ApplicationRuntime : IAsyncDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                _shutdown = null;
                 if (_host is not null) await ApplicationHost.ReleaseAsync(_host, cancellationToken);
                 _host = null;
                 if (await _failurePresenter.ShowAsync(ex, cancellationToken) == StartupFailureDecision.Exit)
@@ -501,11 +515,41 @@ public sealed class ApplicationRuntime : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Connects the exit path to the single shutdown pipeline before the main window appears, so a
+    /// tray exit, a menu exit and the window close button all persist the same pending state.
+    /// </summary>
+    private void BindShutdown(IHost host)
+    {
+        var request = host.Services.GetService<ApplicationShutdownRequest>();
+        if (request is null || request.IsBound) return;
+
+        var services = host.Services;
+        var coordinator = new ApplicationShutdownCoordinator(
+            () => services.GetRequiredService<IApplicationShutdownParticipant>(),
+            token => services.GetRequiredService<BackgroundWorkHost>().StopAsync(token),
+            token => ApplicationHost.ReleaseAsync(host, token),
+            services.GetRequiredService<IShutdownFeedback>(),
+            services.GetRequiredService<ILogger<ApplicationShutdownCoordinator>>(),
+            ShutdownTimeout);
+        request.Bind(coordinator.RequestAsync);
+        _shutdown = coordinator;
+    }
+
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         if (_disposed) return;
         var host = Interlocked.Exchange(ref _host, null);
         _started = false;
+        var shutdown = _shutdown;
+        if (shutdown is not null)
+        {
+            // The coordinator persists the pending state and releases the host exactly once, so the
+            // window close button and the explicit exit command share one durable save.
+            await shutdown.RequestAsync();
+            return;
+        }
+
         if (host is not null) await ApplicationHost.ReleaseAsync(host, cancellationToken);
     }
 

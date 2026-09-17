@@ -119,11 +119,15 @@ public class SourceManagerForm : Form
         catch (Exception ex) { WinFormsUi.Error(this, ex, "导入音源"); }
     }
 
-    private void SetDefault()
+    private async void SetDefault()
     {
         var source = Selected();
         if (source is null) return;
-        _sources.SetDefaultSource(source.Id);
+        if (!await _sources.SetDefaultSourceAsync(source.Id))
+        {
+            Announce($"默认音源保存失败：{source.Name}", "source-default", AnnouncementKind.Error);
+            return;
+        }
         RefreshSources();
         Announce($"默认音源：{source.Name}", "source-default", AnnouncementKind.Success);
     }
@@ -137,11 +141,15 @@ public class SourceManagerForm : Form
         Announce(result.Message, "source-enable", result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
-    private void Disable()
+    private async void Disable()
     {
         var source = Selected();
         if (source is null) return;
-        _sources.DisableSource(source);
+        if (!await _sources.DisableSourceAsync(source))
+        {
+            Announce($"禁用音源保存失败：{source.Name}", "source-enable", AnnouncementKind.Error);
+            return;
+        }
         RefreshSources();
         Announce($"已禁用音源：{source.Name}", "source-enable");
     }
@@ -163,11 +171,15 @@ public class SourceManagerForm : Form
         Announce(ok ? $"音源更新成功：{source.Name}" : $"音源更新失败：{source.Name}", "source-update", ok ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
-    private void Delete()
+    private async void Delete()
     {
         var source = Selected();
         if (source is null || !WinFormsUi.Confirm(this, $"确定要删除音源“{source.Name}”吗？")) return;
-        _sources.RemoveSource(source);
+        if (!await _sources.RemoveSourceAsync(source))
+        {
+            Announce($"删除音源保存失败：{source.Name}", "source-delete", AnnouncementKind.Error);
+            return;
+        }
         RefreshSources();
         Announce($"已删除音源：{source.Name}", "source-delete", AnnouncementKind.Success);
     }

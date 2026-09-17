@@ -41,6 +41,7 @@ internal static class Program
                 return 0;
             }
             StartActivationListener();
+            AppDataPaths.MigrateLegacyNestedDataDirectory();
 
             await using var runtime = ApplicationHost.Create();
             var outcome = runtime.StartAsync().GetAwaiter().GetResult();

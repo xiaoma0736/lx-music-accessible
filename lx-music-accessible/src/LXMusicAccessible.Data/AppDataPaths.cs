@@ -13,13 +13,18 @@ public static class AppDataPaths
     private const string LegacyPointerFileName = "data_dir.txt";
     private const string DefaultOwnershipFileName = ".lxmusic-default-owner.json";
     private const int PointerSchemaVersion = 1;
+    private const string DatabaseFileName = "lxmusic.db";
+    private static readonly string[] DatabaseFileSuffixes = { string.Empty, "-wal", "-shm", "-journal" };
+
+    /// <summary>The %LocalAppData% root that holds the default data directory and its ownership record.</summary>
+    private static string LocalAppDataRoot =>
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
     /// <summary>Default data directory under %LocalAppData%.</summary>
-    public static string DefaultDataDir =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DefaultDirName);
+    public static string DefaultDataDir => Path.Combine(LocalAppDataRoot, DefaultDirName);
 
     /// <summary>Returns a verified owned directory, a safe legacy custom directory, or the default.</summary>
-    public static string ResolveDataDir() => ResolveDataDir(DefaultDataDir);
+    public static string ResolveDataDir() => ResolveDataDir(LocalAppDataRoot);
 
     public static string ResolveDataDir(string localApplicationDataDirectory)
     {
@@ -54,10 +59,75 @@ public static class AppDataPaths
         return defaultDirectory;
     }
     /// <summary>
+    /// Adopts data left behind by a build that nested the default directory inside itself
+    /// (%LocalAppData%\lxmusic\lxmusic). Idempotent and safe to call on every start.
+    /// </summary>
+    public static int MigrateLegacyNestedDataDirectory() =>
+        MigrateLegacyNestedDataDirectory(LocalAppDataRoot);
+
+    /// <summary>
+    /// Moves a double-nested legacy data directory into the conventional one and returns how many
+    /// entries moved. Never overwrites a newer database or an existing entry, and never throws.
+    /// </summary>
+    public static int MigrateLegacyNestedDataDirectory(string localApplicationDataDirectory)
+    {
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(localApplicationDataDirectory);
+        try
+        {
+            var root = Path.GetFullPath(localApplicationDataDirectory);
+            var directory = Path.Combine(root, DefaultDirName);
+            var nested = Path.Combine(directory, DefaultDirName);
+            if (!Directory.Exists(nested)) return 0;
+
+            var nestedDatabase = Path.Combine(nested, DatabaseFileName);
+            if (!File.Exists(nestedDatabase)) return 0;
+
+            var targetDatabase = Path.Combine(directory, DatabaseFileName);
+            if (File.Exists(targetDatabase)
+                && File.GetLastWriteTimeUtc(targetDatabase) >= File.GetLastWriteTimeUtc(nestedDatabase))
+            {
+                return 0;
+            }
+
+            Directory.CreateDirectory(directory);
+            var moved = 0;
+            foreach (var suffix in DatabaseFileSuffixes)
+            {
+                var source = nestedDatabase + suffix;
+                if (!File.Exists(source)) continue;
+                FrameworkCompatibility.Move(source, targetDatabase + suffix, overwrite: true);
+                moved++;
+            }
+
+            foreach (var entry in Directory.EnumerateFileSystemEntries(nested))
+            {
+                var name = Path.GetFileName(entry);
+                if (IsDatabaseFile(name)) continue;
+                var destination = Path.Combine(directory, name);
+                if (Directory.Exists(destination) || File.Exists(destination)) continue;
+                FrameworkCompatibility.Move(entry, destination, overwrite: false);
+                moved++;
+            }
+
+            if (!Directory.EnumerateFileSystemEntries(nested).Any()) Directory.Delete(nested);
+            Debug.WriteLine($"Adopted {moved} entries from the nested data directory.");
+            return moved;
+        }
+        catch (Exception ex) when (ex is IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or NotSupportedException)
+        {
+            Debug.WriteLine($"Nested data directory adoption failed: {ex.GetType().Name}");
+            return 0;
+        }
+    }
+
+    /// <summary>
     /// Establishes ownership only for the conventional default directory. Legacy custom directories
     /// remain usable but unowned, so cleanup will preserve them.
     /// </summary>
-    public static string PrepareDataDir() => PrepareDataDir(DefaultDataDir);
+    public static string PrepareDataDir() => PrepareDataDir(LocalAppDataRoot);
 
     public static string PrepareDataDir(string localApplicationDataDirectory)
     {
@@ -255,7 +325,7 @@ public static class AppDataPaths
         false);
 
     private static string DefaultOwnershipFilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        LocalAppDataRoot,
         DefaultOwnershipFileName);
 
     private static void WriteDefaultOwnership(string localApplicationDataDirectory, string defaultDirectory, Guid ownershipId)
@@ -321,6 +391,10 @@ public static class AppDataPaths
             return false;
         }
     }
+
+    private static bool IsDatabaseFile(string fileName) =>
+        DatabaseFileSuffixes.Any(suffix =>
+            (DatabaseFileName + suffix).Equals(fileName, StringComparison.OrdinalIgnoreCase));
 
     private static StringComparison PathComparison =>
         FrameworkCompatibility.IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
