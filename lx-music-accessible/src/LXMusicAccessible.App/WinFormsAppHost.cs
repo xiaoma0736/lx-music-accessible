@@ -291,8 +291,7 @@ public static class ApplicationHost
         return new ApplicationRuntime(
             () => CreateBuilder(dataDirectory).Build(),
             new ProductionStartupInitializer(dataDirectory),
-            new WinFormsStartupFailurePresenter(),
-            services => services.AddSingleton<ApplicationShutdownRequest>());
+            new WinFormsStartupFailurePresenter());
     }
 
     internal static IHostBuilder CreateBuilder(string dataDirectory, Action<IServiceCollection>? replaceAdapters = null)
@@ -356,6 +355,7 @@ public static class ApplicationHost
                 services.AddSingleton<IPlaylistLoginWindowFactory, PlaylistLoginWindowFactory>();
                 services.AddSingleton<ApplicationWindowFactory>();
                 services.AddSingleton<AnnouncementToggleService>();
+                services.AddSingleton<ApplicationShutdownRequest>();
                 services.AddSingleton<WinFormsDesktopIntegration>();
                 services.AddSingleton(sp => new DesktopLifecycleWorkflow(
                     sp.GetRequiredService<WinFormsDesktopIntegration>(),
