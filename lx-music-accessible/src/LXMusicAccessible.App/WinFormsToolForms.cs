@@ -421,7 +421,7 @@ public class PlaylistImportForm : Form
             _playlists.Items.Clear();
             foreach (var playlist in _remotePlaylists)
                 _playlists.Items.Add(new ObjectBox<RemotePlaylist>(playlist.Name, playlist));
-            _status.Text = _remotePlaylists.Count == 0 ? "没有找到个人歌单。" : $"已加载 {_remotePlaylists.Count} 个歌单，回车可预览。";
+            _status.Text = _remotePlaylists.Count == 0 ? "没有找到个人歌单。" : "已加载个人歌单，回车可预览。";
             Announce(_status.Text, "playlist-import", AnnouncementKind.Success);
             ShowPlaylists();
         }
@@ -438,7 +438,7 @@ public class PlaylistImportForm : Form
             foreach (var song in songs) _songs.Items.Add(new ObjectBox<MusicInfo>(song.AccessibleName, song));
             _songs.EndUpdate();
             _attachSongList?.Invoke(_songs);
-            _status.Text = $"已预览 {songs.Count} 首歌曲。";
+            _status.Text = songs.Count == 0 ? "没有找到歌曲。" : "已预览歌曲。";
             Announce(_status.Text, "playlist-preview");
             _songs.Focus();
         }

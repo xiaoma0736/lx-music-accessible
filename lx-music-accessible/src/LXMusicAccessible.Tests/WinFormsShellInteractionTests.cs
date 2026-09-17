@@ -97,6 +97,7 @@ public sealed class WinFormsShellInteractionTests
     [InlineData("categories")]
     [InlineData("rankings")]
     [InlineData("browse-status")]
+    [InlineData("music-browse:1")]
     [InlineData("search-results")]
     [InlineData("settings")]
     [InlineData("welcome")]

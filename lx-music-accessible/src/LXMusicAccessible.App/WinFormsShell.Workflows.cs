@@ -344,10 +344,10 @@ public partial class WinFormsShell
                     CategoryPlaylists.Items.Add(new ObjectBox<Playlist>(playlist.Name, playlist));
                 RestoreSelection(CategoryPlaylists, items, selected);
                 UpdateLoadMore(CategoryPlaylistsLoadMore, CategoryPlaylists, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, items.Count));
-                SetBrowseStatus("加载完成", AnnouncementKind.Success);
+                SetBrowseStatus(result.Message);
                 if (!append && ContainsFocus) CategoryPlaylists.Focus();
             }
-            else SetBrowseStatus(result.Message, AnnouncementKind.Error);
+            else SetBrowseStatus(result.Message);
         }
         finally
         {
@@ -377,10 +377,10 @@ public partial class WinFormsShell
                 WinFormsUi.FillSongs(CategorySongs, _categorySongs);
                 RestoreSelection(CategorySongs, _categorySongs, selected);
                 UpdateLoadMore(CategorySongsLoadMore, CategorySongs, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, _categorySongs.Count));
-                SetBrowseStatus("加载完成", AnnouncementKind.Success);
+                SetBrowseStatus(result.Message);
                 if (!append && ContainsFocus) CategorySongs.Focus();
             }
-            else SetBrowseStatus(result.Message, AnnouncementKind.Error);
+            else SetBrowseStatus(result.Message);
         }
         finally
         {
@@ -432,10 +432,15 @@ public partial class WinFormsShell
         if (index >= 0) list.SelectedIndex = index;
     }
 
-    private void SetBrowseStatus(string message, AnnouncementKind kind)
+    /// <summary>
+    /// Mirrors a browse outcome into the visible status bar. The browse workflow announces the same
+    /// message through the shared announcer with a fresh music-browse:{n} activity id, so the shell must
+    /// not post a second terminal announcement for it: the announcer would deliver the first outcome
+    /// twice and its terminal dedupe would then swallow every later one.
+    /// </summary>
+    private void SetBrowseStatus(string message)
     {
         if (!IsDisposed && !string.IsNullOrWhiteSpace(message)) StatusText.Text = message;
-        Announce(message, "browse-status", kind);
     }
 
     private void LoadRankings()
@@ -474,10 +479,10 @@ public partial class WinFormsShell
                 WinFormsUi.FillSongs(RankingSongs, _rankingSongs);
                 RestoreSelection(RankingSongs, _rankingSongs, selected);
                 UpdateLoadMore(RankingSongsLoadMore, RankingSongs, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, _rankingSongs.Count));
-                SetBrowseStatus("加载完成", AnnouncementKind.Success);
+                SetBrowseStatus(result.Message);
                 if (!append && ContainsFocus) RankingSongs.Focus();
             }
-            else SetBrowseStatus(result.Message, AnnouncementKind.Error);
+            else SetBrowseStatus(result.Message);
         }
         finally
         {

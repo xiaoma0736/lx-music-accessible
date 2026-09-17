@@ -29,6 +29,9 @@ namespace LXMusicAccessible.Tests;
 /// </summary>
 public sealed class Issue66Tests
 {
+    /// <summary>已加载条目数（如“3 项”、“2 首”、“5 个歌单”、“4 条”）不得进入浏览页的播报。</summary>
+    private static readonly Regex ForbiddenItemCount = new(@"\d+\s*(项|首|个|条)", RegexOptions.Compiled);
+
     private sealed class NoPlayback : IPlaybackCoordinator
     {
         public bool IsPlaying => false;
@@ -304,6 +307,7 @@ public sealed class Issue66Tests
             Assert.DoesNotContain("已加载", message, StringComparison.Ordinal);
             Assert.DoesNotContain("加载了", message, StringComparison.Ordinal);
             Assert.False(Regex.IsMatch(message, "\\d"), message);
+            Assert.False(ForbiddenItemCount.IsMatch(message), message);
         });
     }
     [Fact]
