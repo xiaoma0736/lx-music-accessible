@@ -9,9 +9,9 @@
     <TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Net48 binds the patched 8.0.6 netstandard2.0 asset; Directory.Build.targets selects that assembly. -->
-    <!-- Net48 binds the patched 8.0.6 netstandard2.0 asset; Directory.Build.targets selects that assembly. -->
-    <PackageReference Include="System.Text.Json" Version="8.0.6" GeneratePathProperty="true" ExcludeAssets="compile;runtime" />
+    <!-- Net48 uses the patched 8.0.6 net462 asset and MSBuild creates binding redirects. -->
+    <!-- Net48 uses the patched 8.0.6 net462 asset and MSBuild creates binding redirects. -->
+    <PackageReference Include="System.Text.Json" Version="8.0.6" />
     <PackageReference Include="System.Private.Uri" Version="4.3.2" />
   </ItemGroup>
 </Project>

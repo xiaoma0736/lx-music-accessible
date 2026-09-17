@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -31,14 +31,14 @@ public sealed class Net48MigrationTests
     }
 
     [Fact]
-    public void Net48_core_binds_to_system_text_json_assembly_version_available_to_net8_hosts()
+    public void Net48_core_binds_to_patched_system_text_json_assembly()
     {
         var corePath = Path.Combine(SourceDirectory(), "LXMusicAccessible.Core", "bin", "Release", "net48", "LXMusicAccessible.Core.dll");
         Assert.True(File.Exists(corePath), $"Build Core Release first: {corePath}");
 
         var references = Assembly.LoadFrom(corePath).GetReferencedAssemblies();
         var reference = Assert.Single(references, item => item.Name == "System.Text.Json");
-        Assert.Equal(new Version(8, 0, 0, 0), reference.Version);
+        Assert.Equal(new Version(8, 0, 0, 6), reference.Version);
     }
 
     [Fact]

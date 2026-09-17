@@ -9,6 +9,25 @@ namespace LXMusicAccessible.Tests;
 
 public sealed class ReleasePackagingTests
 {
+    [Fact]
+    public void System_text_json_uses_patched_net462_asset_with_binding_redirect()
+    {
+        var propsPath = Path.Combine(RepositoryDirectory(), "Directory.Build.props");
+        var targetsPath = Path.Combine(RepositoryDirectory(), "Directory.Build.targets");
+        var appPath = Path.Combine(SourceDirectory(), "LXMusicAccessible.App", "LXMusicAccessible.App.csproj");
+        var props = File.ReadAllText(propsPath);
+        var targets = File.ReadAllText(targetsPath);
+        var app = File.ReadAllText(appPath);
+
+        Assert.Contains("<PackageReference Include=\"System.Text.Json\" Version=\"8.0.6\" />", props);
+        Assert.DoesNotContain("ExcludeAssets=\"compile;runtime\"", props);
+        Assert.DoesNotContain("lib\\netstandard2.0\\System.Text.Json.dll", targets);
+        Assert.Contains("<AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>", app);
+        Assert.Contains("<GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>", app);
+        var releaseScript = File.ReadAllText(Path.Combine(RepositoryDirectory(), "build_release.ps1"));
+        Assert.Contains("Assert-SystemTextJsonRuntime", releaseScript);
+        Assert.Contains("8.0.0.6", releaseScript);
+    }
     private static string SourceDirectory()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

@@ -134,6 +134,25 @@ function Assert-SqliteVersion([string]$Directory, [Version]$MinimumVersion) {
     return $version.ToString()
 }
 
+function Assert-SystemTextJsonRuntime([string]$Application) {
+    $assemblyPath = Join-Path $Application "System.Text.Json.dll"
+    if (-not (Test-Path -LiteralPath $assemblyPath -PathType Leaf)) {
+        throw "System.Text.Json runtime is missing: $assemblyPath"
+    }
+    $assemblyVersion = [System.Reflection.AssemblyName]::GetAssemblyName((Resolve-Path -LiteralPath $assemblyPath)).Version
+    if ($assemblyVersion -ne [version]"8.0.0.6") {
+        throw "Expected System.Text.Json 8.0.0.6, found $assemblyVersion"
+    }
+
+    $configPath = Get-ChildItem -LiteralPath $Application -Filter "*.exe.config" | Select-Object -First 1
+    if ($null -eq $configPath) {
+        throw "Application binding configuration is missing in $Application"
+    }
+    $config = [System.IO.File]::ReadAllText($configPath.FullName)
+    if ($config -notmatch '<bindingRedirect oldVersion="0\.0\.0\.0-[^"]+" newVersion="8\.0\.0\.6" />') {
+        throw "System.Text.Json binding redirect from 8.0.0.5 to 8.0.0.6 is missing."
+    }
+}
 function Invoke-Installer([string]$Installer, [string[]]$Arguments, [string]$FailureMessage) {
     & $Installer @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$FailureMessage ExitCode=$LASTEXITCODE" }
@@ -229,6 +248,7 @@ if (-not (Test-Path -LiteralPath $setupExecutable -PathType Leaf)) {
     throw "Installer executable was not produced: $setupExecutable"
 }
 Assert-Payload $application $requiredPayload
+Assert-SystemTextJsonRuntime $application
 Assert-NativeArchitecture $application $nativeFiles
 Assert-NativeArchitecture $setupOutput @("LXMusicAccessible.Setup.exe")
 $sqliteVersion = Assert-SqliteVersion $application $minimumSqliteVersion
