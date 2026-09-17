@@ -78,6 +78,24 @@ public sealed class InstallDirectoryOwnershipTests
     }
 
     [Fact]
+    public void Ownership_json_contract_remains_upgrade_compatible()
+    {
+        using var fixture = new TemporaryDirectory();
+        using var payload = CreateZip(("app.exe", "owned"), ("sub/leaf.txt", "leaf"));
+        var installed = InstallDirectoryOwnership.InstallFromZip(payload, fixture.Path);
+        var markerText = File.ReadAllText(Path.Combine(installed.Path, InstallDirectoryOwnership.MarkerFileName));
+        var manifestText = File.ReadAllText(Path.Combine(installed.Path, InstallDirectoryOwnership.ManifestFileName));
+
+        Assert.Contains("\"ApplicationId\"", markerText);
+        Assert.Contains("\"SchemaVersion\"", markerText);
+        Assert.Contains("\"OwnershipId\"", markerText);
+        Assert.Contains("\"DirectoryPath\"", markerText);
+        Assert.Contains("\"Files\"", manifestText);
+        Assert.Contains("\"RelativePath\"", manifestText);
+        Assert.Contains("\"Sha256\"", manifestText);
+
+        Assert.True(InstallDirectoryOwnership.Clean(installed.Path, installed.OwnershipId).Succeeded);
+    }
     public void Forged_marker_and_wrong_identifier_are_rejected_before_file_deletion()
     {
         using var fixture = new TemporaryDirectory();

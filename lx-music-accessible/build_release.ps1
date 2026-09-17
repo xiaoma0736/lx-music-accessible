@@ -218,8 +218,7 @@ Invoke-DotNet @(
     "publish", $setupProject,
     "--configuration", "Release",
     "--runtime", "win-x64",
-    "--self-contained", "true",
-    "-p:PublishSingleFile=true",
+    "--self-contained", "false",
     "-p:InstallerPayloadDirectory=$application",
     "-p:InstallerPayloadArchive=$payloadArchive",
     "--output", $setupOutput

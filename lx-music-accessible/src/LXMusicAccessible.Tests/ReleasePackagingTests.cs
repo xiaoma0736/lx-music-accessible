@@ -41,6 +41,7 @@ public sealed class ReleasePackagingTests
         var path = Path.Combine(SourceDirectory(), "LXMusicAccessible.Setup", "LXMusicAccessible.Setup.csproj");
         var project = XDocument.Load(path).Root!;
 
+        Assert.Equal("net48", project.Elements("PropertyGroup").Elements("TargetFramework").Single().Value);
         Assert.Equal("x64", project.Elements("PropertyGroup").Elements("PlatformTarget").Single().Value);
         Assert.Equal("3.0.0", project.Elements("PropertyGroup").Elements("Version").Single().Value);
     }
@@ -55,6 +56,8 @@ public sealed class ReleasePackagingTests
         Assert.Contains("app-framework-dependent", script);
         Assert.Contains("win-x64-framework-dependent.zip", script);
         Assert.DoesNotContain("app-self-contained", script);
+        Assert.DoesNotContain("\"--self-contained\", \"true\"", script);
+        Assert.DoesNotContain("\"-p:PublishSingleFile=true\"", script);
         Assert.DoesNotContain("win-x64-self-contained.zip", script);
         Assert.DoesNotContain("\"publish\", $appProject", script);
 
@@ -74,5 +77,13 @@ public sealed class ReleasePackagingTests
         Assert.Contains("DotNetFrameworkRequirement.Evaluate()", setup);
         Assert.Contains("WriteRuntimeDiagnostics", setup);
         Assert.Contains("DotNetFrameworkRequirement.DownloadUrl", setup);
+        Assert.Contains("RunInstaller(args)", setup);
+        Assert.Contains("catch (FileNotFoundException", setup);
+        Assert.Contains("MissingFile", setup);
+        var setupProjectPath = Path.Combine(SourceDirectory(), "LXMusicAccessible.Setup", "LXMusicAccessible.Setup.csproj");
+        var setupProject = File.ReadAllText(setupProjectPath);
+        Assert.Contains("LXMusicAccessible.Core\\DotNetFrameworkRequirement.cs", setupProject);
+        Assert.Contains("LXMusicAccessible.Core\\InstallDirectoryOwnership.cs", setupProject);
+        Assert.DoesNotContain("<ProjectReference Include=\"..\\LXMusicAccessible.Core\\LXMusicAccessible.Core.csproj\" />", setupProject);
     }
 }

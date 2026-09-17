@@ -16,6 +16,31 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
+        try
+        {
+            return RunInstaller(args);
+        }
+        catch (FileNotFoundException ex)
+        {
+            Console.Error.WriteLine(
+                "InstallerStartupException=" + ex.GetType().FullName +
+                "; MissingFile=" + (ex.FileName ?? "<null>") +
+                "; FusionLog=" + (ex.FusionLog ?? "<null>"));
+            return 101;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                "InstallerStartupException=" + ex.GetType().FullName +
+                "; Message=" + ex.Message +
+                "; Stack=" + ex.StackTrace);
+            return 101;
+        }
+    }
+
+    [STAThread]
+    static int RunInstaller(string[] args)
+    {
         if (args.Length == 0 || (args.Length > 0 && args[0] == "--install-parent"))
         {
             var runtimeCheck = DotNetFrameworkRequirement.Evaluate();

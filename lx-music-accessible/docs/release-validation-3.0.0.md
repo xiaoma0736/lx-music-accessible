@@ -7,7 +7,7 @@
 - 产品版本：3.0.0；应用：.NET Framework 4.8 x64 原生 WinForms；发布：Windows x64。
 - #58 业务层迁移、#59 WinForms 全量宿主、#60 LX 音源兼容、#61 五平台官方歌单、#62 WinForms 无障碍与键盘、#63 数据/安装器/发布已关闭。
 - 自动化测试已覆盖上述实现区域：`Net48MigrationTests`、`WinFormsIssue59Tests`、`WinFormsAccessibilityAuditTests`、`LxScriptRuntimeCompatibilityTests`、`OfficialPlaylistProviderTests`、`MusicBrowsePagingTests`、`WinFormsPlaylistPagingTests`、`LegacyDataCompatibilityTests`、`DotNetFrameworkRequirementTests` 和 `ReleasePackagingTests`。
-- 3.0 不提供应用 self-contained .NET 8 产物；安装器是独立的 x64 启动工具，其内嵌的应用载荷仍是 .NET Framework 4.8 框架依赖载荷。
+- 3.0 不提供应用 self-contained .NET 8 产物；安装器和应用均为 .NET Framework 4.8 x64 框架依赖程序；安装器启动时检测目标机运行时。
 
 ## 运行时、升级与安装器行为
 
@@ -31,11 +31,11 @@ SHA-256 均为小写。`release-manifest.json` 记录 15 个载荷文件及以�
 
 | 产物 | 字节 | SHA-256 |
 | --- | ---: | --- |
-| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 22,033,844 | `c99b6c8b20f9c5a60f29be15c2eb2ac18bc737e76db60fd9d35864ca7ca5856b` |
-| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 178,071,518 | `653893cd9c7eb10b68c1c4b225ea0f8db61829cba07616f70e801a4b6b7fe097` |
-| `release-manifest.json`（清单，不入哈希清单） | 4,588 | 构建内逐字段校验 |
+| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 22,035,244 | `073def60982bbb5982e754c937551c44072a52d2aa8808a19da687716bd21000` |
+| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 22,667,264 | `a0b4787eb1deac2733f63fb44469685b97c536faab37b19d304f9024a55f262d` |
+| `release-manifest.json`（清单，不入哈希清单） | 4,587 | 构建内逐字段校验 |
 
-清单运行时元数据：`version=3.0.0`、`runtime=win-x64`、`framework=net48`、`sqliteVersion=3.53.3`；生成时间 `2026-09-16T23:58:10.8375337Z`。
+清单运行时元数据：`version=3.0.0`、`runtime=win-x64`、`framework=net48`、`sqliteVersion=3.53.3`；生成时间 `2026-09-17T01:47:40.0702579Z`。
 
 ## 自动化回归与最终质量门
 
@@ -46,7 +46,7 @@ SHA-256 均为小写。`release-manifest.json` 记录 15 个载荷文件及以�
   - 依赖审计：High/Critical advisories 为 0。
   - Release build：通过；warnings treated as errors，未出现 warning/error。
   - 离线测试：**executed 193，passed 193，failed 0，skipped 0**。
-  - 文本检查：通过，178 个 tracked text files；`git diff --check` 通过。
+  - 文本检查：通过，179 个 tracked text files；`git diff --check` 通过。
   - 主机/异常静态检查：通过，134 个 C# source files。
   - 发布重建/产物/SQLite/native/hash 检查：通过。
 - 安装器 smoke 全部通过：first install 成功；upgrade 成功且 ownership ID 不变；preserving uninstall `accepted=True; failures=0; preserved=True`；complete uninstall `accepted=True; failures=0; preserved=False`；repeat uninstall `accepted=True; failures=0; preserved=False`。

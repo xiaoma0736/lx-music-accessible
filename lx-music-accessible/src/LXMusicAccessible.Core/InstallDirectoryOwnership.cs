@@ -1,7 +1,8 @@
 using System.IO.Compression;
 using System.Security;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
 using System.Security.Cryptography;
-using System.Text.Json;
 
 namespace LXMusicAccessible.Core;
 
@@ -137,14 +138,14 @@ public static class InstallDirectoryOwnership
             var ownershipId = previous?.OwnershipId ?? Guid.NewGuid();
             WriteJsonAtomically(
                 Path.Combine(target, ManifestFileName),
-                new InstallManifest(ApplicationId, CurrentSchemaVersion, ownershipId, target, installedFiles));
+                InstallManifestDto.From(new InstallManifest(ApplicationId, CurrentSchemaVersion, ownershipId, target, installedFiles)));
 
             if (previous is null)
             {
                 // The marker is the commit point: an interrupted first install is never considered owned.
                 WriteJsonNew(
                     Path.Combine(target, MarkerFileName),
-                    new OwnershipMarker(ApplicationId, CurrentSchemaVersion, ownershipId, target));
+                    OwnershipMarkerDto.From(new OwnershipMarker(ApplicationId, CurrentSchemaVersion, ownershipId, target)));
             }
             else
             {
@@ -178,8 +179,11 @@ public static class InstallDirectoryOwnership
             var manifestPath = Path.Combine(target, ManifestFileName);
             if (!File.Exists(markerPath) || !File.Exists(manifestPath)) return false;
 
-            var marker = ReadJson<OwnershipMarker>(markerPath);
-            var manifest = ReadJson<InstallManifest>(manifestPath);
+            var markerDto = ReadJson<OwnershipMarkerDto>(markerPath);
+            var manifestDto = ReadJson<InstallManifestDto>(manifestPath);
+            var marker = markerDto?.ToModel();
+
+            var manifest = manifestDto?.ToModel();
             if (marker is null || manifest is null
                 || marker.ApplicationId != ApplicationId
                 || manifest.ApplicationId != ApplicationId
@@ -492,7 +496,7 @@ public static class InstallDirectoryOwnership
     private static void WriteJsonNew<T>(string path, T value)
     {
         using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        JsonSerializer.Serialize(stream, value);
+        new DataContractJsonSerializer(typeof(T)).WriteObject(stream, value);
     }
 
     private static void WriteJsonAtomically<T>(string path, T value)
@@ -512,7 +516,7 @@ public static class InstallDirectoryOwnership
     private static T? ReadJson<T>(string path)
     {
         using var stream = File.OpenRead(path);
-        return JsonSerializer.Deserialize<T>(stream);
+        return (T?)new DataContractJsonSerializer(typeof(T)).ReadObject(stream);
     }
 
     private static bool HasReparsePointInExistingPath(string path)
@@ -532,7 +536,7 @@ public static class InstallDirectoryOwnership
             or SecurityException
             or NotSupportedException
             or ArgumentException
-            or JsonException;
+            or SerializationException;
 
     private static string Normalize(string path)
     {
@@ -578,4 +582,66 @@ public static class InstallDirectoryOwnership
         Guid OwnershipId,
         string DirectoryPath,
         IReadOnlyList<InstalledFile> Files);
+
+    [DataContract]
+    private sealed class OwnershipMarkerDto
+    {
+        [DataMember] public string ApplicationId { get; set; } = "";
+        [DataMember] public int SchemaVersion { get; set; }
+        [DataMember] public Guid OwnershipId { get; set; }
+        [DataMember] public string DirectoryPath { get; set; } = "";
+
+        public static OwnershipMarkerDto From(OwnershipMarker model) => new()
+        {
+            ApplicationId = model.ApplicationId,
+            SchemaVersion = model.SchemaVersion,
+            OwnershipId = model.OwnershipId,
+            DirectoryPath = model.DirectoryPath
+        };
+
+        public OwnershipMarker ToModel() => new(ApplicationId, SchemaVersion, OwnershipId, DirectoryPath);
+    }
+
+    [DataContract]
+    private sealed class InstallManifestDto
+    {
+        [DataMember] public string ApplicationId { get; set; } = "";
+        [DataMember] public int SchemaVersion { get; set; }
+        [DataMember] public Guid OwnershipId { get; set; }
+        [DataMember] public string DirectoryPath { get; set; } = "";
+        [DataMember] public InstalledFileDto[] Files { get; set; } = Array.Empty<InstalledFileDto>();
+
+        public static InstallManifestDto From(InstallManifest model) => new()
+        {
+            ApplicationId = model.ApplicationId,
+            SchemaVersion = model.SchemaVersion,
+            OwnershipId = model.OwnershipId,
+            DirectoryPath = model.DirectoryPath,
+            Files = model.Files.Select(InstalledFileDto.From).ToArray()
+        };
+
+        public InstallManifest ToModel() => new(
+            ApplicationId,
+            SchemaVersion,
+            OwnershipId,
+            DirectoryPath,
+            Files.Select(file => file.ToModel()).ToArray());
+    }
+
+    [DataContract]
+    private sealed class InstalledFileDto
+    {
+        [DataMember] public string RelativePath { get; set; } = "";
+        [DataMember] public long Length { get; set; }
+        [DataMember] public string Sha256 { get; set; } = "";
+
+        public static InstalledFileDto From(InstalledFile model) => new()
+        {
+            RelativePath = model.RelativePath,
+            Length = model.Length,
+            Sha256 = model.Sha256
+        };
+
+        public InstalledFile ToModel() => new(RelativePath, Length, Sha256);
+    }
 }

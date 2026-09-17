@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net48</TargetFramework>
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <NoWarn>$(NoWarn);NU1702</NoWarn>
@@ -17,12 +17,14 @@
     <InstallerPayloadArchive Condition="'$(InstallerPayloadArchive)' == ''">$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)installer-payload\$(Configuration)\payload-$(InstallerRuntimeIdentifier).zip</InstallerPayloadArchive>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Remove="System.Text.Json" />
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\LXMusicAccessible.Core\DotNetFrameworkRequirement.cs" Link="Core\DotNetFrameworkRequirement.cs" />
+    <Compile Include="..\LXMusicAccessible.Core\InstallDirectoryOwnership.cs" Link="Core\InstallDirectoryOwnership.cs" />
     <InstallerApplicationProject Include="..\LXMusicAccessible.App\LXMusicAccessible.App.csproj" />
     <ProjectReference Include="@(InstallerApplicationProject)" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="..\LXMusicAccessible.Core\LXMusicAccessible.Core.csproj" />
     <EmbeddedResource Include="$(InstallerPayloadArchive)" LogicalName="LXMusicAccessible.Setup.payload.zip" />
   </ItemGroup>
 
