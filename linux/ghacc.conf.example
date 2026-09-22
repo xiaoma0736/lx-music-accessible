@@ -1,0 +1,11 @@
+# /etc/ghacc.conf
+GHACC_MIRRORS=(
+  "https://ghfast.top/"
+  "https://gh-proxy.com/"
+  "https://ghproxy.net/"
+  "https://gh.llkk.cc/"
+)
+GHACC_TIMEOUT=8
+GHACC_DOWNLOAD_DIR=""
+GHACC_AUTO_SELECT=1
+GHACC_FALLBACK_DIRECT=1
