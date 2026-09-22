@@ -92,7 +92,15 @@ EOF
 
 load_config
 case "${1:-help}" in
-  status) shift; status_command "$@" ;;
+  status)
+    shift
+    if (($#)); then
+      log "ERROR: status accepts no arguments"
+      printf 'Usage: ghacc status\n' >&2
+      exit 2
+    fi
+    status_command "$@"
+    ;;
   help|--help|-h) usage ;;
   clone|pull|fetch|git|download|archive|release)
     log "ERROR: $1 is not implemented yet"

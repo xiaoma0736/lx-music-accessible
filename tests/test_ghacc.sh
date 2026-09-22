@@ -82,6 +82,16 @@ expect_success() {
   fi
 }
 
+expect_failure() {
+  local name="$1"; shift
+  if "$@"; then
+    fail "$name"
+  else
+    PASS=$((PASS + 1))
+    echo "ok - $name"
+  fi
+}
+
 if [[ ! -x "$SCRIPT" ]]; then
   echo "not ok - ghacc executable must exist" >&2
   exit 1
@@ -90,6 +100,11 @@ fi
 new_case
 expect_success "status selects a healthy mirror" env PATH="$TMP/bin:$PATH" GHACC_TEST_CURL_LOG="https://mirror.test/https://github.com/robots.txt" "$SCRIPT" status
 assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://github.com/robots.txt"
+
+new_case
+expect_failure "status rejects extra arguments" env PATH="$TMP/bin:$PATH" "$SCRIPT" status unexpected
+expect_failure "unknown command fails" env PATH="$TMP/bin:$PATH" "$SCRIPT" definitely-unknown
+expect_failure "listed unimplemented transfer command fails" env PATH="$TMP/bin:$PATH" "$SCRIPT" clone https://github.com/owner/repo.git
 
 new_case
 expect_success "clone uses temporary insteadOf configuration" env PATH="$TMP/bin:$PATH" "$SCRIPT" clone https://github.com/owner/repo.git
