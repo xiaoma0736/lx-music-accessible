@@ -93,5 +93,13 @@ EOF
 load_config
 case "${1:-help}" in
   status) shift; status_command "$@" ;;
-  help|--help|-h|*) usage ;;
+  help|--help|-h) usage ;;
+  clone|pull|fetch|git|download|archive|release)
+    log "ERROR: $1 is not implemented yet"
+    exit 127
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
 esac

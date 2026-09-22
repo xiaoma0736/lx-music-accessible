@@ -13,6 +13,7 @@ cleanup() {
 trap cleanup EXIT
 
 new_case() {
+  cleanup
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/ghacc-test.XXXXXX")"
   mkdir -p "$TMP/bin" "$TMP/work" "$TMP/download"
   cat >"$TMP/bin/curl" <<'EOF'
@@ -62,8 +63,13 @@ assert_contains() {
   if ! grep -Fq "$text" "$file"; then
     echo "Expected $file to contain: $text" >&2
     cat "$file" >&2
-    return 1
+    fail "assertion failed: $text"
   fi
+}
+
+fail() {
+  echo "not ok - $*" >&2
+  exit 1
 }
 
 expect_success() {
@@ -72,8 +78,7 @@ expect_success() {
     PASS=$((PASS + 1))
     echo "ok - $name"
   else
-    echo "not ok - $name" >&2
-    exit 1
+    fail "$name"
   fi
 }
 
