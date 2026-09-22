@@ -11,24 +11,29 @@ DEFAULT_MIRRORS=(
   "https://gh.llkk.cc/"
 )
 GHACC_MIRRORS=("${DEFAULT_MIRRORS[@]}")
-GHACC_TIMEOUT=8
+GHACC_TIMEOUT="${GHACC_TIMEOUT-8}"
 GHACC_DOWNLOAD_DIR="${GHACC_DOWNLOAD_DIR:-}"
-GHACC_AUTO_SELECT=1
-GHACC_FALLBACK_DIRECT="${GHACC_FALLBACK_DIRECT:-1}"
+GHACC_AUTO_SELECT="${GHACC_AUTO_SELECT-1}"
+GHACC_FALLBACK_DIRECT="${GHACC_FALLBACK_DIRECT-1}"
 
 log() { printf '[ghacc] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 load_config() {
+  # Startup initialization preserves empty scalar values as deliberate overrides.
+  local timeout="$GHACC_TIMEOUT" download_dir="$GHACC_DOWNLOAD_DIR"
+  local auto_select="$GHACC_AUTO_SELECT" fallback_direct="$GHACC_FALLBACK_DIRECT"
+
   if [[ -n "${GHACC_CONFIG:-}" && -f "$GHACC_CONFIG" ]]; then
     # shellcheck disable=SC1090
     source "$GHACC_CONFIG"
   fi
-  GHACC_TIMEOUT="${GHACC_TIMEOUT:-8}"
-  GHACC_AUTO_SELECT="${GHACC_AUTO_SELECT:-1}"
-  GHACC_FALLBACK_DIRECT="${GHACC_FALLBACK_DIRECT:-1}"
-  GHACC_DOWNLOAD_DIR="${GHACC_DOWNLOAD_DIR:-$PWD}"
+
+  GHACC_TIMEOUT="$timeout"
+  GHACC_DOWNLOAD_DIR="$download_dir"
+  GHACC_AUTO_SELECT="$auto_select"
+  GHACC_FALLBACK_DIRECT="$fallback_direct"
   [[ "$GHACC_TIMEOUT" =~ ^[0-9]+$ ]] || die "GHACC_TIMEOUT must be an integer"
 }
 
@@ -43,16 +48,36 @@ probe_url() {
   fi
 }
 
-select_mirror() {
-  load_config
+reset_mirror_scan() {
+  MIRROR_INDEX=0
+  AVAILABLE_MIRROR=""
+}
+
+next_available_mirror() {
   local mirror
-  for mirror in "${GHACC_MIRRORS[@]}"; do
+  while ((MIRROR_INDEX < ${#GHACC_MIRRORS[@]})); do
+    mirror="${GHACC_MIRRORS[MIRROR_INDEX]}"
+    MIRROR_INDEX=$((MIRROR_INDEX + 1))
     [[ "$mirror" == */ ]] || mirror="$mirror/"
-    [[ "${GHACC_AUTO_SELECT:-1}" == 1 ]] || { SELECTED_MIRROR="$mirror"; return 0; }
-    if probe_url "${mirror}https://github.com/robots.txt"; then
-      SELECTED_MIRROR="$mirror"
+    if [[ "$GHACC_AUTO_SELECT" != 1 ]] || probe_url "${mirror}https://github.com/robots.txt"; then
+      AVAILABLE_MIRROR="$mirror"
       return 0
     fi
+  done
+  return 1
+}
+
+run_with_mirrors() {
+  local operation="$1" status
+  shift
+  reset_mirror_scan
+  while next_available_mirror; do
+    log "Using mirror: $AVAILABLE_MIRROR"
+    "$operation" "$AVAILABLE_MIRROR" "$@"
+    status=$?
+    if ((status == 0)); then return 0; fi
+    if ((status == 130)); then return 130; fi
+    log "Mirror operation failed; trying next acceleration source"
   done
   return 1
 }
@@ -102,24 +127,32 @@ git@github.com:
 EOF
 }
 
+git_mirror_operation() {
+  local mirror="$1"
+  shift
+  local -a cmd=(git)
+  local arg
+  while IFS= read -r arg; do cmd+=("$arg"); done < <(rewrite_args "$mirror")
+  cmd+=("$@")
+  "${cmd[@]}"
+}
+
 run_git() {
   load_config
-  local -a cmd=(git)
-  local direct_failed=0
-  if select_mirror; then
-    log "Using mirror: $SELECTED_MIRROR"
-    while IFS= read -r arg; do cmd+=("$arg"); done < <(rewrite_args "$SELECTED_MIRROR")
-    cmd+=("$@")
-    if "${cmd[@]}"; then return 0; fi
-    direct_failed=$?
-    ((direct_failed == 130)) && return "$direct_failed"
-    log "Accelerated Git operation failed; trying direct GitHub"
-    cmd=(git "$@")
-  else
-    log "No mirror available; using direct GitHub"
-    cmd=(git "$@")
+  local status=0
+  run_with_mirrors git_mirror_operation "$@"
+  status=$?
+  if ((status == 0)); then return 0; fi
+  if ((status == 130)); then return 130; fi
+  if [[ "$GHACC_FALLBACK_DIRECT" != 1 ]]; then
+    log "No mirror operation succeeded and direct fallback is disabled"
+    return "$status"
   fi
-  "${cmd[@]}"
+  log "No mirror operation succeeded; using direct GitHub"
+  git "$@"
+  status=$?
+  if ((status == 130)); then return 130; fi
+  return "$status"
 }
 
 is_github_repo_input() {
@@ -135,13 +168,17 @@ clone_command() {
   run_git clone "$@"
 }
 
+inside_git_worktree() {
+  [[ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]
+}
+
 pull_command() {
-  [[ -d .git || -f .git ]] || die "pull must be run inside a Git repository"
+  inside_git_worktree || die "pull must be run inside a Git repository"
   run_git pull "$@"
 }
 
 fetch_command() {
-  [[ -d .git || -f .git ]] || die "fetch must be run inside a Git repository"
+  inside_git_worktree || die "fetch must be run inside a Git repository"
   run_git fetch "$@"
 }
 
@@ -167,39 +204,72 @@ fetch_to() {
 }
 
 download_url() {
-  local url="$1" prefix="$2" output="$3" tmp
+  local url="$1" prefix="$2" output="$3" tmp status
   tmp="$(mktemp "${output}.ghacc.XXXXXX")" || return 1
-  if fetch_to "${prefix}${url}" "$tmp"; then
-    if mv -f "$tmp" "$output"; then return 0; fi
+  fetch_to "${prefix}${url}" "$tmp"
+  status=$?
+  if ((status != 0)); then
     rm -f "$tmp"
-    return 1
+    return "$status"
   fi
-  rm -f "$tmp"
-  return 1
+  mv -f "$tmp" "$output"
+  status=$?
+  if ((status != 0)); then rm -f "$tmp"; fi
+  return "$status"
+}
+
+download_mirror_operation() {
+  local mirror="$1" url="$2" output="$3"
+  download_url "$url" "$mirror" "$output"
+}
+
+safe_download_basename() {
+  local url="$1" basename
+  basename="$(basename "${url%%\?*}")" || return 1
+  case "$basename" in
+    ""|.|..)
+      log "ERROR: unsafe download basename: $basename"
+      return 2
+      ;;
+    *)
+      printf '%s\n' "$basename"
+      ;;
+  esac
 }
 
 output_path() {
-  local url="$1"
+  local url="$1" basename
+  basename="$(safe_download_basename "$url")" || return 2
   if [[ -n "$GHACC_DOWNLOAD_DIR" ]]; then mkdir -p "$GHACC_DOWNLOAD_DIR"; fi
-  printf '%s/%s\n' "${GHACC_DOWNLOAD_DIR:-$PWD}" "$(basename "${url%%\?*}")"
+  printf '%s/%s\n' "${GHACC_DOWNLOAD_DIR:-$PWD}" "$basename"
 }
 
 download_command() {
   load_config
   [[ $# -eq 1 ]] || { usage >&2; return 2; }
-  local url="$1" output downloaded=0
+  local url="$1" output status=0
   allowed_download_url "$url" || die "URL host is not an allowed GitHub download host"
-  output="$(output_path "$url")"
-  if select_mirror; then
-    log "Using mirror: $SELECTED_MIRROR"
-    if download_url "$url" "$SELECTED_MIRROR" "$output"; then downloaded=1; fi
+  output="$(output_path "$url")" || exit $?
+  run_with_mirrors download_mirror_operation "$url" "$output"
+  status=$?
+  if ((status == 0)); then
+    log "Saved: $output"
+    return 0
   fi
-  if ((downloaded == 0)); then
-    [[ "$GHACC_FALLBACK_DIRECT" == 1 ]] || die "No mirror available and direct fallback is disabled"
-    log "Using direct GitHub"
-    download_url "$url" "" "$output" || die "Download failed: $url"
+  if ((status == 130)); then return 130; fi
+  if [[ "$GHACC_FALLBACK_DIRECT" != 1 ]]; then
+    die "No mirror operation succeeded and direct fallback is disabled"
   fi
-  log "Saved: $output"
+  log "No mirror operation succeeded; using direct GitHub"
+  download_url "$url" "" "$output"
+  status=$?
+  if ((status == 0)); then
+    log "Saved: $output"
+    return 0
+  fi
+  if ((status == 130)); then return 130; fi
+  log "ERROR: Download failed: $url"
+  return "$status"
 }
 
 validate_owner_repo() {
@@ -210,54 +280,75 @@ validate_ref() {
   [[ "$1" =~ ^[A-Za-z0-9._/-]+$ ]] || die "ref contains unsupported characters"
 }
 
+archive_mirror_operation() {
+  local mirror="$1" url="$2" output="$3"
+  download_url "$url" "$mirror" "$output"
+}
+
 archive_command() {
   load_config
   [[ $# -ge 1 && $# -le 2 ]] || { usage >&2; return 2; }
   validate_owner_repo "$1"
-  local ref="${2:-HEAD}" repo="${1##*/}" file url output
+  local ref="${2:-HEAD}" repo="${1##*/}" file url output status=0
   validate_ref "$ref"
   url="https://codeload.github.com/$1/tar.gz/$ref"
   file="${repo}-${ref//\//-}.tar.gz"
   output="${GHACC_DOWNLOAD_DIR:+$GHACC_DOWNLOAD_DIR/}$file"
   [[ -n "$GHACC_DOWNLOAD_DIR" ]] && mkdir -p "$GHACC_DOWNLOAD_DIR"
-  if select_mirror; then
-    log "Using mirror: $SELECTED_MIRROR"
-    download_url "$url" "$SELECTED_MIRROR" "$output" && { log "Saved: $output"; return 0; }
+  run_with_mirrors archive_mirror_operation "$url" "$output"
+  status=$?
+  if ((status == 0)); then
+    log "Saved: $output"
+    return 0
   fi
-  [[ "$GHACC_FALLBACK_DIRECT" == 1 ]] || die "No mirror available and direct fallback is disabled"
-  log "Using direct GitHub"
-  download_url "$url" "" "$output" || die "Archive download failed"
-  log "Saved: $output"
+  if ((status == 130)); then return 130; fi
+  if [[ "$GHACC_FALLBACK_DIRECT" != 1 ]]; then
+    die "No mirror operation succeeded and direct fallback is disabled"
+  fi
+  log "No mirror operation succeeded; using direct GitHub"
+  download_url "$url" "" "$output"
+  status=$?
+  if ((status == 0)); then
+    log "Saved: $output"
+    return 0
+  fi
+  if ((status == 130)); then return 130; fi
+  log "ERROR: Archive download failed"
+  return "$status"
+}
+
+fetch_api_assets() {
+  local url="$1" result assets
+  result="$(mktemp)" || return 1
+  if have curl; then
+    curl -fsSL --connect-timeout "$GHACC_TIMEOUT" -H "Accept: application/vnd.github+json" -H "User-Agent: ghacc/$GHACC_VERSION" -o "$result" "$url"
+  else
+    wget -q --timeout="$GHACC_TIMEOUT" --user-agent="ghacc/$GHACC_VERSION" -O "$result" "$url"
+  fi
+  if [[ -s "$result" ]]; then
+    if assets="$(grep -Eo '"browser_download_url":[[:space:]]*"[^"]+"' "$result" | cut -d'"' -f4)" && [[ -n "$assets" ]]; then
+      printf '%s\n' "$assets"
+      rm -f "$result"
+      return 0
+    fi
+  fi
+  rm -f "$result"
+  return 1
+}
+
+api_mirror_operation() {
+  local mirror="$1" owner_repo="$2" endpoint="$3"
+  fetch_api_assets "${mirror}https://api.github.com/repos/$owner_repo/$endpoint"
 }
 
 github_api_assets() {
-  local owner_repo="$1" endpoint="$2" url result assets
-  local -a urls=()
-  if [[ -n "${SELECTED_MIRROR:-}" ]]; then
-    urls+=("${SELECTED_MIRROR}https://api.github.com/repos/$owner_repo/$endpoint")
-  fi
-  if [[ "${GHACC_FALLBACK_DIRECT:-1}" == 1 ]]; then
-    urls+=("https://api.github.com/repos/$owner_repo/$endpoint")
-  fi
-  ((${#urls[@]})) || return 1
-  for url in "${urls[@]}"; do
-    [[ -n "$url" ]] || continue
-    result="$(mktemp)" || return 1
-    if have curl; then
-      curl -fsSL --connect-timeout "$GHACC_TIMEOUT" -H "Accept: application/vnd.github+json" -H "User-Agent: ghacc/$GHACC_VERSION" -o "$result" "$url"
-    else
-      wget -q --timeout="$GHACC_TIMEOUT" --user-agent="ghacc/$GHACC_VERSION" -O "$result" "$url"
-    fi
-    if [[ -s "$result" ]]; then
-      if assets="$(grep -Eo '"browser_download_url":[[:space:]]*"[^"]+"' "$result" | cut -d'"' -f4)" && [[ -n "$assets" ]]; then
-        printf '%s\n' "$assets"
-        rm -f "$result"
-        return 0
-      fi
-    fi
-    rm -f "$result"
-  done
-  return 1
+  local owner_repo="$1" endpoint="$2" status=0
+  run_with_mirrors api_mirror_operation "$owner_repo" "$endpoint"
+  status=$?
+  if ((status == 0)); then return 0; fi
+  if ((status == 130)); then return 130; fi
+  if [[ "$GHACC_FALLBACK_DIRECT" != 1 ]]; then return "$status"; fi
+  fetch_api_assets "https://api.github.com/repos/$owner_repo/$endpoint"
 }
 
 release_command() {
@@ -265,7 +356,6 @@ release_command() {
   [[ $# -ge 2 && $# -le 3 ]] || { usage >&2; return 2; }
   validate_owner_repo "$1"
   local repo_owner="$1" tag="$2" pattern="${3:-}" endpoint assets asset selected
-  select_mirror >/dev/null 2>&1 || true
   if [[ "$tag" == "latest" ]]; then endpoint="releases/latest"; else endpoint="releases/tags/$tag"; fi
   assets="$(github_api_assets "$repo_owner" "$endpoint")" || die "Unable to read release assets"
   if [[ -z "$pattern" ]]; then
