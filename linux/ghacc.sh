@@ -14,7 +14,7 @@ GHACC_MIRRORS=("${DEFAULT_MIRRORS[@]}")
 GHACC_TIMEOUT=8
 GHACC_DOWNLOAD_DIR="${GHACC_DOWNLOAD_DIR:-}"
 GHACC_AUTO_SELECT=1
-GHACC_FALLBACK_DIRECT=1
+GHACC_FALLBACK_DIRECT="${GHACC_FALLBACK_DIRECT:-1}"
 
 log() { printf '[ghacc] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 2; }
@@ -170,8 +170,9 @@ download_url() {
   local url="$1" prefix="$2" output="$3" tmp
   tmp="$(mktemp "${output}.ghacc.XXXXXX")" || return 1
   if fetch_to "${prefix}${url}" "$tmp"; then
-    mv -f "$tmp" "$output"
-    return 0
+    if mv -f "$tmp" "$output"; then return 0; fi
+    rm -f "$tmp"
+    return 1
   fi
   rm -f "$tmp"
   return 1
@@ -230,8 +231,16 @@ archive_command() {
 }
 
 github_api_assets() {
-  local owner_repo="$1" endpoint="$2" url result
-  for url in "https://api.github.com/repos/$owner_repo/$endpoint" "${SELECTED_MIRROR:-}https://api.github.com/repos/$owner_repo/$endpoint"; do
+  local owner_repo="$1" endpoint="$2" url result assets
+  local -a urls=()
+  if [[ -n "${SELECTED_MIRROR:-}" ]]; then
+    urls+=("${SELECTED_MIRROR}https://api.github.com/repos/$owner_repo/$endpoint")
+  fi
+  if [[ "${GHACC_FALLBACK_DIRECT:-1}" == 1 ]]; then
+    urls+=("https://api.github.com/repos/$owner_repo/$endpoint")
+  fi
+  ((${#urls[@]})) || return 1
+  for url in "${urls[@]}"; do
     [[ -n "$url" ]] || continue
     result="$(mktemp)" || return 1
     if have curl; then
@@ -240,9 +249,11 @@ github_api_assets() {
       wget -q --timeout="$GHACC_TIMEOUT" --user-agent="ghacc/$GHACC_VERSION" -O "$result" "$url"
     fi
     if [[ -s "$result" ]]; then
-      grep -Eo '"browser_download_url":[[:space:]]*"[^"]+"' "$result" | cut -d'"' -f4
-      rm -f "$result"
-      return 0
+      if assets="$(grep -Eo '"browser_download_url":[[:space:]]*"[^"]+"' "$result" | cut -d'"' -f4)" && [[ -n "$assets" ]]; then
+        printf '%s\n' "$assets"
+        rm -f "$result"
+        return 0
+      fi
     fi
     rm -f "$result"
   done

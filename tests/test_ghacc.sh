@@ -26,7 +26,9 @@ for ((i=1; i<=$#; i++)); do
   if [[ "${!i}" == "-o" ]]; then
     j=$((i + 1))
     if [[ "$url" == *"https://api.github.com/"* ]]; then
-      printf '%s\n' '{"assets":[{"browser_download_url":"https://github.com/owner/repo/releases/download/v1.2.3/app-linux.tar.gz"}]}' > "${!j}"
+      api_response='{"assets":[{"browser_download_url":"https://github.com/owner/repo/releases/download/v1.2.3/app-linux.tar.gz"}]}'
+      if [[ -n "${GHACC_TEST_API_RESPONSE:-}" ]]; then api_response="$GHACC_TEST_API_RESPONSE"; fi
+      printf '%s\n' "$api_response" > "${!j}"
     else
       printf 'test-content\n' > "${!j}"
     fi
@@ -53,7 +55,6 @@ EOF
 GHACC_MIRRORS=("https://mirror.test/" "https://fallback.test/")
 GHACC_TIMEOUT=3
 GHACC_AUTO_SELECT=1
-GHACC_FALLBACK_DIRECT=1
 EOF
   export GHACC_CONFIG="$TMP/ghacc.conf"
   export GHACC_TEST_CURL_LOG_FILE="$TMP/curl.log"
@@ -74,6 +75,47 @@ assert_contains() {
 fail() {
   echo "not ok - $*" >&2
   exit 1
+}
+
+assert_line_absent() {
+  local file="$1" text="$2"
+  if grep -Fxq "$text" "$file"; then
+    echo "Expected $file not to contain line: $text" >&2
+    cat "$file" >&2
+    fail "assertion failed: unexpected line $text"
+  fi
+}
+
+expect_failure_with() {
+  local expected="$1" name="$2"; shift 2
+  local output status=0
+  output="$("$@" 2>&1)" || status=$?
+  if ((status == 0)); then
+    fail "$name"
+  fi
+  if ! grep -Fq "$expected" <<<"$output"; then
+    echo "Expected failure output to contain: $expected" >&2
+    printf '%s\n' "$output" >&2
+    fail "$name"
+  fi
+  PASS=$((PASS + 1))
+  echo "ok - $name"
+}
+
+expect_failure_without() {
+  local forbidden="$1" name="$2"; shift 2
+  local output status=0
+  output="$("$@" 2>&1)" || status=$?
+  if ((status == 0)); then
+    fail "$name"
+  fi
+  if grep -Fq "$forbidden" <<<"$output"; then
+    echo "Failure output must not contain: $forbidden" >&2
+    printf '%s\n' "$output" >&2
+    fail "$name"
+  fi
+  PASS=$((PASS + 1))
+  echo "ok - $name"
 }
 
 expect_success() {
@@ -143,5 +185,30 @@ new_case
 GHACC_TEST_CURL_FAIL=1
 expect_success "download falls back to direct GitHub" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_TEST_CURL_FAIL=1 "$SCRIPT" download https://raw.githubusercontent.com/owner/repo/main/README.md
 assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://raw.githubusercontent.com/owner/repo/main/README.md"
+
+new_case
+cat >"$TMP/bin/mv" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHACC_TEST_MV_LOG_FILE"
+exit 73
+EOF
+chmod +x "$TMP/bin/mv"
+export GHACC_TEST_MV_LOG_FILE="$TMP/mv.log"
+: >"$GHACC_TEST_MV_LOG_FILE"
+expect_failure_without "Saved:" "failed rename does not report Saved" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" "$SCRIPT" download https://raw.githubusercontent.com/owner/repo/main/README.md
+assert_contains "$GHACC_TEST_MV_LOG_FILE" "$TMP/download/README.md"
+
+new_case
+expect_failure_with "Unable to read release assets" "malformed release metadata fails" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_TEST_API_RESPONSE=not-json "$SCRIPT" release owner/repo v1.2.3 app-linux.tar.gz
+
+new_case
+expect_failure_with "Unable to read release assets" "release metadata honors direct fallback disabled" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_FALLBACK_DIRECT=0 GHACC_TEST_API_RESPONSE=not-json "$SCRIPT" release owner/repo v1.2.3 app-linux.tar.gz
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://api.github.com/repos/owner/repo/releases/tags/v1.2.3"
+assert_line_absent "$GHACC_TEST_CURL_LOG_FILE" "https://api.github.com/repos/owner/repo/releases/tags/v1.2.3"
+
+new_case
+expect_success "release metadata falls back to direct GitHub" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_TEST_CURL_FAIL=1 "$SCRIPT" release owner/repo v1.2.3 app-linux.tar.gz
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://api.github.com/repos/owner/repo/releases/tags/v1.2.3"
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://github.com/owner/repo/releases/download/v1.2.3/app-linux.tar.gz"
 
 echo "$PASS assertions passed"
