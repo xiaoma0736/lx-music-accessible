@@ -355,4 +355,7 @@ expect_success "release metadata falls back to direct GitHub" env PATH="$TMP/bin
 assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://api.github.com/repos/owner/repo/releases/tags/v1.2.3"
 assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://github.com/owner/repo/releases/download/v1.2.3/app-linux.tar.gz"
 
+new_case
+expect_success "help displays Chinese usage" env PATH="$TMP/bin:$PATH" bash -c '"$1" help | grep -Fq "用法:"' bash "$SCRIPT"
+
 echo "$PASS assertions passed"

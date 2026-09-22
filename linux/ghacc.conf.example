@@ -1,5 +1,5 @@
 # /etc/ghacc.conf
-# This array controls the acceleration order.
+# 下面的数组决定加速源尝试顺序。
 GHACC_MIRRORS=(
   "https://ghfast.top/"
   "https://gh-proxy.com/"
@@ -7,8 +7,8 @@ GHACC_MIRRORS=(
   "https://gh.llkk.cc/"
 )
 
-# Process-environment values override these four scalars after this file is sourced.
-# Exporting GHACC_DOWNLOAD_DIR="" intentionally selects the current directory.
+# 进程环境变量会在读取本文件后覆盖下面 4 个标量配置。
+# 导出 GHACC_DOWNLOAD_DIR="" 表示使用当前目录。
 GHACC_TIMEOUT=8
 GHACC_DOWNLOAD_DIR=""
 GHACC_AUTO_SELECT=1

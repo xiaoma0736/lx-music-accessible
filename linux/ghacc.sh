@@ -102,16 +102,33 @@ status_command() {
 
 usage() {
   cat <<'EOF'
-Usage:
-  ghacc clone <github-url> [git-options...]
-  ghacc pull [git-options...]
-  ghacc fetch [git-options...]
-  ghacc git <git-arguments...>
+用法:
+  ghacc clone <github-url> [git 选项...]
+      克隆 GitHub 仓库。
+
+  ghacc pull [git 选项...]
+      在当前 Git 仓库中拉取更新。
+
+  ghacc fetch [git 选项...]
+      在当前 Git 仓库中抓取远端更新。
+
+  ghacc git <git 参数...>
+      执行 Git 命令，并对 github.com 地址做临时加速改写。
+
   ghacc download <github-url>
+      下载 GitHub Release 文件、raw 文件或源码文件。
+
   ghacc archive <owner/repo> [ref]
-  ghacc release <owner/repo> <tag|latest> [asset-pattern]
+      下载仓库源码压缩包；ref 可以是分支、标签或提交。
+
+  ghacc release <owner/repo> <tag|latest> [资产名称或关键词]
+      读取 Release 资产列表；提供资产名称或关键词时下载对应文件。
+
   ghacc status
+      检查并显示已配置加速源的状态。
+
   ghacc help
+      显示帮助。
 EOF
 }
 
@@ -385,8 +402,8 @@ case "${1:-help}" in
   status)
     shift
     if (($#)); then
-      log "ERROR: status accepts no arguments"
-      printf 'Usage: ghacc status\n' >&2
+      log "错误：status 不接受参数"
+      printf '用法: ghacc status\n' >&2
       exit 2
     fi
     status_command "$@"
