@@ -18,13 +18,18 @@ new_case() {
   mkdir -p "$TMP/bin" "$TMP/work" "$TMP/download"
   cat >"$TMP/bin/curl" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$GHACC_TEST_CURL_LOG" >> "$GHACC_TEST_CURL_LOG_FILE"
-if [[ "${GHACC_TEST_CURL_FAIL:-0}" == 1 ]]; then exit 22; fi
+url="${*: -1}"
+printf '%s\n' "$url" >> "$GHACC_TEST_CURL_LOG_FILE"
+if [[ "${GHACC_TEST_CURL_FAIL:-0}" == 1 && "$url" == https://mirror.test/https://* ]]; then exit 22; fi
 if [[ "$3" == *GHACC_TEST_HEADER ]]; then exit 22; fi
 for ((i=1; i<=$#; i++)); do
   if [[ "${!i}" == "-o" ]]; then
     j=$((i + 1))
-    printf 'test-content\n' > "${!j}"
+    if [[ "$url" == *"https://api.github.com/"* ]]; then
+      printf '%s\n' '{"assets":[{"browser_download_url":"https://github.com/owner/repo/releases/download/v1.2.3/app-linux.tar.gz"}]}' > "${!j}"
+    else
+      printf 'test-content\n' > "${!j}"
+    fi
   fi
 done
 exit 0
@@ -47,7 +52,6 @@ EOF
   cat >"$TMP/ghacc.conf" <<'EOF'
 GHACC_MIRRORS=("https://mirror.test/" "https://fallback.test/")
 GHACC_TIMEOUT=3
-GHACC_DOWNLOAD_DIR=""
 GHACC_AUTO_SELECT=1
 GHACC_FALLBACK_DIRECT=1
 EOF
@@ -104,7 +108,7 @@ assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://github.
 new_case
 expect_failure "status rejects extra arguments" env PATH="$TMP/bin:$PATH" "$SCRIPT" status unexpected
 expect_failure "unknown command fails" env PATH="$TMP/bin:$PATH" "$SCRIPT" definitely-unknown
-expect_failure "listed unimplemented transfer command fails" env PATH="$TMP/bin:$PATH" "$SCRIPT" download https://github.com/owner/repo.git
+expect_failure "listed transfer command rejects missing arguments" env PATH="$TMP/bin:$PATH" "$SCRIPT" download
 
 new_case
 expect_success "pull includes GitHub rewrite args" env PATH="$TMP/bin:$PATH" "$SCRIPT" pull
@@ -126,5 +130,18 @@ new_case
 expect_success "git falls back to direct after accelerated failure" env PATH="$TMP/bin:$PATH" GHACC_TEST_GIT_FAIL_ACCELERATED=1 "$SCRIPT" pull
 assert_contains "$GHACC_TEST_GIT_LOG_FILE" "https://github.com/"
 assert_contains "$GHACC_TEST_GIT_LOG_FILE" "insteadOf"
+
+new_case
+expect_success "archive downloads codeload tarball" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" "$SCRIPT" archive owner/repo v1.2.3
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://codeload.github.com/owner/repo/tar.gz/v1.2.3"
+
+new_case
+expect_success "release downloads an exact asset" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" "$SCRIPT" release owner/repo v1.2.3 app-linux.tar.gz
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://github.com/owner/repo/releases/download/v1.2.3/app-linux.tar.gz"
+
+new_case
+GHACC_TEST_CURL_FAIL=1
+expect_success "download falls back to direct GitHub" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_TEST_CURL_FAIL=1 "$SCRIPT" download https://raw.githubusercontent.com/owner/repo/main/README.md
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://raw.githubusercontent.com/owner/repo/main/README.md"
 
 echo "$PASS assertions passed"
