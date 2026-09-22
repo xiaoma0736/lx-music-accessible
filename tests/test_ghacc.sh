@@ -63,11 +63,16 @@ EOF
   cat >"$TMP/bin/git" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "rev-parse" && "$2" == "--is-inside-work-tree" ]]; then
-  if [[ "${GHACC_TEST_GIT_WORKTREE:-1}" == 1 ]]; then
-    printf 'true\n'
-  else
-    printf 'false\n'
+  inside=1
+  if [[ "${GHACC_TEST_GIT_WORKTREE:-1}" != 1 ]]; then inside=0; fi
+  if [[ -n "${GHACC_TEST_REPO_ROOT:-}" ]]; then
+    current="$(pwd -P)"
+    case "$current" in
+      "$GHACC_TEST_REPO_ROOT"|"$GHACC_TEST_REPO_ROOT"/*) ;;
+      *) inside=0 ;;
+    esac
   fi
+  if ((inside)); then printf 'true\n'; else printf 'false\n'; fi
   exit 0
 fi
 printf 'git' >> "$GHACC_TEST_GIT_LOG_FILE"
@@ -292,7 +297,7 @@ assert_line_absent "$GHACC_TEST_CURL_LOG_FILE" "https://raw.githubusercontent.co
 
 new_case
 mkdir -p "$TMP/repo/.git" "$TMP/repo/subdir"
-expect_success "pull works from a repository subdirectory" env PATH="$TMP/bin:$PATH" "$SCRIPT" pull
+expect_success "pull works from a repository subdirectory" env PATH="$TMP/bin:$PATH" GHACC_TEST_REPO_ROOT="$TMP/repo" bash -c 'cd "$1" && exec "$2" pull' bash "$TMP/repo/subdir" "$SCRIPT"
 assert_contains "$GHACC_TEST_GIT_LOG_FILE" "url.https://mirror.test/https://github.com/.insteadOf="
 
 new_case
