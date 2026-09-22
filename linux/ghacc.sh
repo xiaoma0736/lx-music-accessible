@@ -90,8 +90,72 @@ Usage:
 EOF
 }
 
+rewrite_args() {
+  local prefix="$1" target
+  while IFS= read -r target; do
+    printf '%s\n' "-c"
+    printf '%s\n' "url.${prefix}${target}.insteadOf=${target}"
+  done <<'EOF'
+https://github.com/
+ssh://git@github.com/
+git@github.com:
+EOF
+}
+
+run_git() {
+  load_config
+  local -a cmd=(git)
+  local direct_failed=0
+  if select_mirror; then
+    log "Using mirror: $SELECTED_MIRROR"
+    while IFS= read -r arg; do cmd+=("$arg"); done < <(rewrite_args "$SELECTED_MIRROR")
+    cmd+=("$@")
+    if "${cmd[@]}"; then return 0; fi
+    direct_failed=$?
+    ((direct_failed == 130)) && return "$direct_failed"
+    log "Accelerated Git operation failed; trying direct GitHub"
+    cmd=(git "$@")
+  else
+    log "No mirror available; using direct GitHub"
+    cmd=(git "$@")
+  fi
+  "${cmd[@]}"
+}
+
+is_github_repo_input() {
+  case "$1" in
+    https://github.com/*|http://github.com/*|ssh://git@github.com/*|git@github.com:*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+clone_command() {
+  [[ $# -ge 1 ]] || { usage >&2; return 2; }
+  is_github_repo_input "$1" || die "clone requires a github.com repository URL"
+  run_git clone "$@"
+}
+
+pull_command() {
+  [[ -d .git || -f .git ]] || die "pull must be run inside a Git repository"
+  run_git pull "$@"
+}
+
+fetch_command() {
+  [[ -d .git || -f .git ]] || die "fetch must be run inside a Git repository"
+  run_git fetch "$@"
+}
+
+git_command() {
+  [[ $# -ge 1 ]] || { usage >&2; return 2; }
+  run_git "$@"
+}
+
 load_config
 case "${1:-help}" in
+  clone) shift; clone_command "$@" ;;
+  pull) shift; pull_command "$@" ;;
+  fetch) shift; fetch_command "$@" ;;
+  git) shift; git_command "$@" ;;
   status)
     shift
     if (($#)); then
@@ -102,10 +166,6 @@ case "${1:-help}" in
     status_command "$@"
     ;;
   help|--help|-h) usage ;;
-  clone|pull|fetch|git|download|archive|release)
-    log "ERROR: $1 is not implemented yet"
-    exit 127
-    ;;
   *)
     usage
     exit 2

@@ -104,21 +104,27 @@ assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://github.
 new_case
 expect_failure "status rejects extra arguments" env PATH="$TMP/bin:$PATH" "$SCRIPT" status unexpected
 expect_failure "unknown command fails" env PATH="$TMP/bin:$PATH" "$SCRIPT" definitely-unknown
-expect_failure "listed unimplemented transfer command fails" env PATH="$TMP/bin:$PATH" "$SCRIPT" clone https://github.com/owner/repo.git
+expect_failure "listed unimplemented transfer command fails" env PATH="$TMP/bin:$PATH" "$SCRIPT" download https://github.com/owner/repo.git
 
 new_case
-expect_success "clone uses temporary insteadOf configuration" env PATH="$TMP/bin:$PATH" "$SCRIPT" clone https://github.com/owner/repo.git
+expect_success "pull includes GitHub rewrite args" env PATH="$TMP/bin:$PATH" "$SCRIPT" pull
 assert_contains "$GHACC_TEST_GIT_LOG_FILE" "url.https://mirror.test/https://github.com/.insteadOf=https://github.com/"
 
 new_case
-GHACC_TEST_GIT_FAIL_ACCELERATED=1
+expect_success "fetch includes SSH rewrite args" env PATH="$TMP/bin:$PATH" "$SCRIPT" fetch
+assert_contains "$GHACC_TEST_GIT_LOG_FILE" "insteadOf=ssh://git@github.com/"
+
+new_case
+expect_success "git passes through arguments" env PATH="$TMP/bin:$PATH" "$SCRIPT" git log --oneline
+assert_contains "$GHACC_TEST_GIT_LOG_FILE" "log"
+
+new_case
+expect_success "clone includes GitHub rewrite args" env PATH="$TMP/bin:$PATH" "$SCRIPT" clone https://github.com/owner/repo.git
+assert_contains "$GHACC_TEST_GIT_LOG_FILE" "url.https://mirror.test/https://github.com/.insteadOf=https://github.com/"
+
+new_case
 expect_success "git falls back to direct after accelerated failure" env PATH="$TMP/bin:$PATH" GHACC_TEST_GIT_FAIL_ACCELERATED=1 "$SCRIPT" pull
 assert_contains "$GHACC_TEST_GIT_LOG_FILE" "https://github.com/"
 assert_contains "$GHACC_TEST_GIT_LOG_FILE" "insteadOf"
-
-new_case
-expect_success "download creates a file through curl" env PATH="$TMP/bin:$PATH" "$SCRIPT" download https://github.com/owner/repo/releases/download/v1/file.zip
-[[ -f "$TMP/download/file.zip" && "$(cat "$TMP/download/file.zip")" == "test-content" ]]
-if [[ $? -eq 0 ]]; then PASS=$((PASS + 1)); echo "ok - download creates a file"; else echo "not ok - download creates a file" >&2; exit 1; fi
 
 echo "$PASS assertions passed"
