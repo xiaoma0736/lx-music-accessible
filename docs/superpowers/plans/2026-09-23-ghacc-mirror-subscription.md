@@ -1,4 +1,4 @@
-﻿# ghacc Mirror Subscription Implementation Plan
+# ghacc Mirror Subscription Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -83,7 +83,10 @@ In the generated test config, add:
 
 ```bash
 GHACC_SUBSCRIPTION=1
-GHACC_SUBSCRIPTION_URLS=("https://subscription.test/mirrors.json")
+GHACC_SUBSCRIPTION_URLS=(
+  "https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+  "https://cdn.jsdelivr.net/gh/Miao-moe/gh-accelerator-api@main/mirrors.json"
+)
 ```
 
 Do not change existing assertions in this step.
@@ -141,7 +144,7 @@ EOF
 new_case
 subscription_json >"$TMP/subscription.json"
 export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
-export GHACC_TEST_SUBSCRIPTION_MATCH="https://subscription.test/mirrors.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
 expect_success "update writes validated subscription cache" env PATH="$TMP/bin:$PATH" "$SCRIPT" update
 [[ -f "$GHACC_CACHE_DIR/mirrors.list" ]] || fail "subscription list was not created"
 [[ -f "$GHACC_CACHE_DIR/mirrors.meta" ]] || fail "subscription metadata was not created"
@@ -150,7 +153,7 @@ assert_line_absent "$GHACC_CACHE_DIR/mirrors.list" "https://inactive.test/"
 assert_line_absent "$GHACC_CACHE_DIR/mirrors.list" "https://wrong-type.test/"
 assert_line_absent "$GHACC_CACHE_DIR/mirrors.list" "https://no-clone.test/"
 assert_line_absent "$GHACC_CACHE_DIR/mirrors.list" "http://insecure.test/"
-assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "source=https://subscription.test/mirrors.json"
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "source=https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
 assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "count=1"
 
 new_case
@@ -167,7 +170,7 @@ printf '%s\n' "https://old.test/" >"$GHACC_CACHE_DIR/mirrors.list"
 printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
 printf '%s\n' 'not-json' >"$TMP/subscription.json"
 export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
-export GHACC_TEST_SUBSCRIPTION_MATCH="https://subscription.test/mirrors.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
 expect_failure_with "subscription validation failed" "malformed subscription preserves cache" env PATH="$TMP/bin:$PATH" "$SCRIPT" update
 assert_contains "$GHACC_CACHE_DIR/mirrors.list" "https://old.test/"
 assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "updated=old"
