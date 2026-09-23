@@ -273,6 +273,16 @@ assert_timer_status() {
   fi
 }
 
+MENU_OUTPUT=""
+MENU_STATUS=0
+
+run_menu() {
+  local input="$1"
+  shift
+  MENU_STATUS=0
+  MENU_OUTPUT="$(printf '%b' "$input" | "$@" 2>&1)" || MENU_STATUS=$?
+}
+
 if [[ ! -x "$SCRIPT" ]]; then
   echo "not ok - ghacc executable must exist" >&2
   exit 1
@@ -1122,4 +1132,95 @@ if grep -Uq $'\r' "$SCRIPT"; then
 fi
 PASS=$((PASS + 1))
 echo "ok - production script uses LF endings"
+new_case
+run_menu '0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+[[ "$MENU_STATUS" -eq 0 ]] || fail "menu exit did not return 0"
+for required in \
+  'ghacc 菜单' \
+  '1) 克隆 GitHub 仓库' \
+  '2) 拉取当前仓库更新' \
+  '3) 抓取当前仓库远端' \
+  '4) 下载 GitHub 文件' \
+  '5) 下载源码压缩包' \
+  '6) 下载 Release 资产' \
+  '7) 更新镜像订阅缓存' \
+  '10) 查看加速源和定时器状态' \
+  '11) 高级 Git 命令' \
+  '12) 显示命令行帮助' \
+  '0) 退出' \
+  '请输入数字后按回车:'; do
+  assert_contains /dev/stdin "$required" <<<"$MENU_OUTPUT"
+done
+
+new_case
+run_menu '999\ninvalid\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+[[ "$MENU_STATUS" -eq 0 ]] || fail "invalid choices exited nonzero"
+assert_contains /dev/stdin '无效选择' <<<"$MENU_OUTPUT"
+assert_git_invocation_count 0
+
+new_case
+run_menu '1\nhttps://github.com/owner/repo.git\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+[[ "$MENU_STATUS" -eq 0 ]] || fail "clone menu returned nonzero"
+assert_contains "$GHACC_TEST_GIT_LOG_FILE" "url.https://mirror.test/https://github.com/.insteadOf=https://github.com/"
+assert_contains /dev/stdin '操作完成，退出码: 0' <<<"$MENU_OUTPUT"
+
+new_case
+run_menu '2\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+assert_contains "$GHACC_TEST_GIT_LOG_FILE" "pull"
+assert_contains /dev/stdin '操作完成，退出码: 0' <<<"$MENU_OUTPUT"
+
+new_case
+run_menu '3\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+assert_contains "$GHACC_TEST_GIT_LOG_FILE" "fetch"
+
+new_case
+run_menu '4\nhttps://raw.githubusercontent.com/owner/repo/main/README.md\n0\n' env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" "$SCRIPT" menu
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://raw.githubusercontent.com/owner/repo/main/README.md"
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://raw.githubusercontent.com/owner/repo/main/README.md"
+
+new_case
+run_menu '5\nowner/repo\nv1.2.3\n0\n' env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" "$SCRIPT" menu
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://codeload.github.com/owner/repo/tar.gz/v1.2.3"
+
+new_case
+run_menu '6\nowner/repo\nv1.2.3\napp-linux.tar.gz\n0\n' env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" "$SCRIPT" menu
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://api.github.com/repos/owner/repo/releases/tags/v1.2.3"
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://github.com/owner/repo/releases/download/v1.2.3/app-linux.tar.gz"
+
+new_case
+subscription_json >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+run_menu '7\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+[[ -s "$GHACC_CACHE_DIR/mirrors.list" ]] || fail "menu update did not populate cache"
+assert_contains /dev/stdin '操作完成，退出码: 0' <<<"$MENU_OUTPUT"
+
+new_case
+populate_status_cache
+run_menu '10\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+assert_contains /dev/stdin 'GitHub acceleration sources:' <<<"$MENU_OUTPUT"
+
+new_case
+run_menu '11\npull origin main\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+assert_contains "$GHACC_TEST_GIT_LOG_FILE" "pull"
+assert_contains "$GHACC_TEST_GIT_LOG_FILE" "origin"
+assert_contains "$GHACC_TEST_GIT_LOG_FILE" "main"
+
+new_case
+run_menu '12\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+assert_contains /dev/stdin '用法:' <<<"$MENU_OUTPUT"
+
+new_case
+run_menu '1\nhttps://github.com/owner/repo.git\n0\n' env PATH="$TMP/bin:$PATH" GHACC_TEST_GIT_FAIL_ACCELERATED=1 GHACC_FALLBACK_DIRECT=0 "$SCRIPT" menu
+[[ "$MENU_STATUS" -eq 0 ]] || fail "failed action should return to menu and exit normally"
+assert_contains /dev/stdin '操作失败，退出码:' <<<"$MENU_OUTPUT"
+assert_contains /dev/stdin '按回车返回菜单...' <<<"$MENU_OUTPUT"
+
+new_case
+run_menu '' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+[[ "$MENU_STATUS" -eq 0 ]] || fail "EOF should exit successfully"
+
+new_case
+expect_failure_with '用法:' 'menu rejects extra arguments' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu unexpected
+
 echo "$PASS assertions passed"

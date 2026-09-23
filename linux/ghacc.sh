@@ -786,6 +786,9 @@ usage() {
   ghacc status
       检查并显示已配置加速源的状态。
 
+  ghacc menu
+      打开交互式数字菜单。
+
   ghacc help
       显示帮助。
 EOF
@@ -1049,6 +1052,126 @@ EOF
   download_command "$selected"
 }
 
+menu_show() {
+  cat <<'EOF'
+ghacc 菜单
+
+  1) 克隆 GitHub 仓库
+  2) 拉取当前仓库更新
+  3) 抓取当前仓库远端
+  4) 下载 GitHub 文件
+  5) 下载源码压缩包
+  6) 下载 Release 资产
+  7) 更新镜像订阅缓存
+  8) 安装并启用定时更新
+  9) 停用并卸载定时更新
+ 10) 查看加速源和定时器状态
+ 11) 高级 Git 命令
+ 12) 显示命令行帮助
+  0) 退出
+EOF
+  printf '%s' '请输入数字后按回车: '
+}
+
+menu_prompt() {
+  local prompt="$1"
+  printf '%s' "$prompt"
+}
+
+menu_read_line() {
+  local reply="$1"
+  read -r "$reply"
+}
+
+menu_pause() {
+  local reply=""
+  printf '%s' '按回车返回菜单...'
+  read -r reply || return 0
+  printf '\n'
+}
+
+menu_run_action() {
+  local status=0
+  ("$@") || status=$?
+  if ((status == 0)); then
+    printf '%s\n' '操作完成，退出码: 0'
+  else
+    printf '%s\n' "操作失败，退出码: $status"
+  fi
+  menu_pause
+}
+
+menu_prompt_value() {
+  local label="$1" reply="$2"
+  menu_prompt "$label"
+  read -r "$reply"
+}
+
+menu_clone_action() {
+  local url=""
+  menu_prompt_value '请输入 GitHub 仓库地址: ' url || return 0
+  [[ -n "$url" ]] || { printf '%s\n' '未输入仓库地址，已返回菜单。'; menu_pause; return 0; }
+  menu_run_action clone_command "$url"
+}
+
+menu_download_action() {
+  local url=""
+  menu_prompt_value '请输入 GitHub 文件地址: ' url || return 0
+  [[ -n "$url" ]] || { printf '%s\n' '未输入文件地址，已返回菜单。'; menu_pause; return 0; }
+  menu_run_action download_command "$url"
+}
+
+menu_archive_action() {
+  local repo="" ref=""
+  menu_prompt_value '请输入 owner/repo: ' repo || return 0
+  [[ -n "$repo" ]] || { printf '%s\n' '未输入 owner/repo，已返回菜单。'; menu_pause; return 0; }
+  menu_prompt_value '请输入分支、标签或提交 [HEAD]: ' ref || return 0
+  menu_run_action archive_command "$repo" "${ref:-HEAD}"
+}
+
+menu_release_action() {
+  local repo="" tag="" asset=""
+  menu_prompt_value '请输入 owner/repo: ' repo || return 0
+  [[ -n "$repo" ]] || { printf '%s\n' '未输入 owner/repo，已返回菜单。'; menu_pause; return 0; }
+  menu_prompt_value '请输入版本号或 latest [latest]: ' tag || return 0
+  menu_prompt_value '请输入资产名称或关键词 [列出资产]: ' asset || return 0
+  menu_run_action release_command "$repo" "${tag:-latest}" "$asset"
+}
+
+menu_git_action() {
+  local input=""
+  local -a git_args=()
+  menu_prompt '请输入 Git 参数（空白分隔，例如 pull origin main）: '
+  if ! read -r -a git_args; then return 0; fi
+  ((${#git_args[@]} > 0)) || { printf '%s\n' '未输入 Git 参数，已返回菜单。'; menu_pause; return 0; }
+  menu_run_action git_command "${git_args[@]}"
+}
+
+menu_command() {
+  [[ $# -eq 0 ]] || { usage >&2; return 2; }
+  local choice=""
+  while :; do
+    menu_show
+    printf '\n'
+    choice=""
+    read -r choice || return 0
+    case "$choice" in
+      0) return 0 ;;
+      1) menu_clone_action ;;
+      2) menu_run_action pull_command ;;
+      3) menu_run_action fetch_command ;;
+      4) menu_download_action ;;
+      5) menu_archive_action ;;
+      6) menu_release_action ;;
+      7) menu_run_action update_command ;;
+      10) menu_run_action status_command ;;
+      11) menu_git_action ;;
+      12) printf '\n---- 命令行帮助 ----\n'; usage ;;
+      *) printf '%s\n' '无效选择，请输入菜单中的数字。' ;;
+    esac
+  done
+}
+
 load_config
 case "${1:-help}" in
   clone) shift; clone_command "$@" ;;
@@ -1070,6 +1193,7 @@ case "${1:-help}" in
     fi
     status_command "$@"
     ;;
+  menu) shift; menu_command "$@" ;;
   help|--help|-h) usage ;;
   *)
     usage
