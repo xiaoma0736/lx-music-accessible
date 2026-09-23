@@ -223,6 +223,27 @@ assert_git_invocation_count() {
   fi
 }
 
+git_attempt_sequence() {
+  awk '
+    BEGIN { RS = "---\n" }
+    NF {
+      url = ""
+      count = split($0, lines, "\n")
+      marker = "https://github.com/.insteadOf="
+      for (i = 1; i <= count; i++) {
+        if (index(lines[i], "url.") == 1) {
+          pos = index(lines[i], marker)
+          if (pos > 0) {
+            url = substr(lines[i], 5, pos - 5)
+            break
+          }
+        }
+      }
+      if (url != "") print url
+    }
+  ' "$1"
+}
+
 expect_failure() {
   local name="$1"; shift
   if "$@"; then
@@ -573,13 +594,27 @@ diff -u "$TMP/expected.list" "$GHACC_CACHE_DIR/mirrors.list" || fail "subscripti
 assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "count=3"
 
 new_case
-printf '%s\n' "https://cached.test/" "https://cached.test/" >"$GHACC_CACHE_DIR/mirrors.list"
+printf '%s\n' "https://cached.test" "https://cached.test/" >"$GHACC_CACHE_DIR/mirrors.list"
+printf '%s\n' \
+  "https://mirror.test/" \
+  "https://fallback.test/" \
+  "https://cached.test/" \
+  "https://ghfast.top/" >"$TMP/expected-attempts"
 expect_success "manual mirrors precede cached and built-in mirrors" env PATH="$TMP/bin:$PATH" GHACC_TEST_GIT_FAIL_MIRRORS="https://mirror.test/,https://fallback.test/,https://cached.test/" "$SCRIPT" pull
-assert_contains "$GHACC_TEST_GIT_LOG_FILE" "url.https://ghfast.top/https://github.com/.insteadOf="
-assert_contains "$GHACC_TEST_GIT_LOG_FILE" "url.https://cached.test/https://github.com/.insteadOf="
+assert_git_invocation_count 4
+git_attempt_sequence "$GHACC_TEST_GIT_LOG_FILE" >"$TMP/actual-attempts"
+diff -u "$TMP/expected-attempts" "$TMP/actual-attempts" || fail "assertion failed: mirror attempt order"
 
 new_case
-printf '%s\n' "https://disabled-cache.test/" >"$GHACC_CACHE_DIR/mirrors.list"
-expect_success "subscription disabled excludes cache mirrors" env PATH="$TMP/bin:$PATH" GHACC_SUBSCRIPTION=0 GHACC_TEST_GIT_FAIL_MIRRORS="https://mirror.test/,https://ghfast.top/" "$SCRIPT" pull
+printf '%s\n' "https://disabled-cache.test" >"$GHACC_CACHE_DIR/mirrors.list"
+printf '%s\n' \
+  "https://mirror.test/" \
+  "https://fallback.test/" \
+  "https://ghfast.top/" \
+  "https://gh-proxy.com/" >"$TMP/expected-attempts"
+expect_success "subscription disabled excludes cache mirrors" env PATH="$TMP/bin:$PATH" GHACC_SUBSCRIPTION=0 GHACC_TEST_GIT_FAIL_MIRRORS="https://mirror.test/,https://fallback.test/,https://ghfast.top/" "$SCRIPT" pull
+assert_git_invocation_count 4
+git_attempt_sequence "$GHACC_TEST_GIT_LOG_FILE" >"$TMP/actual-attempts"
+diff -u "$TMP/expected-attempts" "$TMP/actual-attempts" || fail "assertion failed: disabled-subscription attempt order"
 assert_line_absent "$GHACC_TEST_GIT_LOG_FILE" "url.https://disabled-cache.test/https://github.com/.insteadOf="
 echo "$PASS assertions passed"
