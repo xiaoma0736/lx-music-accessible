@@ -521,8 +521,183 @@ assert_line_absent "$GHACC_CACHE_DIR/mirrors.list" "https://sub-one.test/"
 assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "updated=old"
 assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "source=old"
 subscription_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.subscription-*' -print -quit)"
-backup_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.mirrors.list.backup-*' -print -quit)"
+backup_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.mirrors.list.backup.*' -print -quit)"
 [[ -z "$subscription_staged" && -z "$backup_staged" ]] || fail "failed update left staged files"
+new_case
+printf '%s\n' 'https://old.test/' >"$GHACC_CACHE_DIR/mirrors.list"
+printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
+subscription_json >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+unset GHACC_TEST_CURL_FAIL_MIRRORS
+real_mktemp="$(command -v mktemp)"
+cat >"$TMP/bin/mktemp" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+*/.subscription-meta.XXXXXX)
+  printf '%s\n' "\$GHACC_CACHE_DIR/.subscription-meta-missing/meta"
+  exit 0
+  ;;
+esac
+exec "$real_mktemp" "\$@"
+EOF
+chmod +x "$TMP/bin/mktemp"
+expect_failure_with 'metadata staging failed' 'failed metadata staging preserves cache' env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" 'https://old.test/'
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" 'updated=old'
+subscription_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.subscription-*' -print -quit)"
+backup_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.mirrors.list.backup.*' -print -quit)"
+[[ -z "$subscription_staged" && -z "$backup_staged" ]] || fail 'failed metadata staging left staged files'
+
+new_case
+printf '%s\n' 'https://old.test/' >"$GHACC_CACHE_DIR/mirrors.list"
+printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
+subscription_json >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+unset GHACC_TEST_CURL_FAIL_MIRRORS
+real_mv="$(command -v mv)"
+cat >"$TMP/bin/mv" <<EOF
+#!/usr/bin/env bash
+count_file="\$TMP/mv.calls"
+calls="\$(cat "\$count_file")"
+calls=\$((calls + 1))
+printf '%s\n' "\$calls" > "\$count_file"
+if [[ "\$calls" -eq 2 || "\$calls" -eq 3 ]]; then exit 73; fi
+exec "$real_mv" "\$@"
+EOF
+chmod +x "$TMP/bin/mv"
+printf '0\n' >"$TMP/mv.calls"
+expect_failure_without 'Updated mirrors:' 'failed rollback retains recovery data' env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" 'updated=old'
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" 'source=old'
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" 'https://sub-one.test/'
+backup_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.mirrors.list.backup.*' -print -quit)"
+[[ -n "$backup_staged" ]] || fail 'failed rollback removed backup'
+assert_contains "$backup_staged" 'https://old.test/'
+
+new_case
+printf '%s\n' 'https://old.test/' >"$GHACC_CACHE_DIR/mirrors.list"
+printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
+printf '%s\n' '{"lastUpdated":"2026-09-23T00:00:00Z"}' >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+unset GHACC_TEST_CURL_FAIL_MIRRORS
+expect_failure_with 'subscription validation failed' 'missing mirrors preserves cache' env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" 'https://old.test/'
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" 'updated=old'
+subscription_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.subscription-*' -print -quit)"
+backup_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.mirrors.list.backup.*' -print -quit)"
+[[ -z "$subscription_staged" && -z "$backup_staged" ]] || fail 'missing mirrors left staged files'
+
+new_case
+printf '%s\n' 'https://old.test/' >"$GHACC_CACHE_DIR/mirrors.list"
+printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
+printf '%s\n' '{"lastUpdated":"2026-09-23T00:00:00Z","mirrors":null}' >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+unset GHACC_TEST_CURL_FAIL_MIRRORS
+expect_failure_with 'subscription validation failed' 'null mirrors preserves cache' env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" 'https://old.test/'
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" 'updated=old'
+subscription_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.subscription-*' -print -quit)"
+backup_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.mirrors.list.backup.*' -print -quit)"
+[[ -z "$subscription_staged" && -z "$backup_staged" ]] || fail 'null mirrors left staged files'
+
+new_case
+printf '%s\n' 'https://old.test/' >"$GHACC_CACHE_DIR/mirrors.list"
+printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
+cat >"$TMP/subscription.json" <<'EOF'
+{
+  "lastUpdated": "2026-09-23T00:00:00Z",
+  "mirrors": {
+    "url": "https://decoy-mirror.test/",
+    "type": "file-download",
+    "status": "active",
+    "features": ["Git Clone"]
+  }
+}
+EOF
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+unset GHACC_TEST_CURL_FAIL_MIRRORS
+expect_failure_with 'subscription validation failed' 'non-array mirrors preserves cache' env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" 'https://old.test/'
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" 'updated=old'
+subscription_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.subscription-*' -print -quit)"
+backup_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.mirrors.list.backup.*' -print -quit)"
+[[ -z "$subscription_staged" && -z "$backup_staged" ]] || fail 'non-array mirrors left staged files'
+
+new_case
+printf '%s\n' 'https://old.test/' >"$GHACC_CACHE_DIR/mirrors.list"
+printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
+cat >"$TMP/subscription.json" <<'EOF'
+{
+  "lastUpdated": "2026-09-23T00:00:00Z",
+  "decoy": {
+    "url": "https://decoy-mirror.test/",
+    "type": "file-download",
+    "status": "active",
+    "features": ["Git Clone"]
+  },
+  "mirrors": [
+    {
+      "url": "https://array-mirror.test/",
+      "type": "file-download",
+      "status": "active",
+      "features": ["Git Clone"]
+    }
+  ]
+}
+EOF
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+unset GHACC_TEST_CURL_FAIL_MIRRORS
+expect_success 'update ignores top-level decoy objects' env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" 'https://array-mirror.test/'
+assert_line_absent "$GHACC_CACHE_DIR/mirrors.list" 'https://decoy-mirror.test/'
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" 'count=1'
+
+new_case
+printf '%s\n' 'https://old.test/' >"$GHACC_CACHE_DIR/mirrors.list"
+printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
+printf '%s\n' '{"lastUpdated":"2026-09-23T00:00:00Z","mirrors":[]}' >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+unset GHACC_TEST_CURL_FAIL_MIRRORS
+expect_failure_with 'subscription validation failed' 'empty mirrors preserves cache' env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" 'https://old.test/'
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" 'updated=old'
+subscription_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.subscription-*' -print -quit)"
+backup_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.mirrors.list.backup.*' -print -quit)"
+[[ -z "$subscription_staged" && -z "$backup_staged" ]] || fail 'empty mirrors left staged files'
+
+new_case
+printf '%s\n' 'https://old.test/' >"$GHACC_CACHE_DIR/mirrors.list"
+printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
+long_host="$(printf "a%.0s" $(seq 1 2049))"
+cat >"$TMP/subscription.json" <<EOF
+{
+  "lastUpdated": "2026-09-23T00:00:00Z",
+  "mirrors": [
+    {
+      "url": "https://$long_host.test/",
+      "type": "file-download",
+      "status": "active",
+      "features": ["Git Clone"]
+    }
+  ]
+}
+EOF
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+unset GHACC_TEST_CURL_FAIL_MIRRORS
+expect_failure_with 'subscription validation failed' 'over-length mirror URL preserves cache' env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" 'https://old.test/'
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" 'updated=old'
+subscription_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.subscription-*' -print -quit)"
+backup_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.mirrors.list.backup.*' -print -quit)"
+[[ -z "$subscription_staged" && -z "$backup_staged" ]] || fail 'over-length URL left staged files'
 
 capped_subscription_json() {
   cat <<'EOF'
@@ -661,6 +836,53 @@ for expected in \
 done
 
 new_case
+printf '%s\n' "https://status-cache.test/" >"$GHACC_CACHE_DIR/mirrors.list"
+cat >"$GHACC_CACHE_DIR/mirrors.meta" <<'EOF'
+updated=2026-09-23T00:00:00Z
+source=https://subscription.test/mirrors.json
+count=1
+subscription_updated=2026-09-23T00:00:00Z
+EOF
+export GHACC_SYSTEMCTL="$TMP/bin/no-such-systemctl"
+status_output="$(env PATH="$TMP/bin:$PATH" "$SCRIPT" status)"
+status_status=$?
+[[ "$status_status" == 0 ]] || fail "status returned $status_status when systemd was unavailable"
+PASS=$((PASS + 1))
+echo "ok - status remains successful when systemd unavailable"
+if ! grep -Fq 'Update timer: systemd unavailable' <<<"$status_output"; then
+  printf '%s\n' "$status_output" >&2
+  fail 'unavailable systemctl was not distinguished'
+fi
+
+new_case
+mkdir -p "$TMP/bin"
+cat >"$TMP/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "is-enabled" ]]; then
+  exit 42
+fi
+exit 0
+EOF
+chmod +x "$TMP/bin/systemctl"
+printf '%s\n' "https://status-cache.test/" >"$GHACC_CACHE_DIR/mirrors.list"
+cat >"$GHACC_CACHE_DIR/mirrors.meta" <<'EOF'
+updated=2026-09-23T00:00:00Z
+source=https://subscription.test/mirrors.json
+count=1
+subscription_updated=2026-09-23T00:00:00Z
+EOF
+export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+status_output="$(env PATH="$TMP/bin:$PATH" "$SCRIPT" status)"
+status_status=$?
+[[ "$status_status" == 0 ]] || fail "status returned $status_status for unknown systemctl failure"
+PASS=$((PASS + 1))
+echo "ok - status remains successful for unknown systemctl failure"
+if ! grep -Fq 'Update timer: unknown' <<<"$status_output"; then
+  printf '%s\n' "$status_output" >&2
+  fail 'unknown systemctl failure was not distinguished'
+fi
+
+new_case
 mkdir -p "$TMP/systemd" "$TMP/bin" "$GHACC_CACHE_DIR"
 cat >"$TMP/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -689,12 +911,52 @@ for required in \
   fi
 done
 assert_contains "$TMP/systemd/ghacc-update.timer" "$GHACC_UPDATE_SCHEDULE"
+assert_contains "$TMP/systemd/ghacc-update.service" "ExecStart=$SCRIPT update"
 grep -Fxq "Unit=ghacc-update.service" "$TMP/systemd/ghacc-update.timer" || fail "timer does not target ghacc-update.service"
 if grep -Fxq "Unit=ghacc-update.timer" "$TMP/systemd/ghacc-update.timer"; then
   fail "timer incorrectly targets itself"
 fi
 assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "daemon-reload"
 assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "enable --now ghacc-update.timer"
+
+new_case
+mkdir -p "$TMP/systemd" "$TMP/bin"
+cat >"$TMP/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+exit 0
+EOF
+chmod +x "$TMP/bin/systemctl"
+export GHACC_SYSTEMD_UNIT_DIR="$TMP/systemd"
+export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+export GHACC_UPDATE_SCHEDULE='*-*-* 04:30:00'
+export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
+: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+script_canonical="$(cd "$(dirname "$SCRIPT")" && pwd -P)/$(basename "$SCRIPT")"
+expect_success "relative install-timer canonicalizes ExecStart" \
+  env PATH="$TMP/bin:$PATH" ./linux/ghacc.sh install-timer
+grep -Fxq "ExecStart=$script_canonical update" "$TMP/systemd/ghacc-update.service" ||
+  fail "relative install-timer did not canonicalize ExecStart"
+
+new_case
+mkdir -p "$TMP/systemd" "$TMP/bin" "$TMP/unsafe path"
+cat >"$TMP/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+exit 0
+EOF
+chmod +x "$TMP/bin/systemctl"
+cp "$SCRIPT" "$TMP/unsafe path/ghacc"
+export GHACC_SYSTEMD_UNIT_DIR="$TMP/systemd"
+export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+export GHACC_UPDATE_SCHEDULE='*-*-* 04:30:00'
+export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
+: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+expect_failure_without 'Installed update timer' 'install-timer rejects unsafe script path' \
+  env PATH="$TMP/bin:$PATH" "$TMP/unsafe path/ghacc" install-timer
+[[ ! -e "$TMP/systemd/ghacc-update.service" ]] || fail 'unsafe path created service unit'
+[[ ! -e "$TMP/systemd/ghacc-update.timer" ]] || fail 'unsafe path created timer unit'
+[[ ! -s "$GHACC_TEST_SYSTEMCTL_LOG_FILE" ]] || fail 'unsafe path invoked systemctl'
 
 expect_success "uninstall-timer disables and removes units" env PATH="$TMP/bin:$PATH" "$SCRIPT" uninstall-timer
 [[ ! -e "$TMP/systemd/ghacc-update.service" ]] || fail "service unit still exists"

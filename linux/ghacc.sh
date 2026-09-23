@@ -127,9 +127,114 @@ subscription_parse_file() {
   local file="$1"
   [[ -s "$file" ]] || return 1
   [[ "$(head -c 1 "$file")" == "{" ]] || return 1
-  grep -Fq '"lastUpdated"' "$file" || return 1
-  grep -Fq '"mirrors"' "$file" || return 1
+
+  # Parse a practical JSON subset structurally. Strings and container nesting are
+  # tracked so that only objects inside the top-level "mirrors" array are emitted.
   awk '
+    function parse_error() { parse_failed = 1; exit 2 }
+    function is_whitespace(ch) {
+      return ch == " " || ch == "\t" || ch == "\n" || ch == "\r"
+    }
+    function push(kind) {
+      top++
+      kinds[top] = kind
+      states[top] = (kind == "object" ? 0 : 0)
+      object_keys[top] = ""
+    }
+    function expects_value() {
+      if (kinds[top] == "object") return states[top] == 2
+      return states[top] == 0
+    }
+
+    function finish_value() {
+      if (kinds[top] == "object") {
+        if (states[top] != 2) parse_error()
+        states[top] = 3
+      } else {
+        if (states[top] != 0) parse_error()
+        states[top] = 1
+      }
+    }
+    function begin_object(ch) {
+      if (!expects_value()) parse_error()
+      if (top == 0 && states[0] == 2 && object_keys[0] == "mirrors") {
+        mirrors_seen = 1
+        mirrors_valid = 0
+      }
+      if (mirror_array_level == top && kinds[top] == "array" && states[top] == 0) {
+        in_mirror_object = 1
+        mirror_buffer = ch
+      }
+      push("object")
+    }
+    function begin_array(ch) {
+      if (!expects_value()) parse_error()
+      if (top == 0 && states[0] == 2 && object_keys[0] == "mirrors") {
+        mirror_array_level = top + 1
+        mirrors_seen = 1
+        mirrors_valid = 1
+      }
+      push("array")
+    }
+    function end_container(ch) {
+      if ((ch == "}" && kinds[top] != "object") ||
+          (ch == "]" && kinds[top] != "array")) parse_error()
+      if (kinds[top] == "object" && states[top] != 3) parse_error()
+      if (kinds[top] == "array" && states[top] != 1) parse_error()
+      if (in_mirror_object && top == mirror_array_level + 1 && kinds[top] == "object") {
+        emit_object(mirror_buffer)
+        in_mirror_object = 0
+      }
+      top--
+      if (top < 0) parse_error()
+      if (top == mirror_array_level - 1) mirror_array_level = 0
+      finish_value()
+    }
+    function hex_value(ch,    position) {
+      ch = toupper(ch)
+      position = index("0123456789ABCDEF", ch)
+      if (position == 0) return -1
+      return position - 1
+    }
+    function string_escape(ch) {
+      if (ch == "\"") return "\""
+      if (ch == "\\") return "\\"
+      if (ch == "/") return "/"
+      if (ch == "b") return "\b"
+      if (ch == "f") return "\f"
+      if (ch == "n") return "\n"
+      if (ch == "r") return "\r"
+      if (ch == "t") return "\t"
+      if (ch == "u") return "\ru"
+      parse_error()
+    }
+    function close_string() {
+      if (kinds[top] == "object" && states[top] == 0) {
+        object_keys[top] = string_value
+        states[top] = 1
+      } else if (expects_value()) {
+        if (top == 0 && states[0] == 2 && object_keys[0] == "mirrors") {
+          mirrors_seen = 1
+          mirrors_valid = 0
+        }
+        if (top == 0 && states[0] == 2 && object_keys[0] == "lastUpdated") {
+          last_updated_seen = 1
+        }
+        finish_value()
+      } else {
+        parse_error()
+      }
+    }
+    function validate_primitive() {
+      if (primitive_value == "true" || primitive_value == "false" ||
+          primitive_value == "null" ||
+          primitive_value ~ /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/) {
+        primitive_value = ""
+        finish_value()
+        return
+      }
+      parse_error()
+    }
     function string_field(text, key,    pos, rest, colon, quote, out, i, ch, escaped) {
       pos = index(text, "\"" key "\"")
       if (pos == 0) return ""
@@ -159,38 +264,128 @@ subscription_parse_file() {
       if (index(text, "\"Git Clone\"") == 0) return
       print url
     }
+    BEGIN {
+      top = -1
+      kinds[0] = "object"
+      states[0] = 0
+      object_keys[0] = ""
+      mirror_array_level = 0
+      mirrors_seen = 0
+      mirrors_valid = 0
+      last_updated_seen = 0
+      root_closed = 0
+    }
     {
-      count = length($0)
-      for (i = 1; i <= count; i++) {
-        ch = substr($0, i, 1)
-        if (depth == 0) {
-          if (ch == "{") { depth = 1; buf = ch }
+      for (char_index = 1; char_index <= length($0); char_index++) {
+        ch = substr($0, char_index, 1)
+        if (in_mirror_object) mirror_buffer = mirror_buffer ch
+        if (root_closed) {
+          if (!is_whitespace(ch)) parse_error()
           continue
         }
-        buf = buf ch
         if (in_string) {
-          if (escaped) escaped = 0
-          else if (ch == "\\") escaped = 1
-          else if (ch == "\"") in_string = 0
+          if (escaped) {
+            escaped = 0
+            if (ch == "u") {
+              unicode_count = 1
+              unicode_value = 0
+            } else {
+              decoded = string_escape(ch)
+              if (decoded != "\ru") string_value = string_value decoded
+              else unicode_count = 1
+              if (unicode_count) unicode_value = 0
+            }
+          } else if (ch == "\\") {
+            escaped = 1
+          } else if (ch == "\n" || ch == "\r") {
+            parse_error()
+          } else if (ch == "\"") {
+            in_string = 0
+            close_string()
+          } else {
+            string_value = string_value ch
+          }
           continue
         }
-        if (ch == "\"") { in_string = 1; continue }
-        if (ch == "{") depth++
-        if (ch == "}") {
-          depth--
-          if (depth == 1) {
-            emit_object(buf)
-            buf = ""
-          } else if (depth == 0) {
-            buf = ""
+        if (unicode_count) {
+          digit = hex_value(ch)
+          if (digit < 0) parse_error()
+          unicode_value = unicode_value * 16 + digit
+          unicode_count++
+          if (unicode_count == 5) {
+            unicode_count = 0
+            escaped = 0
+            if (unicode_value > 0 && unicode_value < 128) {
+              string_value = string_value sprintf("%c", unicode_value)
+            }
           }
+          continue
+        }
+        if (is_whitespace(ch)) {
+          if (primitive_value != "") validate_primitive()
+          continue
+        }
+        if (primitive_value != "") {
+          if (ch ~ /[A-Za-z0-9+.-]/) {
+            primitive_value = primitive_value ch
+            continue
+          }
+          validate_primitive()
+        }
+        if (ch == "\"") {
+          if (!(kinds[top] == "object" && states[top] == 0) && !expects_value()) parse_error()
+          in_string = 1
+          escaped = 0
+          unicode_count = 0
+          string_value = ""
+        } else if (ch == "{") {
+          begin_object(ch)
+        } else if (ch == "[") {
+          begin_array(ch)
+        } else if (ch == "}") {
+          if (top == 0) {
+            if (states[0] != 3) parse_error()
+            root_closed = 1
+          } else {
+            end_container(ch)
+          }
+        } else if (ch == "]") {
+          end_container(ch)
+        } else if (ch == ":") {
+          if (kinds[top] != "object" || states[top] != 1) parse_error()
+          states[top] = 2
+        } else if (ch == ",") {
+          if (kinds[top] == "object" && states[top] == 3) {
+            states[top] = 0
+            object_keys[top] = ""
+          } else if (kinds[top] == "array" && states[top] == 1) {
+            states[top] = 0
+          } else {
+            parse_error()
+          }
+        } else if (ch ~ /^[-0-9tfn]$/) {
+          if (!expects_value()) parse_error()
+          if (top == 0 && states[0] == 2 && object_keys[0] == "mirrors") {
+            mirrors_seen = 1
+            mirrors_valid = 0
+          }
+          primitive_value = ch
+        } else {
+          parse_error()
         }
       }
+      if (primitive_value != "") validate_primitive()
     }
-    END { if (depth != 0) exit 2 }
+    END {
+      if (parse_failed || primitive_value != "" || in_string || unicode_count ||
+          !root_closed || !mirrors_seen || !mirrors_valid ||
+          mirror_array_level != 0 || !last_updated_seen ||
+          top != 0 || states[0] != 3) {
+        exit 2
+      }
+    }
   ' "$file"
 }
-
 subscription_fetch_to() {
   local output="$1" source_url status
   SUBSCRIPTION_FETCH_SOURCE=""
@@ -214,6 +409,19 @@ subscription_fetch_to() {
   return 1
 }
 
+write_subscription_list() {
+  : >"$1"
+}
+
+write_subscription_meta() {
+  {
+    printf 'updated=%s\n' "$2"
+    printf 'source=%s\n' "$3"
+    printf 'count=%s\n' "$4"
+    printf 'subscription_updated=%s\n' "$5"
+  } >"$1"
+}
+
 update_command() {
   load_config
   [[ "$GHACC_SUBSCRIPTION" == 1 ]] || die "mirror subscription is disabled"
@@ -222,6 +430,7 @@ update_command() {
 
   local body list filtered meta count remote_updated now source_url status=0
   local list_backup="" old_list=0
+  local -a cleanup_paths=()
   for source_url in "${GHACC_SUBSCRIPTION_URLS[@]}"; do
     valid_subscription_url "$source_url" || {
       log "ERROR: invalid subscription source: $source_url"
@@ -249,19 +458,44 @@ update_command() {
     return "$status"
   fi
 
-  : >"$list"
-  local url canonical
+  if ! write_subscription_list "$list"; then
+    rm -f "$body" "$list" "$filtered" "$meta"
+    log "ERROR: unable to write staged subscription list"
+    return 1
+  fi
+
+  local url canonical grep_status
   while IFS= read -r url; do
     [[ -n "$url" ]] || continue
     valid_subscription_url "$url" || continue
     canonical="$url"
     [[ "$canonical" == */ ]] || canonical="$canonical/"
-    grep -Fxsq "$canonical" "$list" || printf '%s\n' "$canonical" >>"$list"
-    [[ "$(wc -l <"$list")" -lt "$GHACC_SUBSCRIPTION_MAX_MIRRORS" ]] || break
+    grep -Fxsq "$canonical" "$list"
+    grep_status=$?
+    if ((grep_status == 1)); then
+      if ! printf '%s\n' "$canonical" >>"$list"; then
+        rm -f "$body" "$list" "$filtered" "$meta"
+        log "ERROR: unable to write staged subscription list"
+        return 1
+      fi
+    elif ((grep_status != 0)); then
+      rm -f "$body" "$list" "$filtered" "$meta"
+      log "ERROR: unable to inspect staged subscription list"
+      return 1
+    fi
+    count="$(wc -l <"$list")"
+    status=$?
+    if ((status != 0)) || [[ ! "$count" =~ ^[0-9]+$ ]]; then
+      rm -f "$body" "$list" "$filtered" "$meta"
+      log "ERROR: unable to inspect staged subscription list"
+      return 1
+    fi
+    ((count < GHACC_SUBSCRIPTION_MAX_MIRRORS)) || break
   done <"$filtered"
 
   count="$(wc -l <"$list")"
-  if [[ ! "$count" =~ ^[1-9][0-9]*$ ]]; then
+  status=$?
+  if ((status != 0)) || [[ ! "$count" =~ ^[1-9][0-9]*$ ]]; then
     rm -f "$body" "$list" "$filtered" "$meta"
     log "ERROR: subscription validation failed"
     return 1
@@ -269,12 +503,11 @@ update_command() {
 
   remote_updated="$(subscription_string_field "$body" "lastUpdated")"
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  {
-    printf 'updated=%s\n' "$now"
-    printf 'source=%s\n' "$SUBSCRIPTION_FETCH_SOURCE"
-    printf 'count=%s\n' "$count"
-    printf 'subscription_updated=%s\n' "$remote_updated"
-  } >"$meta"
+  if ! write_subscription_meta "$meta" "$now" "$SUBSCRIPTION_FETCH_SOURCE" "$count" "$remote_updated"; then
+    rm -f "$body" "$list" "$filtered" "$meta"
+    log "ERROR: metadata staging failed"
+    return 1
+  fi
 
   if [[ -e "$GHACC_CACHE_DIR/mirrors.list" ]]; then
     old_list=1
@@ -289,32 +522,46 @@ update_command() {
     }
   fi
 
-  mv -f "$list" "$GHACC_CACHE_DIR/mirrors.list" || {
+  if ! mv -f "$list" "$GHACC_CACHE_DIR/mirrors.list"; then
     rm -f "$body" "$list" "$filtered" "$meta" "$list_backup"
     log "ERROR: unable to replace subscription cache"
     return 1
-  }
-  mv -f "$meta" "$GHACC_CACHE_DIR/mirrors.meta" || {
-    rm -f "$body" "$filtered" "$meta"
+  fi
+
+  if ! mv -f "$meta" "$GHACC_CACHE_DIR/mirrors.meta"; then
+    rm -f "$body" "$filtered"
     if ((old_list)); then
-      mv -f "$list_backup" "$GHACC_CACHE_DIR/mirrors.list" || {
-        rm -f "$GHACC_CACHE_DIR/mirrors.list"
-        log "ERROR: unable to restore subscription cache"
+      if ! mv -f "$list_backup" "$GHACC_CACHE_DIR/mirrors.list"; then
+        log "ERROR: unable to restore subscription cache; recovery data retained"
         return 1
-      }
+      fi
+      list_backup=""
     else
-      rm -f "$GHACC_CACHE_DIR/mirrors.list"
+      if ! rm -f "$GHACC_CACHE_DIR/mirrors.list"; then
+        log "ERROR: unable to remove partial subscription cache"
+        return 1
+      fi
     fi
-    rm -f "$list_backup"
+    cleanup_paths=("$body" "$filtered" "$meta")
+    if [[ -n "$list_backup" && -e "$list_backup" ]]; then cleanup_paths+=("$list_backup"); fi
+    if ! rm -f "${cleanup_paths[@]}"; then
+      log "ERROR: unable to clean staged subscription files"
+      return 1
+    fi
     log "ERROR: unable to replace subscription metadata"
     return 1
-  }
-  rm -f "$body" "$filtered" "$list_backup"
+  fi
+
+  cleanup_paths=("$body" "$filtered")
+  if [[ -n "$list_backup" && -e "$list_backup" ]]; then cleanup_paths+=("$list_backup"); fi
+  if ! rm -f "${cleanup_paths[@]}"; then
+    log "ERROR: unable to clean staged subscription files"
+    return 1
+  fi
   log "Updated mirrors: $count"
   log "Source: $SUBSCRIPTION_FETCH_SOURCE"
   log "Cache: $GHACC_CACHE_DIR/mirrors.list"
 }
-
 probe_url() {
   local url="$1"
   if have curl; then
@@ -366,6 +613,7 @@ run_systemctl() {
 }
 
 subscription_status() {
+  local systemctl_status
   if [[ "$GHACC_SUBSCRIPTION" == 1 ]]; then
     printf '%s\n' "Subscription: enabled"
   else
@@ -380,10 +628,16 @@ subscription_status() {
   else
     printf '%s\n' "Cache: not populated"
   fi
-  if run_systemctl is-enabled ghacc-update.timer >/dev/null 2>&1; then
+  run_systemctl is-enabled ghacc-update.timer >/dev/null 2>&1
+  systemctl_status=$?
+  if ((systemctl_status == 0)); then
     printf '%s\n' "Update timer: enabled"
-  else
+  elif ((systemctl_status == 1)); then
     printf '%s\n' "Update timer: not enabled"
+  elif ((systemctl_status == 126 || systemctl_status == 127)); then
+    printf '%s\n' "Update timer: systemd unavailable"
+  else
+    printf '%s\n' "Update timer: unknown"
   fi
 }
 
@@ -433,6 +687,12 @@ install_timer_command() {
   [[ $# -eq 0 ]] || { usage >&2; return 2; }
   local unit_dir="${GHACC_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
   local script_path="${BASH_SOURCE[0]}"
+  [[ -f "$script_path" ]] || die "script is not an existing regular file: $script_path"
+  if ! script_path="$(realpath -e -- "$script_path")"; then
+    die "cannot canonicalize script path: $script_path"
+  fi
+  [[ -n "$script_path" && "$script_path" == /* ]] || die "script path is not absolute: $script_path"
+  [[ "$script_path" =~ ^/[A-Za-z0-9/._-]+$ ]] || die "unsafe script path for systemd: $script_path"
   mkdir -p "$GHACC_CACHE_DIR" || {
     log "ERROR: cannot create cache directory: $GHACC_CACHE_DIR"
     return 1
