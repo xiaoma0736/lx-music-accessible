@@ -1138,6 +1138,48 @@ menu_release_action() {
   menu_run_action release_command "$repo" "${tag:-latest}" "$asset"
 }
 
+menu_effective_uid() {
+  printf '%s\n' "${GHACC_TEST_EUID:-$EUID}"
+}
+
+menu_confirm() {
+  local prompt="$1" answer=""
+  printf '%s\n' '这是系统级操作，会安装、启用、停用或卸载 systemd timer。'
+  menu_prompt "$prompt"
+  read -r answer || return 1
+  [[ "$answer" == "y" || "$answer" == "Y" ]]
+}
+
+menu_install_timer_action() {
+  menu_confirm '确认安装并启用定时更新？请输入 y 确认: ' || {
+    printf '%s\n' '已取消，未修改系统。'
+    menu_pause
+    return 0
+  }
+  if [[ "$(menu_effective_uid)" != 0 ]]; then
+    printf '%s\n' '当前不是 root。请退出菜单后执行: sudo ghacc install-timer'
+    printf '%s\n' '脚本不自动提权。'
+    menu_pause
+    return 0
+  fi
+  menu_run_action install_timer_command
+}
+
+menu_uninstall_timer_action() {
+  menu_confirm '确认停用并卸载定时更新？请输入 y 确认: ' || {
+    printf '%s\n' '已取消，未修改系统。'
+    menu_pause
+    return 0
+  }
+  if [[ "$(menu_effective_uid)" != 0 ]]; then
+    printf '%s\n' '当前不是 root。请退出菜单后执行: sudo ghacc uninstall-timer'
+    printf '%s\n' '脚本不自动提权。'
+    menu_pause
+    return 0
+  fi
+  menu_run_action uninstall_timer_command
+}
+
 menu_git_action() {
   local input=""
   local -a git_args=()
@@ -1164,6 +1206,8 @@ menu_command() {
       5) menu_archive_action ;;
       6) menu_release_action ;;
       7) menu_run_action update_command ;;
+      8) menu_install_timer_action ;;
+      9) menu_uninstall_timer_action ;;
       10) menu_run_action status_command ;;
       11) menu_git_action ;;
       12) printf '\n---- 命令行帮助 ----\n'; usage ;;
@@ -1171,6 +1215,14 @@ menu_command() {
     esac
   done
 }
+
+if (($# == 0)); then
+  if [[ -n "${GHACC_MENU_FORCE_TTY:-}" || ( -t 0 && -t 1 ) ]]; then
+    set -- menu
+  else
+    set -- help
+  fi
+fi
 
 load_config
 case "${1:-help}" in

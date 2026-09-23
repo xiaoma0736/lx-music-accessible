@@ -1223,4 +1223,50 @@ run_menu '' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
 new_case
 expect_failure_with '用法:' 'menu rejects extra arguments' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu unexpected
 
+new_case
+export GHACC_TEST_EUID=1000
+export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
+: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+run_menu '8\ny\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+assert_contains /dev/stdin 'sudo ghacc install-timer' <<<"$MENU_OUTPUT"
+assert_contains /dev/stdin '不自动提权' <<<"$MENU_OUTPUT"
+[[ ! -s "$GHACC_TEST_SYSTEMCTL_LOG_FILE" ]] || fail "non-root menu invoked systemctl"
+# Initialize the log after proving no command ran.
+: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+
+new_case
+export GHACC_TEST_EUID=0
+export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
+: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+run_menu '9\nn\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+assert_contains /dev/stdin '已取消' <<<"$MENU_OUTPUT"
+[[ ! -s "$GHACC_TEST_SYSTEMCTL_LOG_FILE" ]] || fail "unconfirmed uninstall invoked systemctl"
+
+new_case
+export GHACC_TEST_EUID=0
+mkdir -p "$TMP/systemd"
+cat >"$TMP/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+exit 0
+EOF
+chmod +x "$TMP/bin/systemctl"
+export GHACC_SYSTEMD_UNIT_DIR="$TMP/systemd"
+export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
+: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+run_menu '8\ny\n\n9\ny\n\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "enable --now ghacc-update.timer"
+assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "disable --now ghacc-update.timer"
+
+new_case
+menu_status=0
+menu_output="$(env PATH="$TMP/bin:$PATH" "$SCRIPT" </dev/null 2>&1)" || menu_status=$?
+[[ "$menu_status" -eq 0 ]] || fail "noninteractive no-argument ghacc failed"
+assert_contains /dev/stdin '用法:' <<<"$menu_output"
+assert_line_absent /dev/stdin 'ghacc 菜单' <<<"$menu_output"
+
+new_case
+run_menu '0\n' env PATH="$TMP/bin:$PATH" GHACC_MENU_FORCE_TTY=1 "$SCRIPT"
+assert_contains /dev/stdin 'ghacc 菜单' <<<"$MENU_OUTPUT"
 echo "$PASS assertions passed"
