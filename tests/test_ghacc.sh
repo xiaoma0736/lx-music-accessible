@@ -1116,4 +1116,10 @@ assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "disable --now ghacc-update.tim
 if grep -Fq "daemon-reload" "$GHACC_TEST_SYSTEMCTL_LOG_FILE"; then
   fail "daemon-reload was invoked after disable failure"
 fi
+new_case
+if grep -Uq $'\r' "$SCRIPT"; then
+  fail "production script contains CR characters"
+fi
+PASS=$((PASS + 1))
+echo "ok - production script uses LF endings"
 echo "$PASS assertions passed"
