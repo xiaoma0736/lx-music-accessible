@@ -1,4 +1,4 @@
-﻿# ghacc Interactive Menu Implementation Plan
+# ghacc Interactive Menu Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -394,13 +394,13 @@ chmod +x "$TMP/bin/systemctl"
 export GHACC_SYSTEMD_UNIT_DIR="$TMP/systemd"
 export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
 : >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
-run_menu '8\ny\n9\ny\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+run_menu '8\ny\n\n9\ny\n\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
 assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "enable --now ghacc-update.timer"
 assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "disable --now ghacc-update.timer"
 
 new_case
-menu_output="$(env PATH="$TMP/bin:$PATH" "$SCRIPT" </dev/null 2>&1)"
-menu_status=0 || menu_status=$?
+menu_status=0
+menu_output="$(env PATH="$TMP/bin:$PATH" "$SCRIPT" </dev/null 2>&1)" || menu_status=$?
 [[ "$menu_status" -eq 0 ]] || fail "noninteractive no-argument ghacc failed"
 assert_contains /dev/stdin '用法:' <<<"$menu_output"
 assert_line_absent /dev/stdin 'ghacc 菜单' <<<"$menu_output"
