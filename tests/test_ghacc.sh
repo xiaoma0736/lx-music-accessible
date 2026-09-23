@@ -15,7 +15,7 @@ trap cleanup EXIT
 new_case() {
   cleanup
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/ghacc-test.XXXXXX")"
-  mkdir -p "$TMP/bin" "$TMP/work" "$TMP/download"
+  mkdir -p "$TMP/bin" "$TMP/work" "$TMP/download" "$TMP/cache"
   cat >"$TMP/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 url="${*: -1}"
@@ -27,6 +27,15 @@ done
 if [[ "$3" == *GHACC_TEST_HEADER ]]; then exit 22; fi
 if [[ "${GHACC_TEST_CURL_FAIL:-0}" == 1 && "$has_output" == 1 ]]; then exit 22; fi
 if [[ "${GHACC_TEST_CURL_FAIL_DIRECT:-0}" == 1 && "$has_output" == 1 && "$url" == https://* ]]; then exit 22; fi
+if [[ -n "${GHACC_TEST_SUBSCRIPTION_FILE:-}" && "$url" == "${GHACC_TEST_SUBSCRIPTION_MATCH:-}"* ]]; then
+  for ((i=1; i<=$#; i++)); do
+    if [[ "${!i}" == "-o" ]]; then
+      j=$((i + 1))
+      cp "$GHACC_TEST_SUBSCRIPTION_FILE" "${!j}"
+      exit 0
+    fi
+  done
+fi
 if [[ -n "${GHACC_TEST_CURL_REQUIRE_CONNECT_TIMEOUT:-}" && "$has_output" == 1 ]]; then
   previous=""
   for argument in "$@"; do
@@ -105,9 +114,15 @@ GHACC_TIMEOUT=3
 GHACC_DOWNLOAD_DIR="$TMP/config-download"
 GHACC_AUTO_SELECT=1
 GHACC_FALLBACK_DIRECT=1
+GHACC_SUBSCRIPTION=1
+GHACC_SUBSCRIPTION_URLS=(
+  "https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+  "https://cdn.jsdelivr.net/gh/Miao-moe/gh-accelerator-api@main/mirrors.json"
+)
 EOF
 mkdir -p "$TMP/config-download"
   export GHACC_CONFIG="$TMP/ghacc.conf"
+  export GHACC_CACHE_DIR="$TMP/cache"
   export GHACC_TEST_CURL_LOG_FILE="$TMP/curl.log"
   export GHACC_TEST_GIT_LOG_FILE="$TMP/git.log"
   : >"$GHACC_TEST_CURL_LOG_FILE"
@@ -256,11 +271,11 @@ assert_git_invocation_count 2
 new_case
 expect_success "git falls back to direct after all accelerated failures" env PATH="$TMP/bin:$PATH" GHACC_TEST_GIT_FAIL_ACCELERATED=1 "$SCRIPT" pull
 assert_last_git_direct "pull"
-assert_git_invocation_count 3
+assert_git_invocation_count 7
 
 new_case
 expect_failure_with "direct fallback is disabled" "git honors disabled direct fallback" env PATH="$TMP/bin:$PATH" GHACC_TEST_GIT_FAIL_ACCELERATED=1 GHACC_FALLBACK_DIRECT=0 "$SCRIPT" pull
-assert_git_invocation_count 2
+assert_git_invocation_count 6
 
 new_case
 expect_success "archive downloads codeload tarball" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" "$SCRIPT" archive owner/repo v1.2.3
@@ -281,7 +296,8 @@ assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://fallback.test/https://raw.g
 assert_line_absent "$GHACC_TEST_CURL_LOG_FILE" "https://raw.githubusercontent.com/owner/repo/main/README.md"
 
 new_case
-expect_success "download falls back to direct after transfer failure" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_TEST_CURL_FAIL_MIRRORS="https://mirror.test/,https://fallback.test/" "$SCRIPT" download https://raw.githubusercontent.com/owner/repo/main/README.md
+expect_success "download falls back to direct after transfer failure" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_TEST_CURL_FAIL_MIRRORS="https://mirror.test/,https://fallback.test/,https://ghfast.top/,https://gh-proxy.com/,https://ghproxy.net/,https://gh.llkk.cc/" "$SCRIPT" download https://raw.githubusercontent.com/owner/repo/main/README.md
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://ghfast.top/https://raw.githubusercontent.com/owner/repo/main/README.md"
 assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://raw.githubusercontent.com/owner/repo/main/README.md"
 
 new_case
@@ -318,7 +334,8 @@ if grep -Fq "https://mirror.test/https://github.com/robots.txt" "$GHACC_TEST_CUR
 fi
 
 new_case
-expect_failure_with "direct fallback is disabled" "environment overrides sourced direct fallback" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_FALLBACK_DIRECT=0 GHACC_TEST_CURL_FAIL_MIRRORS="https://mirror.test/,https://fallback.test/" "$SCRIPT" download https://raw.githubusercontent.com/owner/repo/main/README.md
+expect_failure_with "direct fallback is disabled" "environment overrides sourced direct fallback" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_FALLBACK_DIRECT=0 GHACC_TEST_CURL_FAIL_MIRRORS="https://mirror.test/,https://fallback.test/,https://ghfast.top/,https://gh-proxy.com/,https://ghproxy.net/,https://gh.llkk.cc/" "$SCRIPT" download https://raw.githubusercontent.com/owner/repo/main/README.md
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://ghfast.top/https://raw.githubusercontent.com/owner/repo/main/README.md"
 assert_line_absent "$GHACC_TEST_CURL_LOG_FILE" "https://raw.githubusercontent.com/owner/repo/main/README.md"
 
 new_case
@@ -327,7 +344,7 @@ expect_success "empty environment download dir overrides config" env PATH="$TMP/
 [[ -z "$(find "$TMP/config-download" -type f -print -quit)" ]] || fail "config download dir was used despite empty environment override"
 
 new_case
-expect_success "download falls back to direct GitHub" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_TEST_CURL_FAIL_MIRRORS="https://mirror.test/,https://fallback.test/" "$SCRIPT" download https://raw.githubusercontent.com/owner/repo/main/README.md
+expect_success "download falls back to direct GitHub" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_TEST_CURL_FAIL_MIRRORS="https://mirror.test/,https://fallback.test/,https://ghfast.top/,https://gh-proxy.com/,https://ghproxy.net/,https://gh.llkk.cc/" "$SCRIPT" download https://raw.githubusercontent.com/owner/repo/main/README.md
 assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://raw.githubusercontent.com/owner/repo/main/README.md"
 
 new_case
@@ -351,11 +368,92 @@ assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://mirror.test/https://api.git
 assert_line_absent "$GHACC_TEST_CURL_LOG_FILE" "https://api.github.com/repos/owner/repo/releases/tags/v1.2.3"
 
 new_case
-expect_success "release metadata falls back to direct GitHub" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_TEST_CURL_FAIL_MIRRORS="https://mirror.test/,https://fallback.test/" "$SCRIPT" release owner/repo v1.2.3 app-linux.tar.gz
+expect_success "release metadata falls back to direct GitHub" env PATH="$TMP/bin:$PATH" GHACC_DOWNLOAD_DIR="$TMP/download" GHACC_TEST_CURL_FAIL_MIRRORS="https://mirror.test/,https://fallback.test/,https://ghfast.top/,https://gh-proxy.com/,https://ghproxy.net/,https://gh.llkk.cc/" "$SCRIPT" release owner/repo v1.2.3 app-linux.tar.gz
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://ghfast.top/https://api.github.com/repos/owner/repo/releases/tags/v1.2.3"
 assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://api.github.com/repos/owner/repo/releases/tags/v1.2.3"
 assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://github.com/owner/repo/releases/download/v1.2.3/app-linux.tar.gz"
 
 new_case
 expect_success "help displays Chinese usage" env PATH="$TMP/bin:$PATH" bash -c '"$1" help | grep -Fq "用法:"' bash "$SCRIPT"
+
+subscription_json() {
+  cat <<'EOF'
+{
+  "lastUpdated": "2026-09-23T00:00:00Z",
+  "mirrors": [
+    {
+      "name": "active clone",
+      "url": "https://sub-one.test/",
+      "type": "file-download",
+      "status": "active",
+      "features": ["Releases", "Git Clone"]
+    },
+    {
+      "name": "inactive",
+      "url": "https://inactive.test/",
+      "type": "file-download",
+      "status": "inactive",
+      "features": ["Git Clone"]
+    },
+    {
+      "name": "wrong type",
+      "url": "https://wrong-type.test/",
+      "type": "direct-access",
+      "status": "active",
+      "features": ["Git Clone"]
+    },
+    {
+      "name": "no clone",
+      "url": "https://no-clone.test/",
+      "type": "file-download",
+      "status": "active",
+      "features": ["Releases"]
+    },
+    {
+      "name": "insecure",
+      "url": "http://insecure.test/",
+      "type": "file-download",
+      "status": "active",
+      "features": ["Git Clone"]
+    }
+  ]
+}
+EOF
+}
+
+new_case
+subscription_json >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+expect_success "update writes validated subscription cache" env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+[[ -f "$GHACC_CACHE_DIR/mirrors.list" ]] || fail "subscription list was not created"
+[[ -f "$GHACC_CACHE_DIR/mirrors.meta" ]] || fail "subscription metadata was not created"
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" "https://sub-one.test/"
+assert_line_absent "$GHACC_CACHE_DIR/mirrors.list" "https://inactive.test/"
+assert_line_absent "$GHACC_CACHE_DIR/mirrors.list" "https://wrong-type.test/"
+assert_line_absent "$GHACC_CACHE_DIR/mirrors.list" "https://no-clone.test/"
+assert_line_absent "$GHACC_CACHE_DIR/mirrors.list" "http://insecure.test/"
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "source=https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "count=1"
+
+new_case
+subscription_json >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://cdn.jsdelivr.net/gh/Miao-moe/gh-accelerator-api@main/mirrors.json"
+export GHACC_TEST_CURL_FAIL_MIRRORS="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+expect_success "update falls back through subscription sources" env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+assert_contains "$GHACC_TEST_CURL_LOG_FILE" "https://cdn.jsdelivr.net/gh/Miao-moe/gh-accelerator-api@main/mirrors.json"
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" "https://sub-one.test/"
+
+new_case
+printf '%s\n' "https://old.test/" >"$GHACC_CACHE_DIR/mirrors.list"
+printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
+printf '%s\n' 'not-json' >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+expect_failure_with "subscription validation failed" "malformed subscription preserves cache" env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" "https://old.test/"
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "updated=old"
 
 echo "$PASS assertions passed"

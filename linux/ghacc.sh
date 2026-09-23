@@ -16,6 +16,18 @@ GHACC_DOWNLOAD_DIR="${GHACC_DOWNLOAD_DIR:-}"
 GHACC_AUTO_SELECT="${GHACC_AUTO_SELECT-1}"
 GHACC_FALLBACK_DIRECT="${GHACC_FALLBACK_DIRECT-1}"
 
+DEFAULT_SUBSCRIPTION_URLS=(
+  "https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+  "https://cdn.jsdelivr.net/gh/Miao-moe/gh-accelerator-api@main/mirrors.json"
+  "https://ghfast.top/https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+)
+GHACC_SUBSCRIPTION_URLS=("${DEFAULT_SUBSCRIPTION_URLS[@]}")
+GHACC_SUBSCRIPTION="${GHACC_SUBSCRIPTION-1}"
+GHACC_CACHE_DIR="${GHACC_CACHE_DIR:-/var/lib/ghacc}"
+GHACC_SUBSCRIPTION_MAX_MIRRORS="${GHACC_SUBSCRIPTION_MAX_MIRRORS-64}"
+GHACC_UPDATE_SCHEDULE="${GHACC_UPDATE_SCHEDULE-*-*-* 04:30:00}"
+GHACC_MIRRORS=()
+
 log() { printf '[ghacc] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 2; }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -24,6 +36,9 @@ load_config() {
   # Startup initialization preserves empty scalar values as deliberate overrides.
   local timeout="$GHACC_TIMEOUT" download_dir="$GHACC_DOWNLOAD_DIR"
   local auto_select="$GHACC_AUTO_SELECT" fallback_direct="$GHACC_FALLBACK_DIRECT"
+  local subscription="$GHACC_SUBSCRIPTION" cache_dir="$GHACC_CACHE_DIR"
+  local subscription_max="$GHACC_SUBSCRIPTION_MAX_MIRRORS" update_schedule="$GHACC_UPDATE_SCHEDULE"
+  local -a manual_mirrors=() cached_mirrors=()
 
   if [[ -n "${GHACC_CONFIG:-}" && -f "$GHACC_CONFIG" ]]; then
     # shellcheck disable=SC1090
@@ -34,7 +49,235 @@ load_config() {
   GHACC_DOWNLOAD_DIR="$download_dir"
   GHACC_AUTO_SELECT="$auto_select"
   GHACC_FALLBACK_DIRECT="$fallback_direct"
+  GHACC_SUBSCRIPTION="$subscription"
+  GHACC_CACHE_DIR="$cache_dir"
+  GHACC_SUBSCRIPTION_MAX_MIRRORS="$subscription_max"
+  GHACC_UPDATE_SCHEDULE="$update_schedule"
   [[ "$GHACC_TIMEOUT" =~ ^[0-9]+$ ]] || die "GHACC_TIMEOUT must be an integer"
+  [[ "$GHACC_SUBSCRIPTION" == 0 || "$GHACC_SUBSCRIPTION" == 1 ]] || die "GHACC_SUBSCRIPTION must be 0 or 1"
+  [[ "$GHACC_SUBSCRIPTION_MAX_MIRRORS" =~ ^[1-9][0-9]*$ ]] || die "GHACC_SUBSCRIPTION_MAX_MIRRORS must be a positive integer"
+
+  manual_mirrors=("${GHACC_MIRRORS[@]}")
+  if [[ "$GHACC_SUBSCRIPTION" == 1 && -s "$GHACC_CACHE_DIR/mirrors.list" ]]; then
+    while IFS= read -r mirror; do
+      [[ -n "$mirror" ]] || continue
+      valid_subscription_url "$mirror" || die "invalid mirror in subscription cache: $mirror"
+      cached_mirrors+=("$mirror")
+    done <"$GHACC_CACHE_DIR/mirrors.list"
+  fi
+  compose_mirrors "${manual_mirrors[@]}" "${cached_mirrors[@]}" "${DEFAULT_MIRRORS[@]}"
+}
+
+compose_mirrors() {
+  GHACC_MIRRORS=()
+  local url canonical existing
+  for url in "$@"; do
+    [[ -n "$url" ]] || continue
+    canonical="$url"
+    [[ "$canonical" == */ ]] || canonical="$canonical/"
+    existing=""
+    for existing in "${GHACC_MIRRORS[@]}"; do
+      [[ "$existing" == "$canonical" ]] && break
+    done
+    if [[ -z "$existing" || "$existing" != "$canonical" ]]; then
+      GHACC_MIRRORS+=("$canonical")
+    fi
+  done
+}
+
+valid_subscription_url() {
+  local url="$1"
+  [[ "$url" == https://?* ]] || return 1
+  ((${#url} <= 2048)) || return 1
+  case "$url" in
+    *[[:space:]]*|*\"*|*"'"*|*\<*|*\>*|*\\*|*\`*) return 1 ;;
+  esac
+  [[ "$url" != *[[:cntrl:]]* ]] || return 1
+}
+
+subscription_string_field() {
+  local file="$1" key="$2"
+  awk -v wanted="$key" '
+    function string_after(text,    pos, rest, colon, quote, out, i, ch, escaped) {
+      pos = index(text, "\"" wanted "\"")
+      if (pos == 0) return ""
+      rest = substr(text, pos + length(wanted) + 2)
+      colon = index(rest, ":")
+      if (colon == 0) return ""
+      rest = substr(rest, colon + 1)
+      quote = index(rest, "\"")
+      if (quote == 0) return ""
+      rest = substr(rest, quote + 1)
+      escaped = 0
+      for (i = 1; i <= length(rest); i++) {
+        ch = substr(rest, i, 1)
+        if (escaped) { escaped = 0; continue }
+        if (ch == "\\") { escaped = 1; continue }
+        if (ch == "\"") return out
+        out = out ch
+      }
+      return ""
+    }
+    { text = text $0 }
+    END { print string_after(text) }
+  ' "$file"
+}
+
+subscription_parse_file() {
+  local file="$1"
+  [[ -s "$file" ]] || return 1
+  [[ "$(head -c 1 "$file")" == "{" ]] || return 1
+  grep -Fq '"lastUpdated"' "$file" || return 1
+  grep -Fq '"mirrors"' "$file" || return 1
+  awk '
+    function string_field(text, key,    pos, rest, colon, quote, out, i, ch, escaped) {
+      pos = index(text, "\"" key "\"")
+      if (pos == 0) return ""
+      rest = substr(text, pos + length(key) + 2)
+      colon = index(rest, ":")
+      if (colon == 0) return ""
+      rest = substr(rest, colon + 1)
+      quote = index(rest, "\"")
+      if (quote == 0) return ""
+      rest = substr(rest, quote + 1)
+      escaped = 0
+      out = ""
+      for (i = 1; i <= length(rest); i++) {
+        ch = substr(rest, i, 1)
+        if (escaped) { escaped = 0; continue }
+        if (ch == "\\") { escaped = 1; continue }
+        if (ch == "\"") return out
+        out = out ch
+      }
+      return ""
+    }
+    function emit_object(text,    url, status, type) {
+      url = string_field(text, "url")
+      status = string_field(text, "status")
+      type = string_field(text, "type")
+      if (url == "" || status != "active" || type != "file-download") return
+      if (index(text, "\"Git Clone\"") == 0) return
+      print url
+    }
+    {
+      count = length($0)
+      for (i = 1; i <= count; i++) {
+        ch = substr($0, i, 1)
+        if (depth == 0) {
+          if (ch == "{") { depth = 1; buf = ch }
+          continue
+        }
+        buf = buf ch
+        if (in_string) {
+          if (escaped) escaped = 0
+          else if (ch == "\\") escaped = 1
+          else if (ch == "\"") in_string = 0
+          continue
+        }
+        if (ch == "\"") { in_string = 1; continue }
+        if (ch == "{") depth++
+        if (ch == "}") {
+          depth--
+          if (depth == 0) { emit_object(buf); buf = "" }
+        }
+      }
+    }
+    END { if (depth != 0) exit 2 }
+  ' "$file"
+}
+
+subscription_fetch_to() {
+  local output="$1" source_url status
+  SUBSCRIPTION_FETCH_SOURCE=""
+  local -a sources=("${GHACC_SUBSCRIPTION_URLS[@]}")
+  for source_url in "${sources[@]}"; do
+    [[ -n "$source_url" ]] || continue
+    log "Trying subscription source: $source_url"
+    rm -f "$output"
+    if have curl; then
+      curl -fsSL --connect-timeout "$GHACC_TIMEOUT" --max-time 60 -o "$output" "$source_url"
+    else
+      wget -q --timeout="$GHACC_TIMEOUT" --tries=2 -O "$output" "$source_url"
+    fi
+    status=$?
+    if ((status == 0)) && [[ -s "$output" ]]; then
+      SUBSCRIPTION_FETCH_SOURCE="$source_url"
+      return 0
+    fi
+    rm -f "$output"
+  done
+  return 1
+}
+
+update_command() {
+  load_config
+  [[ "$GHACC_SUBSCRIPTION" == 1 ]] || die "mirror subscription is disabled"
+  mkdir -p "$GHACC_CACHE_DIR" || die "cannot create cache directory: $GHACC_CACHE_DIR"
+  [[ -d "$GHACC_CACHE_DIR" && -w "$GHACC_CACHE_DIR" ]] || die "cache directory is not writable: $GHACC_CACHE_DIR"
+
+  local body list filtered meta count remote_updated now status=0
+  body="$(mktemp "$GHACC_CACHE_DIR/.subscription-body.XXXXXX")" || return 1
+  list="$(mktemp "$GHACC_CACHE_DIR/.subscription-list.XXXXXX")" || { rm -f "$body"; return 1; }
+  filtered="$(mktemp "$GHACC_CACHE_DIR/.subscription-filtered.XXXXXX")" || { rm -f "$body" "$list"; return 1; }
+  meta="$(mktemp "$GHACC_CACHE_DIR/.subscription-meta.XXXXXX")" || { rm -f "$body" "$list" "$filtered"; return 1; }
+
+  subscription_fetch_to "$body"
+  status=$?
+  if ((status != 0)); then
+    rm -f "$body" "$list" "$filtered" "$meta"
+    log "ERROR: all subscription sources failed; existing cache preserved"
+    return "$status"
+  fi
+
+  subscription_parse_file "$body" >"$filtered"
+  status=$?
+  if ((status != 0)); then
+    rm -f "$body" "$list" "$filtered" "$meta"
+    log "ERROR: subscription validation failed"
+    return "$status"
+  fi
+
+  : >"$list"
+  local url canonical
+  while IFS= read -r url; do
+    [[ -n "$url" ]] || continue
+    valid_subscription_url "$url" || continue
+    canonical="$url"
+    [[ "$canonical" == */ ]] || canonical="$canonical/"
+    grep -Fxsq "$canonical" "$list" || printf '%s\n' "$canonical" >>"$list"
+    [[ "$(wc -l <"$list")" -lt "$GHACC_SUBSCRIPTION_MAX_MIRRORS" ]] || break
+  done <"$filtered"
+
+  count="$(wc -l <"$list")"
+  if [[ ! "$count" =~ ^[1-9][0-9]*$ ]]; then
+    rm -f "$body" "$list" "$filtered" "$meta"
+    log "ERROR: subscription validation failed"
+    return 1
+  fi
+
+  remote_updated="$(subscription_string_field "$body" "lastUpdated")"
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  {
+    printf 'updated=%s\n' "$now"
+    printf 'source=%s\n' "$SUBSCRIPTION_FETCH_SOURCE"
+    printf 'count=%s\n' "$count"
+    printf 'subscription_updated=%s\n' "$remote_updated"
+  } >"$meta"
+
+  mv -f "$list" "$GHACC_CACHE_DIR/mirrors.list" || {
+    rm -f "$body" "$list" "$filtered" "$meta"
+    log "ERROR: unable to replace subscription cache"
+    return 1
+  }
+  mv -f "$meta" "$GHACC_CACHE_DIR/mirrors.meta" || {
+    rm -f "$body" "$filtered" "$meta"
+    log "ERROR: unable to replace subscription metadata"
+    return 1
+  }
+  rm -f "$body" "$filtered"
+  log "Updated mirrors: $count"
+  log "Source: $SUBSCRIPTION_FETCH_SOURCE"
+  log "Cache: $GHACC_CACHE_DIR/mirrors.list"
 }
 
 probe_url() {
@@ -399,6 +642,7 @@ case "${1:-help}" in
   download) shift; download_command "$@" ;;
   archive) shift; archive_command "$@" ;;
   release) shift; release_command "$@" ;;
+  update) shift; update_command "$@" ;;
   status)
     shift
     if (($#)); then
