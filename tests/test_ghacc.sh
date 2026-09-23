@@ -623,6 +623,9 @@ mkdir -p "$TMP/systemd"
 cat >"$TMP/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+if [[ "$1" == "is-enabled" ]]; then
+  exit 1
+fi
 exit 0
 EOF
 chmod +x "$TMP/bin/systemctl"
@@ -635,11 +638,30 @@ source=https://subscription.test/mirrors.json
 count=1
 subscription_updated=2026-09-23T00:00:00Z
 EOF
-expect_success "status shows subscription cache" env PATH="$TMP/bin:$PATH" "$SCRIPT" status
+status_output="$(env PATH="$TMP/bin:$PATH" "$SCRIPT" status)"
+status_status=$?
+[[ "$status_status" == 0 ]] || fail "status returned $status_status when timer was not enabled"
+PASS=$((PASS + 1))
+echo "ok - status shows subscription cache"
 assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "is-enabled ghacc-update.timer"
+for expected in \
+  "Subscription: enabled" \
+  "Cache: $GHACC_CACHE_DIR/mirrors.list" \
+  "Cached mirrors: 1" \
+  "updated=2026-09-23T00:00:00Z" \
+  "source=https://subscription.test/mirrors.json" \
+  "count=1" \
+  "subscription_updated=2026-09-23T00:00:00Z" \
+  "Update timer: not enabled"; do
+  if ! grep -Fq "$expected" <<<"$status_output"; then
+    echo "Expected status output to contain: $expected" >&2
+    printf '%s\n' "$status_output" >&2
+    fail "assertion failed: status output"
+  fi
+done
 
 new_case
-mkdir -p "$TMP/systemd" "$TMP/bin"
+mkdir -p "$TMP/systemd" "$TMP/bin" "$GHACC_CACHE_DIR"
 cat >"$TMP/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
@@ -654,10 +676,23 @@ export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
 expect_success "install-timer writes and enables units" env PATH="$TMP/bin:$PATH" "$SCRIPT" install-timer
 [[ -f "$TMP/systemd/ghacc-update.service" ]] || fail "service unit missing"
 [[ -f "$TMP/systemd/ghacc-update.timer" ]] || fail "timer unit missing"
-assert_contains "$TMP/systemd/ghacc-update.service" "Type=oneshot"
-assert_contains "$TMP/systemd/ghacc-update.service" "NoNewPrivileges=true"
-assert_contains "$TMP/systemd/ghacc-update.service" "ReadWritePaths=$GHACC_CACHE_DIR"
+for required in \
+  "Type=oneshot" \
+  "NoNewPrivileges=true" \
+  "PrivateTmp=true" \
+  "ProtectSystem=strict" \
+  "ReadWritePaths=$GHACC_CACHE_DIR"; do
+  if ! grep -Fxq "$required" "$TMP/systemd/ghacc-update.service"; then
+    echo "Expected service hardening line: $required" >&2
+    cat "$TMP/systemd/ghacc-update.service" >&2
+    fail "assertion failed: service hardening"
+  fi
+done
 assert_contains "$TMP/systemd/ghacc-update.timer" "$GHACC_UPDATE_SCHEDULE"
+grep -Fxq "Unit=ghacc-update.service" "$TMP/systemd/ghacc-update.timer" || fail "timer does not target ghacc-update.service"
+if grep -Fxq "Unit=ghacc-update.timer" "$TMP/systemd/ghacc-update.timer"; then
+  fail "timer incorrectly targets itself"
+fi
 assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "daemon-reload"
 assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "enable --now ghacc-update.timer"
 
@@ -665,4 +700,130 @@ expect_success "uninstall-timer disables and removes units" env PATH="$TMP/bin:$
 [[ ! -e "$TMP/systemd/ghacc-update.service" ]] || fail "service unit still exists"
 [[ ! -e "$TMP/systemd/ghacc-update.timer" ]] || fail "timer unit still exists"
 assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "disable --now ghacc-update.timer"
+
+new_case
+mkdir -p "$TMP/systemd" "$TMP/bin" "$TMP/cache" "$TMP/cache-parent"
+cat >"$TMP/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+exit 0
+EOF
+chmod +x "$TMP/bin/systemctl"
+printf 'not-a-directory\n' >"$TMP/blocked-cache"
+export GHACC_SYSTEMD_UNIT_DIR="$TMP/systemd"
+export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+export GHACC_UPDATE_SCHEDULE='*-*-* 04:30:00'
+export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
+: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+expect_failure_with "cannot create cache directory" "install-timer rejects an invalid cache path" \
+  env PATH="$TMP/bin:$PATH" GHACC_CACHE_DIR="$TMP/blocked-cache" "$SCRIPT" install-timer
+[[ ! -e "$TMP/systemd/ghacc-update.service" ]] || fail "service unit created despite invalid cache path"
+[[ ! -e "$TMP/systemd/ghacc-update.timer" ]] || fail "timer unit created despite invalid cache path"
+[[ ! -s "$GHACC_TEST_SYSTEMCTL_LOG_FILE" ]] || fail "systemctl was invoked despite invalid cache path"
+
+new_case
+mkdir -p "$TMP/systemd" "$TMP/bin" "$TMP/cache"
+cat >"$TMP/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+exit 0
+EOF
+chmod +x "$TMP/bin/systemctl"
+real_cat="$(command -v cat)"
+cat >"$TMP/bin/cat" <<EOF
+#!/usr/bin/env bash
+count_file="\$TMP/cat.calls"
+calls="\$("$real_cat" "\$count_file")"
+calls=\$((calls + 1))
+printf '%s\n' "\$calls" > "\$count_file"
+if [[ "\$calls" -eq "\${GHACC_TEST_CAT_FAIL_CALL:-0}" ]]; then
+  exit 42
+fi
+exec "$real_cat" "\$@"
+EOF
+chmod +x "$TMP/bin/cat"
+printf '0\n' >"$TMP/cat.calls"
+export GHACC_SYSTEMD_UNIT_DIR="$TMP/systemd"
+export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+export GHACC_UPDATE_SCHEDULE='*-*-* 04:30:00'
+export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
+export GHACC_TEST_CAT_FAIL_CALL=2
+: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+expect_failure_without "Installed update timer" "failed timer unit write removes both units" \
+  env PATH="$TMP/bin:$PATH" "$SCRIPT" install-timer
+[[ ! -e "$TMP/systemd/ghacc-update.service" ]] || fail "service unit remains after failed write"
+[[ ! -e "$TMP/systemd/ghacc-update.timer" ]] || fail "timer unit remains after failed write"
+[[ ! -s "$GHACC_TEST_SYSTEMCTL_LOG_FILE" ]] || fail "systemctl was invoked after failed unit write"
+
+new_case
+mkdir -p "$TMP/systemd" "$TMP/bin" "$TMP/cache"
+cat >"$TMP/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+if [[ "$1" == "daemon-reload" ]]; then
+  exit 42
+fi
+exit 0
+EOF
+chmod +x "$TMP/bin/systemctl"
+export GHACC_SYSTEMD_UNIT_DIR="$TMP/systemd"
+export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+export GHACC_UPDATE_SCHEDULE='*-*-* 04:30:00'
+export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
+: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+expect_failure_without "Installed update timer" "failed daemon-reload does not enable timer" \
+  env PATH="$TMP/bin:$PATH" "$SCRIPT" install-timer
+[[ -f "$TMP/systemd/ghacc-update.service" ]] || fail "service unit missing after daemon-reload failure"
+[[ -f "$TMP/systemd/ghacc-update.timer" ]] || fail "timer unit missing after daemon-reload failure"
+assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "daemon-reload"
+if grep -Fq "enable --now ghacc-update.timer" "$GHACC_TEST_SYSTEMCTL_LOG_FILE"; then
+  fail "enable was invoked after daemon-reload failure"
+fi
+
+new_case
+mkdir -p "$TMP/systemd" "$TMP/bin" "$TMP/cache"
+cat >"$TMP/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+if [[ "$1" == "enable" ]]; then
+  exit 42
+fi
+exit 0
+EOF
+chmod +x "$TMP/bin/systemctl"
+export GHACC_SYSTEMD_UNIT_DIR="$TMP/systemd"
+export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+export GHACC_UPDATE_SCHEDULE='*-*-* 04:30:00'
+export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
+: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+expect_failure_without "Installed update timer" "failed enable returns nonzero" \
+  env PATH="$TMP/bin:$PATH" "$SCRIPT" install-timer
+assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "daemon-reload"
+assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "enable --now ghacc-update.timer"
+
+new_case
+mkdir -p "$TMP/systemd" "$TMP/bin" "$TMP/cache"
+cat >"$TMP/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+if [[ "$1" == "disable" ]]; then
+  exit 42
+fi
+exit 0
+EOF
+chmod +x "$TMP/bin/systemctl"
+printf 'old-service\n' >"$TMP/systemd/ghacc-update.service"
+printf 'old-timer\n' >"$TMP/systemd/ghacc-update.timer"
+export GHACC_SYSTEMD_UNIT_DIR="$TMP/systemd"
+export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
+: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+expect_failure_without "Removed update timer" "failed disable preserves units" \
+  env PATH="$TMP/bin:$PATH" "$SCRIPT" uninstall-timer
+assert_contains "$TMP/systemd/ghacc-update.service" "old-service"
+assert_contains "$TMP/systemd/ghacc-update.timer" "old-timer"
+assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "disable --now ghacc-update.timer"
+if grep -Fq "daemon-reload" "$GHACC_TEST_SYSTEMCTL_LOG_FILE"; then
+  fail "daemon-reload was invoked after disable failure"
+fi
 echo "$PASS assertions passed"

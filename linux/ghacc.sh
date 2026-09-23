@@ -375,7 +375,7 @@ subscription_status() {
     printf 'Cache: %s\n' "$GHACC_CACHE_DIR/mirrors.list"
     printf 'Cached mirrors: %s\n' "$(wc -l <"$GHACC_CACHE_DIR/mirrors.list")"
     if [[ -f "$GHACC_CACHE_DIR/mirrors.meta" ]]; then
-      grep -E '^(updated|source|subscription_updated)=' "$GHACC_CACHE_DIR/mirrors.meta" || true
+      grep -E '^(updated|source|count|subscription_updated)=' "$GHACC_CACHE_DIR/mirrors.meta" || true
     fi
   else
     printf '%s\n' "Cache: not populated"
@@ -388,7 +388,7 @@ subscription_status() {
 }
 
 write_timer_units() {
-  local unit_dir="$1" script_path="$2"
+  local unit_dir="$1" script_path="$2" write_status
   cat >"$unit_dir/ghacc-update.service" <<EOF
 [Unit]
 Description=ghacc mirror subscription update
@@ -403,6 +403,11 @@ PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=$GHACC_CACHE_DIR
 EOF
+  write_status=$?
+  if ((write_status != 0)); then
+    rm -f "$unit_dir/ghacc-update.service" "$unit_dir/ghacc-update.timer" || return 1
+    return "$write_status"
+  fi
   cat >"$unit_dir/ghacc-update.timer" <<EOF
 [Unit]
 Description=Periodically update ghacc mirrors
@@ -411,11 +416,16 @@ Description=Periodically update ghacc mirrors
 OnCalendar=$GHACC_UPDATE_SCHEDULE
 RandomizedDelaySec=30m
 Persistent=true
-Unit=ghacc-update.timer
+Unit=ghacc-update.service
 
 [Install]
 WantedBy=timers.target
 EOF
+  write_status=$?
+  if ((write_status != 0)); then
+    rm -f "$unit_dir/ghacc-update.service" "$unit_dir/ghacc-update.timer" || return 1
+    return "$write_status"
+  fi
 }
 
 install_timer_command() {
@@ -423,10 +433,18 @@ install_timer_command() {
   [[ $# -eq 0 ]] || { usage >&2; return 2; }
   local unit_dir="${GHACC_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
   local script_path="${BASH_SOURCE[0]}"
+  mkdir -p "$GHACC_CACHE_DIR" || {
+    log "ERROR: cannot create cache directory: $GHACC_CACHE_DIR"
+    return 1
+  }
+  [[ -d "$GHACC_CACHE_DIR" && -w "$GHACC_CACHE_DIR" ]] || {
+    log "ERROR: cache directory is not writable: $GHACC_CACHE_DIR"
+    return 1
+  }
   [[ -d "$unit_dir" && -w "$unit_dir" ]] || die "systemd unit directory is not writable: $unit_dir"
-  write_timer_units "$unit_dir" "$script_path"
-  run_systemctl daemon-reload
-  run_systemctl enable --now ghacc-update.timer
+  write_timer_units "$unit_dir" "$script_path" || return $?
+  run_systemctl daemon-reload || return $?
+  run_systemctl enable --now ghacc-update.timer || return $?
   log "Installed update timer"
 }
 
@@ -434,9 +452,9 @@ uninstall_timer_command() {
   load_config
   [[ $# -eq 0 ]] || { usage >&2; return 2; }
   local unit_dir="${GHACC_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
-  run_systemctl disable --now ghacc-update.timer
-  rm -f "$unit_dir/ghacc-update.timer" "$unit_dir/ghacc-update.service"
-  run_systemctl daemon-reload
+  run_systemctl disable --now ghacc-update.timer || return $?
+  rm -f "$unit_dir/ghacc-update.timer" "$unit_dir/ghacc-update.service" || return $?
+  run_systemctl daemon-reload || return $?
   log "Removed update timer"
 }
 
