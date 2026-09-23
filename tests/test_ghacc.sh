@@ -283,6 +283,20 @@ run_menu() {
   MENU_OUTPUT="$(printf '%b' "$input" | "$@" 2>&1)" || MENU_STATUS=$?
 }
 
+create_systemctl_logger() {
+  mkdir -p "$TMP/bin" "$TMP/systemd"
+  cat >"$TMP/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+exit 0
+EOF
+  chmod +x "$TMP/bin/systemctl"
+  export GHACC_SYSTEMD_UNIT_DIR="$TMP/systemd"
+  export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+  export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
+  : >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+}
+
 if [[ ! -x "$SCRIPT" ]]; then
   echo "not ok - ghacc executable must exist" >&2
   exit 1
@@ -1225,39 +1239,52 @@ expect_failure_with '用法:' 'menu rejects extra arguments' env PATH="$TMP/bin:
 
 new_case
 export GHACC_TEST_EUID=1000
-export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
-: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
-run_menu '8\ny\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+create_systemctl_logger
+run_menu '8\ny\n\n12\n\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+[[ "$MENU_STATUS" -eq 0 ]] || fail "non-root install menu exited nonzero"
 assert_contains /dev/stdin 'sudo ghacc install-timer' <<<"$MENU_OUTPUT"
-assert_contains /dev/stdin '不自动提权' <<<"$MENU_OUTPUT"
-[[ ! -s "$GHACC_TEST_SYSTEMCTL_LOG_FILE" ]] || fail "non-root menu invoked systemctl"
-# Initialize the log after proving no command ran.
-: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+assert_contains /dev/stdin '脚本不自动提权。' <<<"$MENU_OUTPUT"
+sudo_mentions="$(grep -Fo 'sudo ghacc install-timer' <<<"$MENU_OUTPUT" | wc -l)"
+[[ "$sudo_mentions" -eq 1 ]] || fail "expected exactly one install-timer sudo command, got $sudo_mentions"
+assert_contains /dev/stdin '命令行帮助 ----' <<<"$MENU_OUTPUT"
+[[ ! -s "$GHACC_TEST_SYSTEMCTL_LOG_FILE" ]] || fail "non-root install invoked systemctl"
+
+new_case
+export GHACC_TEST_EUID=1000
+create_systemctl_logger
+run_menu '9\nY\n\n12\n\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+[[ "$MENU_STATUS" -eq 0 ]] || fail "uppercase-Y uninstall menu exited nonzero"
+assert_contains /dev/stdin 'sudo ghacc uninstall-timer' <<<"$MENU_OUTPUT"
+assert_contains /dev/stdin '脚本不自动提权。' <<<"$MENU_OUTPUT"
+sudo_mentions="$(grep -Fo 'sudo ghacc uninstall-timer' <<<"$MENU_OUTPUT" | wc -l)"
+[[ "$sudo_mentions" -eq 1 ]] || fail "expected exactly one uninstall-timer sudo command, got $sudo_mentions"
+assert_contains /dev/stdin '命令行帮助 ----' <<<"$MENU_OUTPUT"
+[[ ! -s "$GHACC_TEST_SYSTEMCTL_LOG_FILE" ]] || fail "uppercase-Y non-root uninstall invoked systemctl"
 
 new_case
 export GHACC_TEST_EUID=0
-export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
-: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
-run_menu '9\nn\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
-assert_contains /dev/stdin '已取消' <<<"$MENU_OUTPUT"
+create_systemctl_logger
+run_menu '9\nn\n\n12\n\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+[[ "$MENU_STATUS" -eq 0 ]] || fail "unconfirmed uninstall menu exited nonzero"
+assert_contains /dev/stdin '已取消，未修改系统。' <<<"$MENU_OUTPUT"
+assert_contains /dev/stdin '命令行帮助 ----' <<<"$MENU_OUTPUT"
 [[ ! -s "$GHACC_TEST_SYSTEMCTL_LOG_FILE" ]] || fail "unconfirmed uninstall invoked systemctl"
 
 new_case
 export GHACC_TEST_EUID=0
-mkdir -p "$TMP/systemd"
-cat >"$TMP/bin/systemctl" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
-exit 0
-EOF
-chmod +x "$TMP/bin/systemctl"
-export GHACC_SYSTEMD_UNIT_DIR="$TMP/systemd"
-export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
-export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
-: >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
+create_systemctl_logger
 run_menu '8\ny\n\n9\ny\n\n0\n' env PATH="$TMP/bin:$PATH" "$SCRIPT" menu
+[[ "$MENU_STATUS" -eq 0 ]] || fail "confirmed timer menu exited nonzero"
 assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "enable --now ghacc-update.timer"
 assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "disable --now ghacc-update.timer"
+
+new_case
+help_status=0
+help_output="$(env PATH="$TMP/bin:$PATH" GHACC_MENU_FORCE_TTY=1 "$SCRIPT" help </dev/null 2>&1)" || help_status=$?
+[[ "$help_status" -eq 0 ]] || fail "explicit help with forced-TTY override failed"
+assert_contains /dev/stdin '用法:' <<<"$help_output"
+assert_contains /dev/stdin 'ghacc menu' <<<"$help_output"
+assert_line_absent /dev/stdin 'ghacc 菜单' <<<"$help_output"
 
 new_case
 menu_status=0
