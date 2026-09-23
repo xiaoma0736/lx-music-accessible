@@ -613,7 +613,7 @@ run_systemctl() {
 }
 
 subscription_status() {
-  local systemctl_status
+  local enabled_status active_status active_state
   if [[ "$GHACC_SUBSCRIPTION" == 1 ]]; then
     printf '%s\n' "Subscription: enabled"
   else
@@ -629,15 +629,28 @@ subscription_status() {
     printf '%s\n' "Cache: not populated"
   fi
   run_systemctl is-enabled ghacc-update.timer >/dev/null 2>&1
-  systemctl_status=$?
-  if ((systemctl_status == 0)); then
+  enabled_status=$?
+  active_state="$(run_systemctl is-active ghacc-update.timer 2>/dev/null)"
+  active_status=$?
+  if ((enabled_status == 0)); then
     printf '%s\n' "Update timer: enabled"
-  elif ((systemctl_status == 1)); then
+  elif ((enabled_status == 1)); then
     printf '%s\n' "Update timer: not enabled"
-  elif ((systemctl_status == 126 || systemctl_status == 127)); then
+  elif ((enabled_status == 126 || enabled_status == 127)); then
     printf '%s\n' "Update timer: systemd unavailable"
   else
     printf '%s\n' "Update timer: unknown"
+  fi
+  if ((active_status == 126 || active_status == 127)); then
+    printf '%s\n' "Update timer active: systemd unavailable"
+  elif [[ "$active_state" == "active" ]]; then
+    printf '%s\n' "Update timer active: active"
+  elif [[ "$active_state" == "inactive" ]]; then
+    printf '%s\n' "Update timer active: inactive"
+  elif [[ "$active_state" == "failed" ]]; then
+    printf '%s\n' "Update timer active: failed"
+  else
+    printf '%s\n' "Update timer active: unknown"
   fi
 }
 

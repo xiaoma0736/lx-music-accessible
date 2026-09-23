@@ -254,6 +254,25 @@ expect_failure() {
   fi
 }
 
+populate_status_cache() {
+  printf '%s\n' "https://status-cache.test/" >"$GHACC_CACHE_DIR/mirrors.list"
+  cat >"$GHACC_CACHE_DIR/mirrors.meta" <<'EOF'
+updated=2026-09-23T00:00:00Z
+source=https://subscription.test/mirrors.json
+count=1
+subscription_updated=2026-09-23T00:00:00Z
+EOF
+}
+
+assert_timer_status() {
+  local output="$1" expected="$2"
+  if ! grep -Fq "$expected" <<<"$output"; then
+    echo "Expected status output to contain: $expected" >&2
+    printf '%s\n' "$output" >&2
+    fail "assertion failed: timer status $expected"
+  fi
+}
+
 if [[ ! -x "$SCRIPT" ]]; then
   echo "not ok - ghacc executable must exist" >&2
   exit 1
@@ -801,24 +820,25 @@ printf '%s\n' "$*" >> "$GHACC_TEST_SYSTEMCTL_LOG_FILE"
 if [[ "$1" == "is-enabled" ]]; then
   exit 1
 fi
+if [[ "$1" == "is-active" ]]; then
+  printf '%s\n' inactive
+  exit 3
+fi
 exit 0
 EOF
 chmod +x "$TMP/bin/systemctl"
 export GHACC_TEST_SYSTEMCTL_LOG_FILE="$TMP/systemctl.log"
 : >"$GHACC_TEST_SYSTEMCTL_LOG_FILE"
-printf '%s\n' "https://status-cache.test/" >"$GHACC_CACHE_DIR/mirrors.list"
-cat >"$GHACC_CACHE_DIR/mirrors.meta" <<'EOF'
-updated=2026-09-23T00:00:00Z
-source=https://subscription.test/mirrors.json
-count=1
-subscription_updated=2026-09-23T00:00:00Z
-EOF
+populate_status_cache
 status_output="$(env PATH="$TMP/bin:$PATH" "$SCRIPT" status)"
 status_status=$?
 [[ "$status_status" == 0 ]] || fail "status returned $status_status when timer was not enabled"
 PASS=$((PASS + 1))
 echo "ok - status shows subscription cache"
-assert_contains "$GHACC_TEST_SYSTEMCTL_LOG_FILE" "is-enabled ghacc-update.timer"
+grep -Fxq "is-enabled ghacc-update.timer" "$GHACC_TEST_SYSTEMCTL_LOG_FILE" || fail "enabled state was not queried"
+grep -Fxq "is-active ghacc-update.timer" "$GHACC_TEST_SYSTEMCTL_LOG_FILE" || fail "active state was not queried"
+assert_timer_status "$status_output" "Update timer: not enabled"
+assert_timer_status "$status_output" "Update timer active: inactive"
 for expected in \
   "Subscription: enabled" \
   "Cache: $GHACC_CACHE_DIR/mirrors.list" \
@@ -826,8 +846,7 @@ for expected in \
   "updated=2026-09-23T00:00:00Z" \
   "source=https://subscription.test/mirrors.json" \
   "count=1" \
-  "subscription_updated=2026-09-23T00:00:00Z" \
-  "Update timer: not enabled"; do
+  "subscription_updated=2026-09-23T00:00:00Z"; do
   if ! grep -Fq "$expected" <<<"$status_output"; then
     echo "Expected status output to contain: $expected" >&2
     printf '%s\n' "$status_output" >&2
@@ -835,52 +854,61 @@ for expected in \
   fi
 done
 
-new_case
-printf '%s\n' "https://status-cache.test/" >"$GHACC_CACHE_DIR/mirrors.list"
-cat >"$GHACC_CACHE_DIR/mirrors.meta" <<'EOF'
-updated=2026-09-23T00:00:00Z
-source=https://subscription.test/mirrors.json
-count=1
-subscription_updated=2026-09-23T00:00:00Z
+for timer_case in "inactive 3" "failed 1"; do
+  read -r active_name active_exit <<<"$timer_case"
+  new_case
+  mkdir -p "$TMP/systemd" "$TMP/bin"
+  cat >"$TMP/bin/systemctl" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "is-enabled" ]]; then exit 0; fi
+if [[ "\$1" == "is-active" ]]; then
+  printf '%s\n' "$active_name"
+  exit $active_exit
+fi
+exit 42
 EOF
+  chmod +x "$TMP/bin/systemctl"
+  export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+  populate_status_cache
+  status_output="$(env PATH="$TMP/bin:$PATH" "$SCRIPT" status)"
+  status_status=$?
+  [[ "$status_status" == 0 ]] || fail "status returned $status_status for enabled but $active_name timer"
+  PASS=$((PASS + 1))
+  echo "ok - status reports enabled but $active_name timer"
+  assert_timer_status "$status_output" "Update timer: enabled"
+  assert_timer_status "$status_output" "Update timer active: $active_name"
+done
+
+new_case
 export GHACC_SYSTEMCTL="$TMP/bin/no-such-systemctl"
+populate_status_cache
 status_output="$(env PATH="$TMP/bin:$PATH" "$SCRIPT" status)"
 status_status=$?
 [[ "$status_status" == 0 ]] || fail "status returned $status_status when systemd was unavailable"
 PASS=$((PASS + 1))
 echo "ok - status remains successful when systemd unavailable"
-if ! grep -Fq 'Update timer: systemd unavailable' <<<"$status_output"; then
-  printf '%s\n' "$status_output" >&2
-  fail 'unavailable systemctl was not distinguished'
-fi
+assert_timer_status "$status_output" "Update timer: systemd unavailable"
+assert_timer_status "$status_output" "Update timer active: systemd unavailable"
 
 new_case
 mkdir -p "$TMP/bin"
 cat >"$TMP/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$1" == "is-enabled" ]]; then
+if [[ "$1" == "is-enabled" || "$1" == "is-active" ]]; then
   exit 42
 fi
 exit 0
 EOF
 chmod +x "$TMP/bin/systemctl"
-printf '%s\n' "https://status-cache.test/" >"$GHACC_CACHE_DIR/mirrors.list"
-cat >"$GHACC_CACHE_DIR/mirrors.meta" <<'EOF'
-updated=2026-09-23T00:00:00Z
-source=https://subscription.test/mirrors.json
-count=1
-subscription_updated=2026-09-23T00:00:00Z
-EOF
 export GHACC_SYSTEMCTL="$TMP/bin/systemctl"
+populate_status_cache
 status_output="$(env PATH="$TMP/bin:$PATH" "$SCRIPT" status)"
 status_status=$?
 [[ "$status_status" == 0 ]] || fail "status returned $status_status for unknown systemctl failure"
 PASS=$((PASS + 1))
 echo "ok - status remains successful for unknown systemctl failure"
-if ! grep -Fq 'Update timer: unknown' <<<"$status_output"; then
-  printf '%s\n' "$status_output" >&2
-  fail 'unknown systemctl failure was not distinguished'
-fi
+assert_timer_status "$status_output" "Update timer: unknown"
+assert_timer_status "$status_output" "Update timer active: unknown"
 
 new_case
 mkdir -p "$TMP/systemd" "$TMP/bin" "$GHACC_CACHE_DIR"
