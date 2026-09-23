@@ -572,4 +572,14 @@ expect_success "update honors subscription mirror cap" env PATH="$TMP/bin:$PATH"
 diff -u "$TMP/expected.list" "$GHACC_CACHE_DIR/mirrors.list" || fail "subscription mirror cap output mismatch"
 assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "count=3"
 
+new_case
+printf '%s\n' "https://cached.test/" "https://cached.test/" >"$GHACC_CACHE_DIR/mirrors.list"
+expect_success "manual mirrors precede cached and built-in mirrors" env PATH="$TMP/bin:$PATH" GHACC_TEST_GIT_FAIL_MIRRORS="https://mirror.test/,https://fallback.test/,https://cached.test/" "$SCRIPT" pull
+assert_contains "$GHACC_TEST_GIT_LOG_FILE" "url.https://ghfast.top/https://github.com/.insteadOf="
+assert_contains "$GHACC_TEST_GIT_LOG_FILE" "url.https://cached.test/https://github.com/.insteadOf="
+
+new_case
+printf '%s\n' "https://disabled-cache.test/" >"$GHACC_CACHE_DIR/mirrors.list"
+expect_success "subscription disabled excludes cache mirrors" env PATH="$TMP/bin:$PATH" GHACC_SUBSCRIPTION=0 GHACC_TEST_GIT_FAIL_MIRRORS="https://mirror.test/,https://ghfast.top/" "$SCRIPT" pull
+assert_line_absent "$GHACC_TEST_GIT_LOG_FILE" "url.https://disabled-cache.test/https://github.com/.insteadOf="
 echo "$PASS assertions passed"
