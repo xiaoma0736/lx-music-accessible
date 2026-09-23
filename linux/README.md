@@ -34,9 +34,21 @@ ghacc download https://raw.githubusercontent.com/owner/repo/main/README.md
 
 当 `GHACC_AUTO_SELECT=1` 时，使用前会探测每个镜像。如果某个镜像探测成功，但实际的 Git、下载、archive 或 GitHub API 操作失败，`ghacc` 会尝试下一个已配置镜像，最后才考虑直连 GitHub。当 `GHACC_AUTO_SELECT=0` 时，会按配置顺序尝试镜像，但不做探测。只有所有镜像操作都失败且 `GHACC_FALLBACK_DIRECT=1` 时才直连 GitHub；把它设为 `0` 会禁用直连回退。被中断的操作会保留退出码 130。
 
+## 订阅镜像源
+
+默认订阅源来自 Miao-moe 的 `gh-accelerator-api`，包括 GitHub Raw、jsDelivr 和镜像代理地址。`ghacc update` 会按顺序尝试这些来源，只保留 `status` 为 `active`、`type` 为 `file-download` 且支持 `Git Clone` 的 HTTPS 镜像；来源会去重并加上尾部斜杠。验证通过的列表和元数据保存在 `GHACC_CACHE_DIR`（默认 `/var/lib/ghacc`）中。
+
+## 定时更新
+
+在 systemd 系统上，`ghacc install-timer` 会安装 `ghacc-update.service` 和 `ghacc-update.timer`，并执行 `daemon-reload` 后启用和启动 timer。默认计划为 `*-*-* 04:30:00`，可通过 `GHACC_UPDATE_SCHEDULE` 调整。`ghacc uninstall-timer` 会停用 timer、删除这两个 unit 并重新加载 systemd 配置。
+
 ## 配置优先级
 
-`GHACC_TIMEOUT`、`GHACC_DOWNLOAD_DIR`、`GHACC_AUTO_SELECT` 和 `GHACC_FALLBACK_DIRECT` 的进程环境变量值会覆盖 `/etc/ghacc.conf` 中对应的值。`GHACC_MIRRORS` 由配置文件控制。空环境值是有意义的：例如 `GHACC_DOWNLOAD_DIR=""` 表示把文件保存到当前工作目录。`GHACC_TIMEOUT` 必须是不小于 0 的整数秒数。
+运行时的加速源顺序是：手动配置的 `GHACC_MIRRORS`，然后是订阅缓存，最后是内置兜底镜像；重复项会去重。`GHACC_SUBSCRIPTION=0` 会禁用订阅缓存读取和 `ghacc update`。`GHACC_TIMEOUT`、`GHACC_DOWNLOAD_DIR`、`GHACC_AUTO_SELECT` 和 `GHACC_FALLBACK_DIRECT` 的进程环境变量值会覆盖 `/etc/ghacc.conf` 中对应的值。空环境值是有意义的：例如 `GHACC_DOWNLOAD_DIR=""` 表示把文件保存到当前工作目录。`GHACC_TIMEOUT` 必须是不小于 0 的整数秒数。
+
+## 安全说明
+
+远程镜像列表是信任边界。经过筛选的列表仍可能改变实际使用的第三方加速源。如需严格信任，请设置 `GHACC_SUBSCRIPTION=0` 并手动维护 `GHACC_MIRRORS`。
 
 ## 私有仓库
 

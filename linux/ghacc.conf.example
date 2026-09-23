@@ -16,9 +16,14 @@ GHACC_FALLBACK_DIRECT=1
 
 # 镜像订阅会验证并合并活跃的 Git Clone 加速源。
 # 进程环境中的订阅标量配置会在读取本文件后继续生效。
+# GHACC_SUBSCRIPTION=1 表示启用订阅；改为 0 可完全禁用订阅缓存。
 GHACC_SUBSCRIPTION=1
 GHACC_CACHE_DIR="/var/lib/ghacc"
+# 示例：GHACC_UPDATE_SCHEDULE="*-*-* 04:30:00"
+GHACC_UPDATE_SCHEDULE="*-*-* 04:30:00"
+# 示例：GHACC_SUBSCRIPTION_MAX_MIRRORS=64
 GHACC_SUBSCRIPTION_MAX_MIRRORS=64
+# 示例：GHACC_SUBSCRIPTION_URLS=("https://example.test/mirrors.json")
 GHACC_SUBSCRIPTION_URLS=(
   "https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
   "https://cdn.jsdelivr.net/gh/Miao-moe/gh-accelerator-api@main/mirrors.json"

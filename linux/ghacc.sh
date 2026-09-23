@@ -360,8 +360,89 @@ run_with_mirrors() {
   return 1
 }
 
+run_systemctl() {
+  local systemctl="${GHACC_SYSTEMCTL:-systemctl}"
+  "$systemctl" "$@"
+}
+
+subscription_status() {
+  if [[ "$GHACC_SUBSCRIPTION" == 1 ]]; then
+    printf '%s\n' "Subscription: enabled"
+  else
+    printf '%s\n' "Subscription: disabled"
+  fi
+  if [[ -s "$GHACC_CACHE_DIR/mirrors.list" ]]; then
+    printf 'Cache: %s\n' "$GHACC_CACHE_DIR/mirrors.list"
+    printf 'Cached mirrors: %s\n' "$(wc -l <"$GHACC_CACHE_DIR/mirrors.list")"
+    if [[ -f "$GHACC_CACHE_DIR/mirrors.meta" ]]; then
+      grep -E '^(updated|source|subscription_updated)=' "$GHACC_CACHE_DIR/mirrors.meta" || true
+    fi
+  else
+    printf '%s\n' "Cache: not populated"
+  fi
+  if run_systemctl is-enabled ghacc-update.timer >/dev/null 2>&1; then
+    printf '%s\n' "Update timer: enabled"
+  else
+    printf '%s\n' "Update timer: not enabled"
+  fi
+}
+
+write_timer_units() {
+  local unit_dir="$1" script_path="$2"
+  cat >"$unit_dir/ghacc-update.service" <<EOF
+[Unit]
+Description=ghacc mirror subscription update
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=$script_path update
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=$GHACC_CACHE_DIR
+EOF
+  cat >"$unit_dir/ghacc-update.timer" <<EOF
+[Unit]
+Description=Periodically update ghacc mirrors
+
+[Timer]
+OnCalendar=$GHACC_UPDATE_SCHEDULE
+RandomizedDelaySec=30m
+Persistent=true
+Unit=ghacc-update.timer
+
+[Install]
+WantedBy=timers.target
+EOF
+}
+
+install_timer_command() {
+  load_config
+  [[ $# -eq 0 ]] || { usage >&2; return 2; }
+  local unit_dir="${GHACC_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+  local script_path="${BASH_SOURCE[0]}"
+  [[ -d "$unit_dir" && -w "$unit_dir" ]] || die "systemd unit directory is not writable: $unit_dir"
+  write_timer_units "$unit_dir" "$script_path"
+  run_systemctl daemon-reload
+  run_systemctl enable --now ghacc-update.timer
+  log "Installed update timer"
+}
+
+uninstall_timer_command() {
+  load_config
+  [[ $# -eq 0 ]] || { usage >&2; return 2; }
+  local unit_dir="${GHACC_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+  run_systemctl disable --now ghacc-update.timer
+  rm -f "$unit_dir/ghacc-update.timer" "$unit_dir/ghacc-update.service"
+  run_systemctl daemon-reload
+  log "Removed update timer"
+}
+
 status_command() {
   load_config
+  subscription_status
   local mirror healthy=0
   printf '%s\n' "GitHub acceleration sources:"
   for mirror in "${GHACC_MIRRORS[@]}"; do
@@ -401,6 +482,15 @@ usage() {
 
   ghacc release <owner/repo> <tag|latest> [资产名称或关键词]
       读取 Release 资产列表；提供资产名称或关键词时下载对应文件。
+
+  ghacc update
+      更新镜像订阅缓存。
+
+  ghacc install-timer
+      安装并启用定时更新 systemd timer。
+
+  ghacc uninstall-timer
+      停用并卸载定时更新 timer。
 
   ghacc status
       检查并显示已配置加速源的状态。
@@ -678,6 +768,8 @@ case "${1:-help}" in
   archive) shift; archive_command "$@" ;;
   release) shift; release_command "$@" ;;
   update) shift; update_command "$@" ;;
+  install-timer) shift; install_timer_command "$@" ;;
+  uninstall-timer) shift; uninstall_timer_command "$@" ;;
   status)
     shift
     if (($#)); then
