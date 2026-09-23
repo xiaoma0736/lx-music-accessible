@@ -456,4 +456,120 @@ expect_failure_with "subscription validation failed" "malformed subscription pre
 assert_contains "$GHACC_CACHE_DIR/mirrors.list" "https://old.test/"
 assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "updated=old"
 
+new_case
+printf '%s\n' "https://old.test/" >"$GHACC_CACHE_DIR/mirrors.list"
+printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
+cat >"$GHACC_CONFIG" <<'EOF'
+GHACC_MIRRORS=("https://mirror.test/")
+GHACC_TIMEOUT=3
+GHACC_AUTO_SELECT=1
+GHACC_FALLBACK_DIRECT=1
+GHACC_SUBSCRIPTION=1
+GHACC_SUBSCRIPTION_URLS=(
+  "https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+  "http://insecure-source.test/mirrors.json"
+)
+EOF
+subscription_json >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+expect_failure_with "invalid subscription source: http://insecure-source.test/mirrors.json" "update rejects invalid source before fetching" env PATH="$TMP/bin:$PATH" "$SCRIPT" update
+[[ ! -s "$GHACC_TEST_CURL_LOG_FILE" ]] || fail "invalid subscription source caused a fetch"
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" "https://old.test/"
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "updated=old"
+
+new_case
+printf '%s\n' "https://old.test/" >"$GHACC_CACHE_DIR/mirrors.list"
+printf 'updated=old\nsource=old\ncount=1\n' >"$GHACC_CACHE_DIR/mirrors.meta"
+subscription_json >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+unset GHACC_TEST_CURL_FAIL_MIRRORS
+real_mv="$(command -v mv)"
+cat >"$TMP/bin/mv" <<EOF
+#!/usr/bin/env bash
+if [[ "\${GHACC_TEST_MV_FAIL_META:-0}" == 1 && "\$3" == */mirrors.meta ]]; then
+  exit 73
+fi
+exec "$real_mv" "\$@"
+EOF
+chmod +x "$TMP/bin/mv"
+expect_failure_with "unable to replace subscription metadata" "failed metadata replacement restores old cache pair" env PATH="$TMP/bin:$PATH" GHACC_TEST_MV_FAIL_META=1 "$SCRIPT" update
+assert_contains "$GHACC_CACHE_DIR/mirrors.list" "https://old.test/"
+assert_line_absent "$GHACC_CACHE_DIR/mirrors.list" "https://sub-one.test/"
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "updated=old"
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "source=old"
+subscription_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.subscription-*' -print -quit)"
+backup_staged="$(find "$GHACC_CACHE_DIR" -maxdepth 1 -name '.mirrors.list.backup-*' -print -quit)"
+[[ -z "$subscription_staged" && -z "$backup_staged" ]] || fail "failed update left staged files"
+
+capped_subscription_json() {
+  cat <<'EOF'
+{
+  "lastUpdated": "2026-09-23T00:00:00Z",
+  "mirrors": [
+    {
+      "url": "https://cap-one.test/",
+      "type": "file-download",
+      "status": "active",
+      "features": ["Git Clone"]
+    },
+    {
+      "url": "https://inactive.test/",
+      "type": "file-download",
+      "status": "inactive",
+      "features": ["Git Clone"]
+    },
+    {
+      "url": "https://cap-two.test",
+      "type": "file-download",
+      "status": "active",
+      "features": ["Git Clone"]
+    },
+    {
+      "url": "https://cap-one.test/",
+      "type": "file-download",
+      "status": "active",
+      "features": ["Git Clone"]
+    },
+    {
+      "url": "https://wrong-type.test/",
+      "type": "direct-access",
+      "status": "active",
+      "features": ["Git Clone"]
+    },
+    {
+      "url": "https://cap-three.test/",
+      "type": "file-download",
+      "status": "active",
+      "features": ["Git Clone"]
+    },
+    {
+      "url": "http://insecure.test/",
+      "type": "file-download",
+      "status": "active",
+      "features": ["Git Clone"]
+    },
+    {
+      "url": "https://cap-four.test/",
+      "type": "file-download",
+      "status": "active",
+      "features": ["Git Clone"]
+    }
+  ]
+}
+EOF
+}
+capped_subscription_json >"$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_FILE="$TMP/subscription.json"
+export GHACC_TEST_SUBSCRIPTION_MATCH="https://raw.githubusercontent.com/Miao-moe/gh-accelerator-api/main/mirrors.json"
+unset GHACC_TEST_CURL_FAIL_MIRRORS
+printf '%s\n' \
+  "https://cap-one.test/" \
+  "https://cap-two.test/" \
+  "https://cap-three.test/" >"$TMP/expected.list"
+expect_success "update honors subscription mirror cap" env PATH="$TMP/bin:$PATH" GHACC_SUBSCRIPTION_MAX_MIRRORS=3 "$SCRIPT" update
+diff -u "$TMP/expected.list" "$GHACC_CACHE_DIR/mirrors.list" || fail "subscription mirror cap output mismatch"
+assert_contains "$GHACC_CACHE_DIR/mirrors.meta" "count=3"
+
 echo "$PASS assertions passed"

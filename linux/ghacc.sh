@@ -178,7 +178,12 @@ subscription_parse_file() {
         if (ch == "{") depth++
         if (ch == "}") {
           depth--
-          if (depth == 0) { emit_object(buf); buf = "" }
+          if (depth == 1) {
+            emit_object(buf)
+            buf = ""
+          } else if (depth == 0) {
+            buf = ""
+          }
         }
       }
     }
@@ -215,7 +220,14 @@ update_command() {
   mkdir -p "$GHACC_CACHE_DIR" || die "cannot create cache directory: $GHACC_CACHE_DIR"
   [[ -d "$GHACC_CACHE_DIR" && -w "$GHACC_CACHE_DIR" ]] || die "cache directory is not writable: $GHACC_CACHE_DIR"
 
-  local body list filtered meta count remote_updated now status=0
+  local body list filtered meta count remote_updated now source_url status=0
+  local list_backup="" old_list=0
+  for source_url in "${GHACC_SUBSCRIPTION_URLS[@]}"; do
+    valid_subscription_url "$source_url" || {
+      log "ERROR: invalid subscription source: $source_url"
+      return 2
+    }
+  done
   body="$(mktemp "$GHACC_CACHE_DIR/.subscription-body.XXXXXX")" || return 1
   list="$(mktemp "$GHACC_CACHE_DIR/.subscription-list.XXXXXX")" || { rm -f "$body"; return 1; }
   filtered="$(mktemp "$GHACC_CACHE_DIR/.subscription-filtered.XXXXXX")" || { rm -f "$body" "$list"; return 1; }
@@ -264,17 +276,40 @@ update_command() {
     printf 'subscription_updated=%s\n' "$remote_updated"
   } >"$meta"
 
+  if [[ -e "$GHACC_CACHE_DIR/mirrors.list" ]]; then
+    old_list=1
+    list_backup="$(mktemp "$GHACC_CACHE_DIR/.mirrors.list.backup.XXXXXX")" || {
+      rm -f "$body" "$list" "$filtered" "$meta"
+      return 1
+    }
+    cp -p "$GHACC_CACHE_DIR/mirrors.list" "$list_backup" || {
+      rm -f "$body" "$list" "$filtered" "$meta" "$list_backup"
+      log "ERROR: unable to back up subscription cache"
+      return 1
+    }
+  fi
+
   mv -f "$list" "$GHACC_CACHE_DIR/mirrors.list" || {
-    rm -f "$body" "$list" "$filtered" "$meta"
+    rm -f "$body" "$list" "$filtered" "$meta" "$list_backup"
     log "ERROR: unable to replace subscription cache"
     return 1
   }
   mv -f "$meta" "$GHACC_CACHE_DIR/mirrors.meta" || {
     rm -f "$body" "$filtered" "$meta"
+    if ((old_list)); then
+      mv -f "$list_backup" "$GHACC_CACHE_DIR/mirrors.list" || {
+        rm -f "$GHACC_CACHE_DIR/mirrors.list"
+        log "ERROR: unable to restore subscription cache"
+        return 1
+      }
+    else
+      rm -f "$GHACC_CACHE_DIR/mirrors.list"
+    fi
+    rm -f "$list_backup"
     log "ERROR: unable to replace subscription metadata"
     return 1
   }
-  rm -f "$body" "$filtered"
+  rm -f "$body" "$filtered" "$list_backup"
   log "Updated mirrors: $count"
   log "Source: $SUBSCRIPTION_FETCH_SOURCE"
   log "Cache: $GHACC_CACHE_DIR/mirrors.list"
