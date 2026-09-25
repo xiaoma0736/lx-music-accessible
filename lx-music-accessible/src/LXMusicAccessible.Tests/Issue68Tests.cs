@@ -561,7 +561,7 @@ public sealed class Issue68Tests
 
         Assert.Equal(0.33, loaded.Settings.DefaultVolume);
         Assert.Equal(PlayMode.Loop, loaded.Settings.DefaultPlayMode);
-        Assert.Equal(2, loaded.Settings.HotkeySchemaVersion);
+        Assert.Equal(3, loaded.Settings.HotkeySchemaVersion);
         Assert.Contains(loaded.Settings.CustomHotkeys, hotkey => hotkey.IsGlobal);
     }
 

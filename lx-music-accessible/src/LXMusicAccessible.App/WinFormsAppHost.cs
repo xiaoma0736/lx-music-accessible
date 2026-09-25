@@ -161,6 +161,7 @@ public sealed class WinFormsDesktopIntegration : IDisposable
     private readonly IAccessibleAnnouncer _announcer;
     private NotifyIcon? _tray;
     private WinFormsShell? _shell;
+    private List<Form>? _hiddenToolWindows;
     public event EventHandler<DesktopCommand>? CommandRequested;
 
     public WinFormsDesktopIntegration(IAccessibleAnnouncer announcer) => _announcer = announcer;
@@ -175,6 +176,14 @@ public sealed class WinFormsDesktopIntegration : IDisposable
     public bool HideToTray()
     {
         if (_shell is null) return false;
+
+        // Owned tool windows are part of the accessible window group. Hiding only the shell would
+        // leave a reader user in a visible tool window while playback commands say the app is hidden.
+        _hiddenToolWindows = _shell.OwnedForms
+            .Where(form => form.Visible && !form.IsDisposed)
+            .ToList();
+        foreach (var form in _hiddenToolWindows) form.Visible = false;
+
         _shell.WindowState = FormWindowState.Minimized;
         _shell.ShowInTaskbar = false;
         _shell.Visible = false;
@@ -185,6 +194,17 @@ public sealed class WinFormsDesktopIntegration : IDisposable
     public DesktopFocusTarget RestoreWindow()
     {
         if (_shell is null || _shell.IsDisposed) return DesktopFocusTarget.None;
+
+        var restoredTools = _hiddenToolWindows;
+        _hiddenToolWindows = null;
+        if (restoredTools is not null)
+        {
+            foreach (var form in Enumerable.Reverse(restoredTools))
+            {
+                if (form is { IsDisposed: false }) form.Visible = true;
+            }
+        }
+
         _shell.ShowInTaskbar = true;
         _shell.Visible = true;
         _shell.WindowState = FormWindowState.Normal;
@@ -236,6 +256,7 @@ public sealed class WinFormsDesktopIntegration : IDisposable
     {
         _tray?.Dispose();
         _tray = null;
+        _hiddenToolWindows = null;
     }
 }
 
@@ -269,7 +290,7 @@ public sealed class ApplicationWindowFactory(
 
     public SourceManagerForm CreateSourceManager(Form owner, Func<KeyEventArgs, bool> handleHotkey) => new(announcer, sources, handleHotkey) { Owner = owner };
 
-    public DownloadManagerForm CreateDownloadManager(Form owner, Func<KeyEventArgs, bool> handleHotkey) => new(announcer, downloads) { Owner = owner };
+    public DownloadManagerForm CreateDownloadManager(Form owner, Func<KeyEventArgs, bool> handleHotkey) => new(announcer, downloads, handleHotkey) { Owner = owner };
 
     public SettingsForm CreateSettings(
         Form owner,
@@ -281,7 +302,7 @@ public sealed class ApplicationWindowFactory(
         Form owner,
         Func<KeyEventArgs, bool> handleHotkey,
         Action<ListBox> attachSongList,
-        Action<ListBox> detachSongList) => new(playlistImport, announcer, playlistLoginWindows, list => attachSongList(list)) { Owner = owner };
+        Action<ListBox> detachSongList) => new(playlistImport, announcer, playlistLoginWindows, list => attachSongList(list), handleHotkey) { Owner = owner };
 
     public ManualSourceSwitchForm CreateManualSource(
         Form owner,

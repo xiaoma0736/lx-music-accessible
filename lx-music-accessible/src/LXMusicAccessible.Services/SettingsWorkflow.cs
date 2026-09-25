@@ -214,23 +214,33 @@ public sealed class SettingsWorkflow
         CancellationToken cancellationToken = default)
     {
         var settings = Normalize(await _store.LoadAsync(cancellationToken) ?? new UserSettings());
-        var requiresHotkeyMigration = settings.HotkeySchemaVersion < 2;
+        var requiresHotkeyMigration = settings.HotkeySchemaVersion < 3;
 
         // Settings below schema 2 contain the legacy global defaults. Remove only the
         // stored globals so they are rebuilt from schema 2; local customizations stay.
-        if (requiresHotkeyMigration)
+        if (settings.HotkeySchemaVersion < 2)
             settings.CustomHotkeys = settings.CustomHotkeys
                 .Where(item => !item.IsGlobal)
+                .ToList();
+
+        // Schema 3 gives the previously unbound hide command a usable global default. Remove only an
+        // old default "unbound" record; a user-defined hide binding and an unbound key that collides
+        // with an existing action remain untouched.
+        if (settings.HotkeySchemaVersion < 3)
+            settings.CustomHotkeys = settings.CustomHotkeys
+                .Where(item => !(item.ActionId == HotkeyActions.ToggleWindow
+                    && item.IsGlobal
+                    && (!item.IsEnabled || item.Key == PlatformKey.None)))
                 .ToList();
 
         SettingsEditState current;
         lock (_stateGate)
         {
             settings.CustomHotkeys = _hotkeys.Load(settings.CustomHotkeys).ToList();
-            settings.HotkeySchemaVersion = 2;
+            settings.HotkeySchemaVersion = 3;
             current = _current = new SettingsEditState(++_version, settings);
             // A migrated state is deliberately dirty so the next explicit save stores
-            // schema 2 without an automatic write during startup.
+            // schema 3 without an automatic write during startup.
             _persistedVersion = requiresHotkeyMigration ? _version - 1 : _version;
         }
         LastRegistrationFailures = Array.Empty<Hotkey>();

@@ -17,6 +17,7 @@ public class SourceManagerForm : Form
 {
     private readonly IAccessibleAnnouncer _announcer;
     private readonly IMusicSourceService _sources;
+    private readonly Func<KeyEventArgs, bool> _handleHotkey;
     private readonly ListBox _list = WinFormsUi.ListBox("音源", 1);
     private readonly Label _empty = new() { Text = "暂无自定义音源。", AutoSize = true, TabStop = false };
     private string _sourceSignature = string.Empty;
@@ -25,6 +26,7 @@ public class SourceManagerForm : Form
     {
         _announcer = announcer;
         _sources = sources;
+        _handleHotkey = handleHotkey;
         Text = "音源管理";
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(760, 580);
@@ -55,6 +57,7 @@ public class SourceManagerForm : Form
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (_handleHotkey(e)) { e.Handled = true; return; }
         if (e.KeyCode == Keys.Escape) Close();
     }
     private void RefreshSourcesAfterExternalChange()
@@ -203,13 +206,15 @@ public class DownloadManagerForm : Form
 {
     private readonly IAccessibleAnnouncer _announcer;
     private readonly IDownloadWorkflow _downloads;
+    private readonly Func<KeyEventArgs, bool>? _handleHotkey;
     private readonly ListView _tasks = new() { Name = "DownloadTasks", View = View.Details, FullRowSelect = true, MultiSelect = true, HideSelection = false, TabStop = true, TabIndex = 1, AccessibleName = "下载任务" };
     private readonly Label _empty = new() { Text = "暂无下载任务。", AutoSize = true, TabStop = false };
 
-    public DownloadManagerForm(IAccessibleAnnouncer announcer, IDownloadWorkflow downloads)
+    public DownloadManagerForm(IAccessibleAnnouncer announcer, IDownloadWorkflow downloads, Func<KeyEventArgs, bool>? handleHotkey = null)
     {
         _announcer = announcer;
         _downloads = downloads;
+        _handleHotkey = handleHotkey;
         _tasks.AccessibleName = "下载任务";
         Text = "下载管理";
         StartPosition = FormStartPosition.CenterParent;
@@ -243,6 +248,7 @@ public class DownloadManagerForm : Form
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (_handleHotkey?.Invoke(e) == true) { e.Handled = true; return; }
         if (e.KeyCode == Keys.Escape) Close();
     }
     private void Reload()
@@ -327,6 +333,7 @@ public class PlaylistImportForm : Form
     private readonly IAccessibleAnnouncer _announcer;
     private readonly IPlaylistLoginWindowFactory _login;
     private readonly Action<ListBox>? _attachSongList;
+    private readonly Func<KeyEventArgs, bool>? _handleHotkey;
     private readonly ListBox _playlists = WinFormsUi.ListBox("个人歌单", 5);
     private readonly ListBox _songs = WinFormsUi.ListBox("歌曲预览", 6);
     private readonly TextBox _cookie = new() { Name = "Cookie", AccessibleName = "Cookie" };
@@ -339,12 +346,14 @@ public class PlaylistImportForm : Form
         IPlaylistImportService service,
         IAccessibleAnnouncer announcer,
         IPlaylistLoginWindowFactory login,
-        Action<ListBox> attachSongList)
+        Action<ListBox> attachSongList,
+        Func<KeyEventArgs, bool>? handleHotkey = null)
     {
         _service = service;
         _announcer = announcer;
         _login = login;
         _attachSongList = attachSongList;
+        _handleHotkey = handleHotkey;
         Text = "导入个人歌单";
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(1050, 680);
@@ -377,6 +386,7 @@ public class PlaylistImportForm : Form
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (_handleHotkey?.Invoke(e) == true) { e.Handled = true; return; }
         if (e.KeyCode == Keys.Escape) Close();
     }
     private void SelectPlatform(string platform)
@@ -483,7 +493,7 @@ public class LyricsForm : Form
     private readonly IAccessibleAnnouncer _announcer;
     private readonly LyricsWorkflow _lyrics;
     private readonly Func<KeyEventArgs, bool> _handleHotkey;
-    private readonly SilentTextBox _text = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window };
+    private readonly RichTextBox _text = new() { Multiline = true, ReadOnly = true, ScrollBars = RichTextBoxScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window, TabIndex = 1 };
     private readonly Label _title = new() { Text = "暂无歌词", AutoSize = true, TabStop = false, Dock = DockStyle.Top, AccessibleName = "歌词标题" };
     private readonly Button _copy = new() { Text = "复制歌词", Dock = DockStyle.Bottom };
 
@@ -503,7 +513,7 @@ public class LyricsForm : Form
         WinFormsUi.Name(_copy, "复制歌词", 2);
         _copy.Click += (_, _) =>
         {
-            Clipboard.SetText(_text.Text.Length == 0 ? string.Empty : _text.Text);
+            Clipboard.SetDataObject(_text.Text.Length == 0 ? string.Empty : _text.Text, true, 5, 100);
             Announce("歌词已复制", "lyrics", AnnouncementKind.Success);
         };
         if (lyrics is not null) lyrics.StateChanged += (_, state) => BeginInvoke(() => Render(state));
@@ -514,6 +524,12 @@ public class LyricsForm : Form
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (e.Control && e.Shift && e.KeyCode == Keys.C)
+        {
+            e.Handled = true;
+            _copy.PerformClick();
+            return;
+        }
         if (_handleHotkey(e))
         {
             e.Handled = true;
@@ -524,9 +540,35 @@ public class LyricsForm : Form
 
     private void Render(LyricsState state)
     {
-        _title.Text = state.Music is null ? "暂无歌词" : $"歌词：{state.Music.Artist}，{state.Music.Title}";
-        _text.Lines = state.Lines.Select((line, index) => (index + 1) + ". " + line.DisplayText).ToArray();
-        if (!string.IsNullOrWhiteSpace(state.Message)) _text.AppendText(Environment.NewLine + state.Message);
+        _title.Text = state.Music is null
+            ? string.IsNullOrWhiteSpace(state.Message) ? "暂无歌词" : state.Message
+            : $"歌词：{state.Music.Artist}，{state.Music.Title}";
+
+        _text.Text = state.Lines.Count == 0
+            ? state.Message
+            : string.Join(Environment.NewLine, state.Lines.Select((line, index) => (index + 1) + ". " + line.DisplayText));
+
+        HighlightCurrentLine(state);
+    }
+
+    private void HighlightCurrentLine(LyricsState state)
+    {
+        if (state.CurrentIndex < 0 || state.CurrentIndex >= state.Lines.Count)
+        {
+            _text.SelectionStart = 0;
+            _text.SelectionLength = 0;
+            return;
+        }
+
+        var lines = _text.Text.Split([Environment.NewLine], StringSplitOptions.None);
+        if (state.CurrentIndex >= lines.Length) return;
+        var start = lines.Take(state.CurrentIndex).Sum(line => line.Length + Environment.NewLine.Length);
+        _text.SelectionStart = start;
+        _text.SelectionLength = lines[state.CurrentIndex].Length;
+        _text.SelectionBackColor = SystemColors.Highlight;
+        _text.SelectionColor = SystemColors.HighlightText;
+        _text.ScrollToCaret();
+        _text.SelectionLength = 0;
     }
 
     private void Announce(string message, string activity, AnnouncementKind kind = AnnouncementKind.Status) =>
@@ -554,6 +596,7 @@ public class ManualSourceSwitchForm : Form
     private readonly IAccessibleAnnouncer _announcer;
     private readonly IManualSourceDiscoveryWorkflow _workflow;
     private readonly MusicInfo? _target;
+    private readonly Func<KeyEventArgs, bool> _handleHotkey;
     private readonly ListBox _options = WinFormsUi.ListBox("可用音源", 1);
     private readonly Label _targetLabel = new() { AutoSize = true, TabStop = false, AccessibleName = "目标歌曲" };
     private readonly Label _status = new() { Text = "按 Enter 搜索可用音源。", AutoSize = true, TabStop = false, AccessibleName = "切换状态" };
@@ -567,6 +610,7 @@ public class ManualSourceSwitchForm : Form
         _announcer = announcer;
         _workflow = workflow;
         _target = target;
+        _handleHotkey = handleHotkey;
         Text = "切换音源";
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(720, 540);
@@ -586,6 +630,7 @@ public class ManualSourceSwitchForm : Form
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (_handleHotkey(e)) { e.Handled = true; return; }
         if (e.KeyCode == Keys.Escape) Close();
     }
     private async Task SearchAsync()

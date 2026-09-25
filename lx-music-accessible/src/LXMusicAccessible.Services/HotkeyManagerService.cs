@@ -441,7 +441,7 @@ internal sealed class HotkeyManagerService
             (HotkeyActions.SwitchPreviousOutputDevice, "上一个播放设备", PlatformKey.None, PlatformModifiers.None),
             (HotkeyActions.LyricDelay, "歌词延后", PlatformKey.None, PlatformModifiers.None),
             (HotkeyActions.LyricAdvance, "歌词提前", PlatformKey.None, PlatformModifiers.None),
-            (HotkeyActions.ToggleWindow, "隐藏/显示窗口", PlatformKey.None, PlatformModifiers.None)
+            (HotkeyActions.ToggleWindow, "隐藏/显示窗口", PlatformKey.H, PlatformModifiers.Control | PlatformModifiers.Alt)
         };
         var locals = new (string Id, string Name, PlatformKey Key, PlatformModifiers Modifiers)[]
         {

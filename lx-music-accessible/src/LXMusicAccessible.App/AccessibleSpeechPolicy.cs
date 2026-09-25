@@ -2,29 +2,23 @@ using LXMusicAccessible.Services;
 
 namespace LXMusicAccessible.App;
 
-/// <summary>Restricts optional TTS to high-value playback, download, device, lyrics, settings, and hotkey-recording announcements.</summary>
+/// <summary>Sends only high-value feedback to TTS; routine browse state remains visual only.</summary>
 internal static class AccessibleSpeechPolicy
 {
-    /// <summary>Live-region activity used by settings pages and settings toggle feedback.</summary>
-    private const string SettingsActivityId = "settings";
-
-    /// <summary>Live-region activity used while recording and confirming hotkey assignments.</summary>
-    private const string HotkeyRecordingActivityId = "hotkey-recording";
-
     public static bool ShouldSpeak(AccessibleAnnouncement announcement)
     {
-        return announcement.Speech != AnnouncementSpeech.None && IsAllowed(announcement);
-    }
+        if (announcement.Speech == AnnouncementSpeech.None) return false;
+        if (announcement.Kind == AnnouncementKind.Error) return true;
 
-    private static bool IsAllowed(AccessibleAnnouncement announcement)
-    {
-        if (announcement.ActivityId is not { Length: > 0 } activityId)
-            return false;
-        return activityId.Equals("playback-song", StringComparison.Ordinal)
-            || activityId.Equals("lyrics", StringComparison.Ordinal)
-            || activityId.Equals("lyrics-offset", StringComparison.Ordinal)
-            || activityId.StartsWith("download:", StringComparison.Ordinal)
-            || activityId.StartsWith("download-list:", StringComparison.Ordinal)
-            || activityId.StartsWith("manual-source-playback:", StringComparison.Ordinal);
+        var activity = announcement.ActivityId;
+        if (activity is null) return false;
+        if (activity.Equals("welcome", StringComparison.Ordinal)) return false;
+        if (activity.StartsWith("music-browse:", StringComparison.Ordinal)) return false;
+
+        return !activity.Equals("categories", StringComparison.Ordinal)
+            && !activity.Equals("rankings", StringComparison.Ordinal)
+            && !activity.Equals("search-results", StringComparison.Ordinal)
+            && !activity.Equals("browse-status", StringComparison.Ordinal)
+            && !activity.Equals("saved-playlists", StringComparison.Ordinal);
     }
 }

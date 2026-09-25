@@ -373,6 +373,7 @@ public class SettingsForm : Form
         base.OnKeyDown(e);
         if (_recording is null)
         {
+            if (_handleHotkey(e)) { e.Handled = true; return; }
             if (e.KeyCode == Keys.Escape) Close();
             return;
         }

@@ -110,7 +110,7 @@ internal static class WinFormsUi
     }
 }
 
-/// <summary>Native WinForms UIA notification plus optional TTS, preserving one announcement pipeline.</summary>
+/// <summary>Native TTS announcements with a visual live-region mirror.</summary>
 public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer
 {
     private readonly ITtsService? _speech;
@@ -120,7 +120,9 @@ public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer
     private readonly Dictionary<string, AccessibleAnnouncement> _pendingProgress = new(StringComparer.Ordinal);
     private readonly HashSet<string> _terminal = new(StringComparer.Ordinal);
 
-    public WinFormsAccessibleAnnouncer(IEnumerable<ITtsService> speech, ILogger<WinFormsAccessibleAnnouncer> logger)
+    public WinFormsAccessibleAnnouncer(
+        IEnumerable<ITtsService> speech,
+        ILogger<WinFormsAccessibleAnnouncer> logger)
     {
         _speech = speech.FirstOrDefault();
         _logger = logger;
@@ -167,17 +169,6 @@ public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer
         var target = _liveRegion!;
         target.Text = announcement.Text;
         target.AccessibleName = announcement.Text;
-        try
-        {
-            target.AccessibilityObject.RaiseAutomationNotification(
-                System.Windows.Forms.Automation.AutomationNotificationKind.Other,
-                System.Windows.Forms.Automation.AutomationNotificationProcessing.ImportantMostRecent,
-                announcement.Text);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Accessible notification delivery failed");
-        }
         if (ShouldSpeak(announcement)) _ = SpeakAsync(announcement);
     }
 

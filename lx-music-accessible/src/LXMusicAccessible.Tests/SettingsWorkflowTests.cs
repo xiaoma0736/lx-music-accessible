@@ -371,19 +371,22 @@ public sealed class SettingsWorkflowTests
         Assert.Equal(PlatformKey.Right, globals[HotkeyActions.Forward].Key);
         Assert.Equal(PlatformKey.Up, globals[HotkeyActions.VolumeUp].Key);
         Assert.Equal(PlatformKey.Down, globals[HotkeyActions.VolumeDown].Key);
-        Assert.Equal(8, globals.Values.Count(item => item.IsEnabled && item.Key != PlatformKey.None));
+        Assert.Equal(9, globals.Values.Count(item => item.IsEnabled && item.Key != PlatformKey.None));
         Assert.All(
             new[]
             {
                 HotkeyActions.TogglePlayMode, HotkeyActions.Download,
                 HotkeyActions.SwitchNextOutputDevice, HotkeyActions.SwitchPreviousOutputDevice,
-                HotkeyActions.LyricDelay, HotkeyActions.LyricAdvance, HotkeyActions.ToggleWindow
+                HotkeyActions.LyricDelay, HotkeyActions.LyricAdvance
             },
             actionId =>
             {
                 Assert.Equal(PlatformKey.None, globals[actionId].Key);
                 Assert.False(globals[actionId].IsEnabled);
             });
+        Assert.Equal(PlatformKey.H, globals[HotkeyActions.ToggleWindow].Key);
+        Assert.Equal(PlatformModifiers.Control | PlatformModifiers.Alt, globals[HotkeyActions.ToggleWindow].Modifiers);
+        Assert.True(globals[HotkeyActions.ToggleWindow].IsEnabled);
     }
 
     [Fact]
@@ -409,7 +412,7 @@ public sealed class SettingsWorkflowTests
         var workflow = CreateWorkflow(store, new RecordingHotkeyAdapter());
         var loaded = await workflow.LoadAsync(IntPtr.Zero);
 
-        Assert.Equal(2, loaded.Settings.HotkeySchemaVersion);
+        Assert.Equal(3, loaded.Settings.HotkeySchemaVersion);
         Assert.Equal(PlatformKey.PageDown, loaded.Settings.CustomHotkeys.Single(item =>
             item.ActionId == HotkeyActions.Next && item.IsGlobal).Key);
         Assert.Equal(PlatformKey.F12, loaded.Settings.CustomHotkeys.Single(item =>
@@ -417,7 +420,7 @@ public sealed class SettingsWorkflowTests
 
         var edited = workflow.Edit(_ => { });
         Assert.True((await workflow.SaveAsync(edited.State)).Succeeded);
-        Assert.Equal(2, store.Saved.Single().HotkeySchemaVersion);
+        Assert.Equal(3, store.Saved.Single().HotkeySchemaVersion);
     }
 
     [Fact]
@@ -436,7 +439,7 @@ public sealed class SettingsWorkflowTests
         var restarted = CreateWorkflow(store, new RecordingHotkeyAdapter());
         var restored = await restarted.LoadAsync(IntPtr.Zero);
 
-        Assert.Equal(2, restored.Settings.HotkeySchemaVersion);
+        Assert.Equal(3, restored.Settings.HotkeySchemaVersion);
         Assert.Equal(PlatformKey.P, restored.Settings.CustomHotkeys.Single(item =>
             item.ActionId == HotkeyActions.PlayPause && item.IsGlobal).Key);
     }

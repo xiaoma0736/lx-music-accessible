@@ -94,25 +94,21 @@ public sealed class WinFormsShellInteractionTests
     }
 
     [Theory]
-    [InlineData("categories")]
-    [InlineData("rankings")]
-    [InlineData("browse-status")]
-    [InlineData("music-browse:1")]
-    [InlineData("search-results")]
-    [InlineData("settings")]
-    [InlineData("welcome")]
-    public void Optional_browse_and_settings_messages_do_not_duplicate_screen_reader_speech(string activityId)
+    [InlineData("categories", false)]
+    [InlineData("rankings", false)]
+    [InlineData("browse-status", false)]
+    [InlineData("music-browse:1", false)]
+    [InlineData("search-results", false)]
+    [InlineData("welcome", false)]
+    [InlineData("settings", true)]
+    [InlineData("playback-song", true)]
+    [InlineData("lyrics", true)]
+    [InlineData("download:1", true)]
+    public void Speech_policy_keeps_high_value_messages_and_quiets_routine_browse(
+        string activityId,
+        bool expected)
     {
-        Assert.False(AccessibleSpeechPolicy.ShouldSpeak(new AccessibleAnnouncement("状态", ActivityId: activityId)));
-    }
-
-    [Theory]
-    [InlineData("playback-song")]
-    [InlineData("lyrics")]
-    [InlineData("download:1")]
-    public void High_value_playback_download_and_lyric_messages_can_speak(string activityId)
-    {
-        Assert.True(AccessibleSpeechPolicy.ShouldSpeak(new AccessibleAnnouncement("状态", ActivityId: activityId)));
+        Assert.Equal(expected, AccessibleSpeechPolicy.ShouldSpeak(new AccessibleAnnouncement("??", ActivityId: activityId)));
     }
 
     private static WinFormsShell CreateShell(InteractionBrowseSource source, RecordingAnnouncer announcer, RecordingPlayback? playback = null) =>

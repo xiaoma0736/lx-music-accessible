@@ -14,6 +14,49 @@ namespace LXMusicAccessible.App;
 /// <summary>Explicit user-action handlers, browse workflows, playback and keyboard routing for the native shell.</summary>
 public partial class WinFormsShell
 {
+    private sealed class LoadMoreAction
+    {
+    }
+
+    private async Task<bool> TryActivateLoadMore(ListBox list, KeyEventArgs args)
+    {
+        if (args.KeyCode != Keys.Enter
+            || list.SelectedItem is not ObjectBox<LoadMoreAction>)
+            return false;
+
+        if (list == SearchResults && SearchLoadMore.Enabled)
+        {
+            args.Handled = true;
+            await SearchAsync(false);
+            return true;
+        }
+        if (list == FavoriteSongs && SavedPlaylistLoadMore.Enabled)
+        {
+            args.Handled = true;
+            _ = LoadMoreSavedSongsAsync();
+            return true;
+        }
+        if (list == CategoryPlaylists && CategoryPlaylistsLoadMore.Enabled)
+        {
+            args.Handled = true;
+            _ = LoadCategoryPlaylistsAsync(GetCurrentCategoryPage() + 1, append: true);
+            return true;
+        }
+        if (list == CategorySongs && CategorySongsLoadMore.Enabled)
+        {
+            args.Handled = true;
+            _ = LoadMoreCategorySongsAsync();
+            return true;
+        }
+        if (list == RankingSongs && RankingSongsLoadMore.Enabled)
+        {
+            args.Handled = true;
+            _ = LoadMoreRankingSongsAsync();
+            return true;
+        }
+        return false;
+    }
+
     private async Task RunAsync<T>(Func<Task<T>> work, Action<T> render, string operation)
     {
         try
@@ -35,14 +78,7 @@ public partial class WinFormsShell
     private void SelectTab(int index)
     {
         MainTabs.SelectedIndex = index;
-        Control focus = index switch
-        {
-            0 => SearchText,
-            1 => FavoriteSongs.Items.Count > 0 ? FavoriteSongs : OnlinePlaylists,
-            2 => CategoryList,
-            _ => RankingList
-        };
-        focus.Focus();
+        MainTabs.Focus();
     }
 
     private void ClearSearch()
@@ -101,7 +137,7 @@ public partial class WinFormsShell
                 var selected = WinFormsUi.Selected<MusicInfo>(SearchResults)?.Id;
                 WinFormsUi.FillSongs(SearchResults, _searchSongs);
                 RestoreSelection(SearchResults, _searchSongs, selected);
-                UpdateLoadMore(SearchLoadMore, SearchResults, result.Value.HasMore);
+                UpdateLoadMore(SearchLoadMore, SearchResults, result.Value.HasMore, () => SearchAsync(false));
                 Announce(result.Message, "search-results");
             }
             else if (!string.IsNullOrWhiteSpace(result.Message))
@@ -132,7 +168,7 @@ public partial class WinFormsShell
                 var selected = WinFormsUi.Selected<MusicInfo>(SearchResults)?.Id;
                 WinFormsUi.FillSongs(SearchResults, songs);
                 RestoreSelection(SearchResults, songs, selected);
-                UpdateLoadMore(SearchLoadMore, SearchResults, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, songs.Count));
+                UpdateLoadMore(SearchLoadMore, SearchResults, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, songs.Count), () => LoadMoreAlbumSongsAsync());
                 Announce(result.Message, "album");
             }
             else if (!string.IsNullOrWhiteSpace(result.Message))
@@ -176,7 +212,7 @@ public partial class WinFormsShell
                 if (paged)
                 {
                     _searchSongs = songs;
-                    UpdateLoadMore(SearchLoadMore, SearchResults, HasMore(albumResult.Value.HasMore, albumResult.Value.Items.Count, albumResult.Value.TotalItems, songs.Count));
+                    UpdateLoadMore(SearchLoadMore, SearchResults, HasMore(albumResult.Value.HasMore, albumResult.Value.Items.Count, albumResult.Value.TotalItems, songs.Count), () => LoadMoreAlbumSongsAsync());
                 }
                 Announce(albumResult.Message, "album");
             }
@@ -266,7 +302,7 @@ public partial class WinFormsShell
         }
         _favoriteSongs = snapshot.Songs.ToList();
         WinFormsUi.FillSongs(FavoriteSongs, _favoriteSongs);
-        UpdateLoadMore(SavedPlaylistLoadMore, FavoriteSongs, snapshot.HasMore);
+        UpdateLoadMore(SavedPlaylistLoadMore, FavoriteSongs, snapshot.HasMore, LoadMoreSavedSongsAsync);
         Announce(message, "saved-playlists", kind);
     }
 
@@ -314,7 +350,6 @@ public partial class WinFormsShell
             foreach (var category in result.Value)
                 CategoryList.Items.Add(new ObjectBox<PlaylistCategory>(category.Name, category));
             Announce(result.Message, "categories");
-            if (ContainsFocus) CategoryList.Focus();
         }, "加载分类");
     }
 
@@ -343,7 +378,7 @@ public partial class WinFormsShell
                 foreach (var playlist in items)
                     CategoryPlaylists.Items.Add(new ObjectBox<Playlist>(playlist.Name, playlist));
                 RestoreSelection(CategoryPlaylists, items, selected);
-                UpdateLoadMore(CategoryPlaylistsLoadMore, CategoryPlaylists, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, items.Count));
+                UpdateLoadMore(CategoryPlaylistsLoadMore, CategoryPlaylists, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, items.Count), () => LoadCategoryPlaylistsAsync(GetCurrentCategoryPage() + 1, append: true));
                 SetBrowseStatus(result.Message);
                 if (!append && ContainsFocus) CategoryPlaylists.Focus();
             }
@@ -376,7 +411,7 @@ public partial class WinFormsShell
                 var selected = WinFormsUi.Selected<MusicInfo>(CategorySongs)?.Id;
                 WinFormsUi.FillSongs(CategorySongs, _categorySongs);
                 RestoreSelection(CategorySongs, _categorySongs, selected);
-                UpdateLoadMore(CategorySongsLoadMore, CategorySongs, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, _categorySongs.Count));
+                UpdateLoadMore(CategorySongsLoadMore, CategorySongs, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, _categorySongs.Count), LoadMoreCategorySongsAsync);
                 SetBrowseStatus(result.Message);
                 if (!append && ContainsFocus) CategorySongs.Focus();
             }
@@ -404,11 +439,71 @@ public partial class WinFormsShell
     /// Disabling a focused control would otherwise drop focus onto the tab control, so focus returns to the
     /// list that just finished loading instead of away from the reading position.
     /// </summary>
-    private static void UpdateLoadMore(Button button, ListBox list, bool hasMore)
+    private static void UpdateLoadMore(Button button, ListBox list, bool hasMore, Func<Task>? loadMore = null)
     {
+        _ = loadMore;
         var restoreFocus = !hasMore && button.Focused;
         button.Enabled = hasMore;
+
+        for (var index = list.Items.Count - 1; index >= 0; index--)
+        {
+            if (list.Items[index] is ObjectBox<LoadMoreAction>) list.Items.RemoveAt(index);
+        }
+        if (hasMore) list.Items.Add(new ObjectBox<LoadMoreAction>("加载更多", new LoadMoreAction()));
+
         if (restoreFocus && !list.IsDisposed && list.CanFocus) list.Focus();
+    }
+
+    private bool HandleBrowseBack(ListBox? source = null)
+    {
+        source ??= ActiveControl as ListBox;
+
+        if (source == SearchResults && _openAlbum is not null)
+        {
+            _ = ReturnToSearchAsync();
+            return true;
+        }
+        if (source == CategorySongs)
+        {
+            CategoryPlaylists.Focus();
+            Announce("已返回歌单列表", "browse-back");
+            return true;
+        }
+        if (source == CategoryPlaylists)
+        {
+            CategoryList.Focus();
+            Announce("已返回分类列表", "browse-back");
+            return true;
+        }
+        if (source == RankingSongs)
+        {
+            RankingList.Focus();
+            Announce("已返回榜单列表", "browse-back");
+            return true;
+        }
+        if (source == FavoriteSongs)
+        {
+            OnlinePlaylists.Focus();
+            Announce("已返回歌单列表", "browse-back");
+            return true;
+        }
+        return false;
+    }
+
+    private Task ReturnToSearchAsync()
+    {
+        var search = _browse.CurrentSearch;
+        var items = search.Items.ToList();
+        _openAlbum = null;
+        _searchSongs = items;
+        SearchLoadMore.AccessibleName = "加载更多搜索歌曲";
+        var selected = WinFormsUi.Selected<MusicInfo>(SearchResults)?.Id;
+        WinFormsUi.FillSongs(SearchResults, items);
+        UpdateLoadMore(SearchLoadMore, SearchResults, search.HasMore, () => SearchAsync(false));
+        RestoreSelection(SearchResults, items, selected);
+        SearchResults.Focus();
+        Announce("已返回搜索结果", "browse-back");
+        return Task.CompletedTask;
     }
 
     private static void RestoreSelection<T>(ListBox list, IReadOnlyList<T> items, string? id)
@@ -453,7 +548,6 @@ public partial class WinFormsShell
             foreach (var ranking in result.Value)
                 RankingList.Items.Add(new ObjectBox<Ranking>(ranking.Name, ranking));
             Announce(result.Message, "rankings");
-            if (ContainsFocus) RankingList.Focus();
         }, "加载排行榜");
     }
 
@@ -478,9 +572,8 @@ public partial class WinFormsShell
                 var selected = WinFormsUi.Selected<MusicInfo>(RankingSongs)?.Id;
                 WinFormsUi.FillSongs(RankingSongs, _rankingSongs);
                 RestoreSelection(RankingSongs, _rankingSongs, selected);
-                UpdateLoadMore(RankingSongsLoadMore, RankingSongs, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, _rankingSongs.Count));
+                UpdateLoadMore(RankingSongsLoadMore, RankingSongs, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, _rankingSongs.Count), LoadMoreRankingSongsAsync);
                 SetBrowseStatus(result.Message);
-                if (!append && ContainsFocus) RankingSongs.Focus();
             }
             else SetBrowseStatus(result.Message);
         }
@@ -632,6 +725,7 @@ public partial class WinFormsShell
     {
         var menu = new ContextMenu();
         menu.MenuItems.Add(new MenuItem("播放", (_, _) => _ = ActivateSong(list)));
+        menu.MenuItems.Add(new MenuItem("查看歌词", (_, _) => OpenLyrics(WinFormsUi.Selected<MusicInfo>(list))));
         menu.MenuItems.Add(new MenuItem("查看详情", (_, _) => ShowSongDetails(list)));
         menu.MenuItems.Add(new MenuItem("收藏歌曲", (_, _) => _ = AddFavorites(WinFormsUi.Songs(list))));
         menu.MenuItems.Add(new MenuItem("下载", (_, _) => DownloadList(WinFormsUi.Songs(list))));
@@ -695,11 +789,13 @@ public partial class WinFormsShell
         }
     }
 
-    private void OpenLyrics()
+    private void OpenLyrics() => OpenLyrics(_current);
+
+    private void OpenLyrics(MusicInfo? music)
     {
         if (_services.Windows is null) return;
         var window = _services.Windows.CreateLyrics(HandleHotkey);
-        if (_current is not null) _ = _services.Lyrics?.LoadAsync(_current);
+        if (music is not null) _ = _services.Lyrics?.LoadAsync(music);
         window.Show(this);
     }
 
@@ -840,6 +936,7 @@ public partial class WinFormsShell
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
+        if (keyData == Keys.Back && HandleBrowseBack()) return true;
         if (keyData == Keys.Escape)
         {
             if (SearchText.Focused && SearchText.Text.Length > 0) ClearSearch();
@@ -893,7 +990,17 @@ public partial class WinFormsShell
     private void AttachSongList(ListBox list)
     {
         AssignSongContextMenu(list);
-        list.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(list); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
+        list.KeyDown += (_, e) =>
+        {
+            if (e.Shift && e.KeyCode == Keys.Enter)
+            {
+                e.Handled = true;
+                OpenLyrics(WinFormsUi.Selected<MusicInfo>(list));
+                return;
+            }
+            if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(list); }
+            else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); }
+        };
     }
 
     private void DetachSongList(ListBox list)

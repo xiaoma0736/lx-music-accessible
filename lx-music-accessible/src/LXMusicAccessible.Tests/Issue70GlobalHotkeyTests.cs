@@ -111,9 +111,9 @@ public sealed class Issue70GlobalHotkeyTests
 
         var state = await workflow.LoadAsync(new IntPtr(1234));
 
-        Assert.Equal(2, state.Settings.HotkeySchemaVersion);
+        Assert.Equal(3, state.Settings.HotkeySchemaVersion);
         Assert.Empty(workflow.LastRegistrationFailures);
-        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9 }, adapter.IdsOn(new IntPtr(1234)));
+        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9, 14 }, adapter.IdsOn(new IntPtr(1234)));
         AssertBinding(adapter, new IntPtr(1234), 0, PlatformKey.Home);
         AssertBinding(adapter, new IntPtr(1234), 1, PlatformKey.End);
         AssertBinding(adapter, new IntPtr(1234), 2, PlatformKey.Prior);
@@ -167,7 +167,7 @@ public sealed class Issue70GlobalHotkeyTests
         await workflow.LoadAsync(new IntPtr(200));
 
         Assert.Empty(adapter.IdsOn(new IntPtr(100)));
-        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9 }, adapter.IdsOn(new IntPtr(200)));
+        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9, 14 }, adapter.IdsOn(new IntPtr(200)));
         Assert.Contains("unregister:100:0", adapter.Operations);
         Assert.Contains("unregister:100:9", adapter.Operations);
         Assert.Contains("register:200:0:" + PlatformKey.Home, adapter.Operations);
@@ -201,7 +201,7 @@ public sealed class Issue70GlobalHotkeyTests
         // The replacement was attempted, then compensated: the old binding is live again and no
         // partial F24 binding was left behind.
         Assert.Contains("register:600:4:" + PlatformKey.F24, adapter.Operations);
-        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9 }, adapter.IdsOn(new IntPtr(600)));
+        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9, 14 }, adapter.IdsOn(new IntPtr(600)));
         AssertBinding(adapter, new IntPtr(600), 4, PlatformKey.Left);
         Assert.Contains(adapter.Operations, operation => operation == "unregister:600:4");
         var rewind = Global(workflow, HotkeyActions.Rewind);
@@ -236,7 +236,7 @@ public sealed class Issue70GlobalHotkeyTests
         Assert.Equal(HotkeyEditStatus.RegistrationFailed, result.Status);
         Assert.False(result.Applied);
         Assert.Empty(store.Saved);
-        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9 }, adapter.IdsOn(new IntPtr(700)));
+        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9, 14 }, adapter.IdsOn(new IntPtr(700)));
         AssertBinding(adapter, new IntPtr(700), 0, PlatformKey.Home);
         AssertBinding(adapter, new IntPtr(700), 4, PlatformKey.F23);
         AssertBinding(adapter, new IntPtr(700), 5, PlatformKey.F24);
@@ -269,7 +269,7 @@ public sealed class Issue70GlobalHotkeyTests
             new[] { HotkeyActions.PlayPause, HotkeyActions.Stop },
             conflict.Conflicts.Select(hotkey => hotkey.ActionId).OrderBy(id => id, StringComparer.Ordinal));
         Assert.Empty(store.Saved);
-        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9 }, adapter.IdsOn(new IntPtr(800)));
+        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9, 14 }, adapter.IdsOn(new IntPtr(800)));
         AssertBinding(adapter, new IntPtr(800), 0, PlatformKey.Home);
         AssertBinding(adapter, new IntPtr(800), 1, PlatformKey.End);
         Assert.Equal(PlatformKey.Home, Global(workflow, HotkeyActions.PlayPause).Key);
@@ -300,7 +300,7 @@ public sealed class Issue70GlobalHotkeyTests
 
         Assert.Equal(HotkeyEditStatus.Applied, cleared.Status);
         Assert.Single(store.Saved);
-        Assert.Equal(new[] { 0, 2, 3, 4, 5, 8, 9 }, adapter.IdsOn(new IntPtr(810)));
+        Assert.Equal(new[] { 0, 2, 3, 4, 5, 8, 9, 14 }, adapter.IdsOn(new IntPtr(810)));
         var clearedStop = Global(workflow, HotkeyActions.Stop);
         Assert.Equal(PlatformKey.None, clearedStop.Key);
         Assert.False(clearedStop.IsEnabled);
@@ -479,7 +479,7 @@ public sealed class Issue70GlobalHotkeyTests
             shell.Show();
             Application.DoEvents();
             Assert.Equal(handle, shell.Handle);
-            Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9 }, adapter.IdsOn(handle));
+            Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 8, 9, 14 }, adapter.IdsOn(handle));
             workflow.RaiseGlobalHotkey(1);
             Assert.Equal(3, playback.StopCalls);
 
@@ -491,7 +491,7 @@ public sealed class Issue70GlobalHotkeyTests
                 PlatformModifiers.Control | PlatformModifiers.Alt);
             Assert.Equal(HotkeyEditStatus.Applied, rebound.Status);
             AssertBinding(adapter, handle, 7, PlatformKey.F24);
-            Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 7, 8, 9 }, adapter.IdsOn(handle));
+            Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 7, 8, 9, 14 }, adapter.IdsOn(handle));
             AssertBinding(adapter, handle, 0, PlatformKey.Home);
             AssertBinding(adapter, handle, 1, PlatformKey.End);
             Assert.True(workflow.IsGlobalHotkeyRegistered(Global(workflow, HotkeyActions.Stop)));

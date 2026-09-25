@@ -83,14 +83,15 @@ public sealed class PlaybackHotkeyStatusRegressionTests
     }
 
     [Fact]
-    public void Lyrics_display_is_hidden_from_screen_reader_automation()
+    public void Lyrics_display_is_visible_to_screen_reader_automation()
     {
         WinFormsTestRunner.Run(() =>
         {
             using var form = new LyricsForm(new RecordingAnnouncer(), null!, _ => false);
-            var text = form.Controls.OfType<TextBox>().Single();
-            Assert.Equal(AccessibleRole.None, text.AccessibilityObject.Role);
-            Assert.Equal(AccessibleStates.Invisible, text.AccessibilityObject.State & AccessibleStates.Invisible);
+            var text = form.Controls.OfType<RichTextBox>().Single();
+            Assert.Equal("\u6b4c\u8bcd", text.AccessibleName);
+            Assert.NotEqual(AccessibleRole.None, text.AccessibilityObject.Role);
+            Assert.False((text.AccessibilityObject.State & AccessibleStates.Invisible) != 0);
         });
     }
 
