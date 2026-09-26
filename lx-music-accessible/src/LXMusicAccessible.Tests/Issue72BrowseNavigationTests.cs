@@ -254,7 +254,7 @@ public sealed class Issue72BrowseNavigationTests
         public static readonly RecordingAnnouncer Announcer = new();
     }
 
-    private sealed class PagedBrowseSource : IMusicBrowseSource
+    public sealed class PagedBrowseSource : IMusicBrowseSource
     {
         public int SearchTotal { get; init; } = 1;
         public int AlbumSongTotal { get; init; } = 1;

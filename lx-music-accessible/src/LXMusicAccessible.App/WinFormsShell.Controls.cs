@@ -246,15 +246,25 @@ public partial class WinFormsShell : Form
             else if (e.Control && e.KeyCode == Keys.Delete) _ = DeleteHistory(false);
             else if (e.Alt && e.KeyCode == Keys.Delete) _ = DeleteHistory(true);
         };
-        SearchText.KeyDown += (_, e) =>
+        SearchText.KeyDown += async (_, e) =>
         {
             if (e.KeyCode == Keys.Enter && e.Modifiers == Keys.None)
             {
+                e.Handled = true;
                 e.SuppressKeyPress = true;
-                _ = SearchAsync(true);
+                await SearchAsync(true);
+                ActiveControl = SearchResults;
             }
         };
-        SearchResults.DoubleClick += (_, _) => _ = ActivateSong(SearchResults);
+        SearchResults.DoubleClick += async (_, _) =>
+        {
+            if (await TryActivateLoadMore(SearchResults, new KeyEventArgs(Keys.Enter)))
+            {
+                ActiveControl = SearchResults;
+                return;
+            }
+            _ = ActivateSong(SearchResults);
+        };
         SearchResults.KeyDown += async (_, e) =>
         {
             if (await TryActivateLoadMore(SearchResults, e)) return;
@@ -308,7 +318,15 @@ public partial class WinFormsShell : Form
             _services.SavedPlaylists?.Select(WinFormsUi.Selected<Playlist>(OnlinePlaylists));
             SavedPlaylistLoadMore.Enabled = false;
         };
-        OnlinePlaylists.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) _ = LoadSelectedSavedAsync(); };
+        OnlinePlaylists.KeyDown += async (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter && WinFormsUi.Selected<Playlist>(OnlinePlaylists) is not null)
+            {
+                e.Handled = true;
+                await LoadSelectedSavedAsync();
+                ActiveControl = FavoriteSongs;
+            }
+        };
         OnlinePlaylists.DoubleClick += (_, _) => _ = LoadSelectedSavedAsync();
         FavoriteSongs.DoubleClick += (_, _) => _ = ActivateSong(FavoriteSongs);
         SavedPlaylistLoadMore.Click += (_, _) => _ = LoadMoreSavedSongsAsync();
@@ -364,8 +382,26 @@ public partial class WinFormsShell : Form
             sourceLabel, CategorySource, refresh, playlistPrevious, playlistNext, playlistPage,
             CategoryPlaylistsLoadMore, CategorySongsLoadMore, CategoryList, CategoryPlaylists, CategorySongs
         });
-        CategoryList.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) LoadCategoryPlaylists(); };
-        CategoryPlaylists.KeyDown += async (_, e) => { if (await TryActivateLoadMore(CategoryPlaylists, e)) return; if (e.KeyCode == Keys.Back && HandleBrowseBack(CategoryPlaylists)) return; if (e.KeyCode == Keys.Enter) _ = LoadCategorySongs(); };
+        CategoryList.KeyDown += async (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter)
+            {
+                e.Handled = true;
+                await LoadCategoryPlaylistsAsync(1, append: false);
+                ActiveControl = CategoryPlaylists;
+            }
+        };
+        CategoryPlaylists.KeyDown += async (_, e) =>
+        {
+            if (await TryActivateLoadMore(CategoryPlaylists, e)) return;
+            if (e.KeyCode == Keys.Back && HandleBrowseBack(CategoryPlaylists)) return;
+            if (e.KeyCode == Keys.Enter)
+            {
+                e.Handled = true;
+                await LoadCategorySongsAsync(1, append: false);
+                ActiveControl = CategorySongs;
+            }
+        };
         CategorySongs.DoubleClick += (_, _) => _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category);
         CategorySongs.KeyDown += async (_, e) => { if (await TryActivateLoadMore(CategorySongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(WinFormsUi.Selected<MusicInfo>(CategorySongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(CategorySongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         var playlistMenu = new ContextMenu();
@@ -418,7 +454,15 @@ public partial class WinFormsShell : Form
         RankingSongs.SetBounds(300, 44, 650, 490);
         RankingSongsLoadMore.SetBounds(300, 540, 160, 26);
         page.Controls.AddRange(new Control[] { sourceLabel, RankingSource, refresh, RankingList, RankingSongs, RankingSongsLoadMore });
-        RankingList.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) _ = LoadRankingSongs(); };
+        RankingList.KeyDown += async (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter)
+            {
+                e.Handled = true;
+                await LoadRankingSongsAsync(1, append: false);
+                ActiveControl = RankingSongs;
+            }
+        };
         RankingSongs.DoubleClick += (_, _) => _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking);
         RankingSongs.KeyDown += async (_, e) => { if (await TryActivateLoadMore(RankingSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(WinFormsUi.Selected<MusicInfo>(RankingSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(RankingSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         var rankingMenu = new ContextMenu();
