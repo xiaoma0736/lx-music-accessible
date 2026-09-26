@@ -256,6 +256,14 @@ public partial class WinFormsShell : Form
                 ActiveControl = SearchResults;
             }
         };
+        SearchResults.PreviewKeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter) e.IsInputKey = true;
+        };
+        SearchResults.KeyPress += (_, e) =>
+        {
+            if (e.KeyChar == (char)Keys.Return && TryStartSearchLoadMore()) e.Handled = true;
+        };
         SearchResults.DoubleClick += async (_, _) =>
         {
             if (await TryActivateLoadMore(SearchResults, new KeyEventArgs(Keys.Enter)))

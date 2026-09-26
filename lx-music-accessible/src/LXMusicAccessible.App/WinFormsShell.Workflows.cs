@@ -18,16 +18,26 @@ public partial class WinFormsShell
     {
     }
 
+    private bool TryStartSearchLoadMore()
+    {
+        if (SearchResults.SelectedItem is not ObjectBox<LoadMoreAction>
+            || !SearchLoadMore.Enabled)
+            return false;
+
+        _ = SearchAsync(false);
+        return true;
+    }
+
     private async Task<bool> TryActivateLoadMore(ListBox list, KeyEventArgs args)
     {
+        await Task.CompletedTask;
         if (args.KeyCode != Keys.Enter
             || list.SelectedItem is not ObjectBox<LoadMoreAction>)
             return false;
 
-        if (list == SearchResults && SearchLoadMore.Enabled)
+        if (list == SearchResults && TryStartSearchLoadMore())
         {
             args.Handled = true;
-            await SearchAsync(false);
             return true;
         }
         if (list == FavoriteSongs && SavedPlaylistLoadMore.Enabled)

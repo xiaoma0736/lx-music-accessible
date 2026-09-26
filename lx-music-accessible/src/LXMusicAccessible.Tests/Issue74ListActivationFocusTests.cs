@@ -29,8 +29,9 @@ public sealed class Issue74ListActivationFocusTests
         RaiseKeyDown(search, Keys.Enter);
 
         await WaitFor(() => source.SearchCalls == 1);
-        await WaitForList(RequiredListBox(shell, "SearchResults"), 1);
-        Assert.Same(RequiredListBox(shell, "SearchResults"), shell.ActiveControl);
+        var results = RequiredListBox(shell, "SearchResults");
+        await WaitForList(results, 1);
+        await WaitFor(() => shell.ActiveControl == results);
     }
 
     [Fact]
@@ -50,6 +51,28 @@ public sealed class Issue74ListActivationFocusTests
 
         results.SelectedIndex = results.Items.Count - 1;
         InvokeDoubleClick(results);
+
+        await WaitFor(() => source.SearchCalls == 2);
+        Assert.Same(results, shell.ActiveControl);
+    }
+
+    [Fact]
+    public async Task Search_load_more_activates_from_keypress_fallback()
+    {
+        var source = new Issue72BrowseNavigationTests.PagedBrowseSource { SearchTotal = 3 };
+        using var shell = CreateShell(source);
+        shell.Show();
+        Application.DoEvents();
+
+        var search = RequiredTextBox(shell);
+        search.Text = "query";
+        RaiseKeyDown(search, Keys.Enter);
+        await WaitFor(() => source.SearchCalls == 1);
+        var results = RequiredListBox(shell, "SearchResults");
+        await WaitForList(results, 2);
+        results.SelectedIndex = results.Items.Count - 1;
+
+        InvokeKeyPress(results);
 
         await WaitFor(() => source.SearchCalls == 2);
         Assert.Same(results, shell.ActiveControl);
@@ -143,6 +166,14 @@ public sealed class Issue74ListActivationFocusTests
         var method = control.GetType().GetMethod("OnKeyDown", BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(method);
         method!.Invoke(control, [new KeyEventArgs(key)]);
+        Application.DoEvents();
+    }
+
+    private static void InvokeKeyPress(Control control)
+    {
+        var method = control.GetType().GetMethod("OnKeyPress", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+        method!.Invoke(control, [new KeyPressEventArgs((char)Keys.Return)]);
         Application.DoEvents();
     }
 
