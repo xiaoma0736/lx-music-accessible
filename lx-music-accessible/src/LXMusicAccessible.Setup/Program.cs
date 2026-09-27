@@ -97,16 +97,19 @@ static class Program
         {
             var target = InstallDirectoryOwnership.ResolveTargetDirectory(parent);
             var exe = Path.Combine(target, "落雪音乐无障碍版V2.0.exe");
-            if (File.Exists(exe))
+            var isUpgrade = File.Exists(exe);
+            if (isUpgrade)
             {
                 var r = MessageBox.Show("检测到该目录已安装过，是否覆盖安装？",
                     "落雪音乐无障碍版 安装", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 if (r != DialogResult.Yes) return 0;
+                CloseInstalledApplication(exe);
             }
 
-            MessageBox.Show($"正在安装到：\n{target}\n\n解压完成后会自动创建开始菜单快捷方式，请稍候...",
-                "落雪音乐无障碍版 安装", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show($"\u6b63\u5728\u5b89\u88c5\u5230\uff1a\n{target}\n\n\u89e3\u538b\u5b8c\u6210\u540e\u4f1a\u81ea\u52a8\u521b\u5efa\u5f00\u59cb\u83dc\u5355\u5feb\u6377\u65b9\u5f0f\uff0c\u8bf7\u7a0d\u5019...",
+                "\u843d\u96ea\u97f3\u4e50\u65e0\u969c\u788d\u7248 \u5b89\u88c5", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
+            if (isUpgrade) WaitForFileAvailable(exe);
             InstallDirectoryOwnership.InstallFromZip(payloadStream, parent);
 
             var startMenu = Path.Combine(
@@ -141,6 +144,66 @@ static class Program
             MessageBox.Show($"安装失败：{ex.Message}", "落雪音乐无障碍版 安装",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
+        }
+    }
+
+    private static void CloseInstalledApplication(string installedExe)
+    {
+        var targetPath = Path.GetFullPath(installedExe);
+        var processes = Process.GetProcesses().Where(process =>
+        {
+            try
+            {
+                var module = process.MainModule;
+                return !string.IsNullOrEmpty(module?.FileName)
+                    && string.Equals(Path.GetFullPath(module.FileName), targetPath,
+                        StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                // System, elevated, or exited processes can deny module access.
+                return false;
+            }
+        }).ToArray();
+        if (processes.Length == 0) return;
+
+        MessageBox.Show("\u68c0\u6d4b\u5230\u843d\u96ea\u97f3\u4e50\u6b63\u5728\u8fd0\u884c\uff0c\u5c06\u5148\u5173\u95ed\u5b83\u3002", "\u843d\u96ea\u97f3\u4e50\u65e0\u969c\u788d\u7248 \u5b89\u88c5",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+        foreach (var process in processes)
+        {
+            try
+            {
+                if (!process.HasExited && process.CloseMainWindow() && process.WaitForExit(5000)) continue;
+                if (!process.HasExited)
+                {
+                    process.Kill();
+                    if (!process.WaitForExit(5000))
+                        throw new IOException("\u65e7\u7684\u843d\u96ea\u97f3\u4e50\u8fdb\u7a0b\u672a\u80fd\u5728 5 \u79d2\u5185\u9000\u51fa\u3002");
+                }
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+    }
+
+    private static void WaitForFileAvailable(string path)
+    {
+        if (!File.Exists(path)) return;
+
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+                return;
+            }
+            catch (IOException) when (attempt < 50)
+            {
+                Thread.Sleep(100);
+            }
         }
     }
 

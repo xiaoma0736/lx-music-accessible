@@ -23,46 +23,10 @@ internal static class Program
     private static async Task<int> Main(string[] args)
     {
         ConfigureLogging();
+        int exitCode;
         try
         {
-            if (args.Any(arg => string.Equals(arg, "/uninstall", StringComparison.OrdinalIgnoreCase)))
-            {
-                RunUninstall();
-                return 0;
-            }
-
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-            // Startup awaits must resume on this thread: the main window and the global-hotkey message
-            // window are only ever pumped by this thread's message loop. Without an installed WinForms
-            // context the first await hops to an MTA thread-pool thread, where the message window is
-            // created but never receives WM_HOTKEY and the main window never responds.
-            WindowsFormsSynchronizationContext.AutoInstall = true;
-            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
-
-            _mutex = new Mutex(true, MutexName, out var createdNew);
-            if (!createdNew)
-            {
-                SignalExisting();
-                return 0;
-            }
-            StartActivationListener();
-            AppDataPaths.MigrateLegacyNestedDataDirectory();
-
-            var runtime = ApplicationHost.Create();
-            try
-            {
-                var outcome = await PumpAsync(runtime.StartAsync());
-                if (outcome == ApplicationStartOutcome.ExitRequested) return 0;
-                _shell = runtime.Services!.GetRequiredService<WinFormsShell>();
-                Application.Run(_shell);
-                await PumpAsync(runtime.StopAsync());
-                return 0;
-            }
-            finally
-            {
-                await PumpDisposalAsync(runtime);
-            }
+            exitCode = await RunCoreAsync(args);
         }
         finally
         {
@@ -72,6 +36,53 @@ internal static class Program
             try { _mutex?.ReleaseMutex(); } catch (Exception ex) { Debug.WriteLine(ex.GetType().Name); }
             try { _mutex?.Dispose(); } catch (Exception ex) { Debug.WriteLine(ex.GetType().Name); }
             Log.CloseAndFlush();
+        }
+
+        // Native audio threads must not keep the process (and bass.dll) alive after the
+        // managed host has been released. Cleanup and logging are complete at this point.
+        Environment.Exit(exitCode);
+        return exitCode;
+    }
+
+    private static async Task<int> RunCoreAsync(string[] args)
+    {
+        if (args.Any(arg => string.Equals(arg, "/uninstall", StringComparison.OrdinalIgnoreCase)))
+        {
+            RunUninstall();
+            return 0;
+        }
+
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        // Startup awaits must resume on this thread: the main window and the global-hotkey message
+        // window are only ever pumped by this thread's message loop. Without an installed WinForms
+        // context the first await hops to an MTA thread-pool thread, where the message window is
+        // created but never receives WM_HOTKEY and the main window never responds.
+        WindowsFormsSynchronizationContext.AutoInstall = true;
+        SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+
+        _mutex = new Mutex(true, MutexName, out var createdNew);
+        if (!createdNew)
+        {
+            SignalExisting();
+            return 0;
+        }
+        StartActivationListener();
+        AppDataPaths.MigrateLegacyNestedDataDirectory();
+
+        var runtime = ApplicationHost.Create();
+        try
+        {
+            var outcome = await PumpAsync(runtime.StartAsync());
+            if (outcome == ApplicationStartOutcome.ExitRequested) return 0;
+            _shell = runtime.Services!.GetRequiredService<WinFormsShell>();
+            Application.Run(_shell);
+            await PumpAsync(runtime.StopAsync());
+            return 0;
+        }
+        finally
+        {
+            await PumpDisposalAsync(runtime);
         }
     }
 
