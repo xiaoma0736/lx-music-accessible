@@ -39,7 +39,6 @@
   <ItemGroup>
     <Compile Remove="Win32GlobalHotkeyAdapterTests.cs" />
     <Compile Remove="AppDataOwnershipTests.cs" />
-    <Compile Remove="MusicBrowseWorkflowTests.cs" />
     <Compile Remove="DownloadWorkflowTests.cs" />
     <Compile Remove="LyricsWorkflowTests.cs" />
     <Compile Remove="MusicPlayerBackgroundTests.cs" />
@@ -50,21 +49,15 @@
     <Compile Remove="QualitySelectionRegressionTests.cs" />
     <Compile Remove="JsonMusicSourceTests.cs" />
     <Compile Remove="Issue49HotkeyTests.cs" />
-    <Compile Remove="Issue49PlaybackSourceSafetyTests.cs" />
     <Compile Remove="ManualSourceSwitchWorkflowTests.cs" />
     <Compile Remove="InstallDirectoryOwnershipTests.cs" />
     <Compile Remove="ApplicationHostTests.cs" />
     <Compile Remove="ApplicationRuntimeTests.cs" />
-    <Compile Remove="ApplicationShutdownTests.cs" />
     <Compile Remove="DesktopLifecycleWorkflowTests.cs" />
     <Compile Remove="GlobalHotkeyMessageWindowTests.cs" />
-    <Compile Remove="LoginDiagnosticsTests.cs" />
     <Compile Remove="PlaybackRecoveryAndPlaybackInfoTests.cs" />
-    <Compile Remove="SpeechWhitelistTests.cs" />
-    <Compile Remove="MainWindowShellTests.cs" />
     <Compile Remove="PlaylistLoginHostTests.cs" />
     <Compile Remove="WindowShortcutTests.cs" />
-    <Compile Remove="WorkflowConsolidationTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -94,7 +94,7 @@ public sealed class DesktopLifecycleWorkflow : IDisposable
     {
         if (_state != DesktopLifecycleState.Visible || !_desktop.HideToTray()) return new(_state, Applied: false);
         _state = DesktopLifecycleState.Hidden;
-        Announce("已隐藏到系统托盘，音乐继续播放。", "desktop-lifecycle");
+        Announce("已隐藏", "desktop-lifecycle");
         return new(_state);
     }
 
@@ -103,6 +103,7 @@ public sealed class DesktopLifecycleWorkflow : IDisposable
         var target = _desktop.RestoreWindow();
         if (!_desktop.IsWindowRestored) return new(_state, Applied: false);
         _state = DesktopLifecycleState.Visible;
+        Announce("已显示", "desktop-lifecycle");
         return new(_state, target);
     }
 
@@ -212,6 +213,23 @@ public sealed class WinFormsDesktopIntegration : IDisposable
         return DesktopFocusTarget.MainWindow;
     }
 
+    /// <summary>
+    /// Built as its own menu so the access keys stay verifiable. The tray menu is the only way back to a
+    /// window that is hidden, and an item without an access key cannot be chosen from the keyboard once
+    /// the menu is open, which leaves a keyboard-only user with the mouse gesture alone.
+    /// </summary>
+    internal static ContextMenu BuildTrayMenu(Action<DesktopCommand> request)
+    {
+        var menu = new ContextMenu();
+        menu.MenuItems.Add(new MenuItem("显示主窗口(&S)", (_, _) => request(DesktopCommand.Restore)));
+        menu.MenuItems.Add(new MenuItem("播放/暂停(&P)", (_, _) => request(DesktopCommand.TogglePlayback)));
+        menu.MenuItems.Add(new MenuItem("上一首(&V)", (_, _) => request(DesktopCommand.Previous)));
+        menu.MenuItems.Add(new MenuItem("下一首(&N)", (_, _) => request(DesktopCommand.Next)));
+        menu.MenuItems.Add(new MenuItem("-"));
+        menu.MenuItems.Add(new MenuItem("退出(&X)", (_, _) => request(DesktopCommand.Exit)));
+        return menu;
+    }
+
     private NotifyIcon EnsureTray()
     {
         if (_tray is not null) return _tray;
@@ -221,14 +239,7 @@ public sealed class WinFormsDesktopIntegration : IDisposable
             Icon = SystemIcons.Application,
             Visible = true
         };
-        var menu = new ContextMenu();
-        menu.MenuItems.Add(new MenuItem("显示主窗口", (_, _) => CommandRequested?.Invoke(this, DesktopCommand.Restore)));
-        menu.MenuItems.Add(new MenuItem("播放/暂停", (_, _) => CommandRequested?.Invoke(this, DesktopCommand.TogglePlayback)));
-        menu.MenuItems.Add(new MenuItem("上一首", (_, _) => CommandRequested?.Invoke(this, DesktopCommand.Previous)));
-        menu.MenuItems.Add(new MenuItem("下一首", (_, _) => CommandRequested?.Invoke(this, DesktopCommand.Next)));
-        menu.MenuItems.Add(new MenuItem("-"));
-        menu.MenuItems.Add(new MenuItem("退出", (_, _) => CommandRequested?.Invoke(this, DesktopCommand.Exit)));
-        _tray.ContextMenu = menu;
+        _tray.ContextMenu = BuildTrayMenu(command => CommandRequested?.Invoke(this, command));
         _tray.DoubleClick += (_, _) => CommandRequested?.Invoke(this, DesktopCommand.Restore);
         return _tray;
     }
@@ -295,8 +306,7 @@ public sealed class ApplicationWindowFactory(
     public SettingsForm CreateSettings(
         Form owner,
         Func<KeyEventArgs, bool> handleHotkey,
-        Action<bool> setInputSuppressed,
-        Hotkey? reconfigure = null) => new(announcer, settings, tts, downloads, handleHotkey, setInputSuppressed, reconfigure) { Owner = owner };
+        Hotkey? reconfigure = null) => new(announcer, settings, tts, downloads, handleHotkey, reconfigure) { Owner = owner };
 
     public PlaylistImportForm CreatePlaylistImport(
         Form owner,
@@ -405,6 +415,7 @@ public static class ApplicationHost
                     Lyrics = sp.GetRequiredService<LyricsWorkflow>(),
                     Downloads = sp.GetRequiredService<IDownloadWorkflow>(),
                     Settings = sp.GetRequiredService<SettingsWorkflow>(),
+                    Tts = sp.GetRequiredService<ITtsService>(),
                     Sources = sp.GetRequiredService<IMusicSourceService>(),
                     ManualSources = sp.GetRequiredService<IManualSourceDiscoveryWorkflow>(),
                     Windows = sp.GetRequiredService<ApplicationWindowFactory>(),

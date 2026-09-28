@@ -119,6 +119,121 @@ public sealed class Issue73FocusLyricsChildHotkeyTests
         shell.Close();
     }
 
+    /// <summary>
+    /// ADR 0002 allows one instance per tool. A second lyrics window subscribes to the same lyric state twice,
+    /// so the same line would be read twice and Alt+Tab would offer two identical windows; asking for the
+    /// viewer again must bring the existing window forward and load the newly requested song into it.
+    /// </summary>
+    [Fact]
+    public void Opening_the_lyrics_viewer_twice_reuses_one_window() =>
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            using var host = await TestApplicationHost.StartAsync();
+            var lyrics = host.Services.GetRequiredService<LyricsWorkflow>();
+            var factory = CreateFactory(host, lyrics, _ => false);
+            using var shell = new WinFormsShell(new WinFormsShellServices
+            {
+                Announcer = host.Announcer,
+                BrowseSource = new FakeBrowseSource(),
+                Playback = new RecordingPlayback(),
+                Lyrics = lyrics,
+                TemporaryDirectory = host.DataDirectory,
+                Windows = factory
+            });
+            shell.Show();
+            Application.DoEvents();
+
+            var search = shell.Controls.Find("SearchResults", true).OfType<ListBox>().Single();
+            search.Items.Add(new ObjectBox<MusicInfo>("Artist，Song", Song()));
+            search.Items.Add(new ObjectBox<MusicInfo>("Artist，Other", new MusicInfo { Id = "song-2", Title = "Other", Artist = "Artist", Source = "netease" }));
+
+            search.SelectedIndex = 0;
+            RaiseKeyDown(search, Keys.Shift | Keys.Enter);
+            var first = shell.OwnedForms.OfType<LyricsForm>().Single();
+
+            search.SelectedIndex = 1;
+            RaiseKeyDown(search, Keys.Shift | Keys.Enter);
+
+            Assert.Same(first, Assert.Single(shell.OwnedForms.OfType<LyricsForm>()));
+            foreach (var form in shell.OwnedForms) form.Close();
+            shell.Close();
+        });
+
+    /// <summary>
+    /// The same single-instance rule protects the download manager: two windows would both listen to the
+    /// task collection and announce every task result twice.
+    /// </summary>
+    [Fact]
+    public void Opening_a_tool_window_twice_reuses_one_window() =>
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            using var host = await TestApplicationHost.StartAsync();
+            var lyrics = host.Services.GetRequiredService<LyricsWorkflow>();
+            var factory = CreateFactory(host, lyrics, _ => false);
+            using var shell = new WinFormsShell(new WinFormsShellServices
+            {
+                Announcer = host.Announcer,
+                BrowseSource = new FakeBrowseSource(),
+                Playback = new RecordingPlayback(),
+                Downloads = host.Services.GetRequiredService<IDownloadWorkflow>(),
+                TemporaryDirectory = host.DataDirectory,
+                Windows = factory
+            });
+            shell.Show();
+            Application.DoEvents();
+
+            var openTool = typeof(WinFormsShell)
+                .GetMethod("OpenTool", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .MakeGenericMethod(typeof(DownloadManagerForm));
+            Func<DownloadManagerForm?> create = () => factory.CreateDownloadManager(shell, _ => false);
+            openTool.Invoke(shell, new object[] { create });
+            openTool.Invoke(shell, new object[] { create });
+
+            var windows = shell.OwnedForms.OfType<DownloadManagerForm>().ToArray();
+            Assert.Single(windows);
+            foreach (var form in shell.OwnedForms) form.Close();
+            shell.Close();
+        });
+
+    /// <summary>
+    /// The source switcher is the last tool window that still allowed copies. Two windows titled 切换音源 are
+    /// indistinguishable in Alt+Tab and in a screen reader's window list, so the second command brings the
+    /// existing window forward and points it at the requested song instead of opening another one.
+    /// </summary>
+    [Fact]
+    public void Opening_the_source_switcher_twice_reuses_one_window() =>
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            using var host = await TestApplicationHost.StartAsync();
+            var discovery = new CountingManualWorkflow();
+            var factory = CreateFactory(host, host.Services.GetRequiredService<LyricsWorkflow>(), _ => false);
+            using var shell = new WinFormsShell(new WinFormsShellServices
+            {
+                Announcer = host.Announcer,
+                BrowseSource = new FakeBrowseSource(),
+                Playback = new RecordingPlayback(),
+                ManualSources = discovery,
+                TemporaryDirectory = host.DataDirectory,
+                Windows = factory
+            });
+            shell.Show();
+            Application.DoEvents();
+
+            var open = typeof(WinFormsShell)
+                .GetMethod("OpenManualSource", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var song = new object?[] { Song() };
+            open.Invoke(shell, song);
+            Application.DoEvents();
+            open.Invoke(shell, song);
+            Application.DoEvents();
+
+            var window = Assert.Single(shell.OwnedForms.OfType<ManualSourceSwitchForm>());
+            Assert.NotNull(window);
+            Assert.Equal(2, discovery.DiscoverCalls);
+            foreach (var form in shell.OwnedForms) form.Close();
+            shell.Close();
+        });
+
     [Fact]
     public async Task Child_windows_route_local_playback_hotkeys()
     {
@@ -142,7 +257,7 @@ public sealed class Issue73FocusLyricsChildHotkeyTests
                 factory.CreateLyrics(handler),
                 factory.CreateSourceManager(owner, handler),
                 factory.CreateDownloadManager(owner, handler),
-                factory.CreateSettings(owner, handler, _ => { }),
+                factory.CreateSettings(owner, handler),
                 factory.CreatePlaylistImport(owner, handler, _ => { }, _ => { }),
                 factory.CreateManualSource(owner, handler, host.Services.GetRequiredService<IManualSourceDiscoveryWorkflow>(), Song())
             ];
@@ -218,6 +333,23 @@ public sealed class Issue73FocusLyricsChildHotkeyTests
     }
 
     private static MusicInfo Song() => new() { Id = "song-1", Title = "Song", Artist = "Artist", Source = "netease" };
+}
+
+/// <summary>Counts the searches a reused source-switch window runs, without touching the network.</summary>
+internal sealed class CountingManualWorkflow : IManualSourceDiscoveryWorkflow
+{
+    public int DiscoverCalls { get; private set; }
+    public Task<ManualSourceDiscoveryResult> DiscoverAsync(
+        MusicInfo target,
+        CancellationToken cancellationToken = default)
+    {
+        DiscoverCalls++;
+        return Task.FromResult(ManualSourceDiscoveryResult.Failed("not used"));
+    }
+    public Task<PlaybackResult> PlayAsync(
+        ManualSourcePlaybackRequest request,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public void Dispose() { }
 }
 
 internal sealed class NoPlaylistLoginFactory : IPlaylistLoginWindowFactory

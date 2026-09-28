@@ -12,6 +12,27 @@ public class AccessibilitySettings
     /// </summary>
     public bool EnableScreenReader { get; set; } = true;
 
+    /// <summary>朗读播放、暂停和停止状态。</summary>
+    public bool AnnouncePlaybackState { get; set; } = true;
+
+    /// <summary>朗读切歌和播放结果。</summary>
+    public bool AnnounceTrackChange { get; set; } = true;
+
+    /// <summary>朗读音量变化。</summary>
+    public bool AnnounceVolume { get; set; } = true;
+
+    /// <summary>朗读快进和快退后的位置。</summary>
+    public bool AnnounceSeek { get; set; } = true;
+
+    /// <summary>朗读主窗口显示和隐藏。</summary>
+    public bool AnnounceWindowVisibility { get; set; } = true;
+
+    /// <summary>朗读播放模式变化。</summary>
+    public bool AnnouncePlaybackMode { get; set; } = true;
+
+    /// <summary>朗读播放设备切换结果。</summary>
+    public bool AnnounceAudioDevice { get; set; } = true;
+
     /// <summary>
     /// 语音提示音量
     /// </summary>

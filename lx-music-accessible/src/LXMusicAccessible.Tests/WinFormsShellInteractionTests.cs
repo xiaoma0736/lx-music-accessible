@@ -16,6 +16,36 @@ namespace LXMusicAccessible.Tests;
 
 public sealed class WinFormsShellInteractionTests
 {
+    /// <summary>
+    /// Moving the selected tab with focus alone never loads anything. A page fills only when the user
+    /// opens it with a navigation command, which is what the user guide promises for arrow traversal
+    /// across the tab headers.
+    /// </summary>
+    [Fact]
+    public void Moving_focus_across_the_tab_headers_does_not_start_a_page_load()
+    {
+        var source = new InteractionBrowseSource();
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            using var shell = CreateShell(source, new RecordingAnnouncer());
+            shell.Show();
+            Application.DoEvents();
+
+            var tabs = Tabs(shell);
+            tabs.SelectedIndex = 2;
+            tabs.SelectedIndex = 3;
+            tabs.SelectedIndex = 0;
+            Application.DoEvents();
+            Assert.Equal(0, source.CategoryCalls);
+            Assert.Equal(0, source.RankingCalls);
+
+            shell.SelectTabForTests(2);
+            var categories = await AwaitList(Lists(shell)[3], () => source.CategoryCalls > 0);
+            Assert.Equal(1, source.CategoryCalls);
+            Assert.NotEmpty(categories.Items);
+        });
+    }
+
     [Fact]
     public void Category_and_ranking_pages_load_content_when_opened()
     {
@@ -28,7 +58,7 @@ public sealed class WinFormsShellInteractionTests
             Application.DoEvents();
 
             var shellLists = Lists(shell);
-            Tabs(shell).SelectedIndex = 2;
+            shell.SelectTabForTests(2);
             var categories = await AwaitList(shellLists[3], () => source.CategoryCalls > 0);
             Assert.Equal("netease", source.LastBrowseSource);
             Assert.NotEmpty(categories.Items);
@@ -43,7 +73,7 @@ public sealed class WinFormsShellInteractionTests
             var categorySongs = await AwaitList(shellLists[5], () => source.PlaylistSongCalls > 0);
             Assert.NotEmpty(categorySongs.Items);
 
-            Tabs(shell).SelectedIndex = 3;
+            shell.SelectTabForTests(3);
             var rankings = await AwaitList(shellLists[6], () => source.RankingCalls > 0);
             Assert.NotEmpty(rankings.Items);
 
@@ -99,6 +129,10 @@ public sealed class WinFormsShellInteractionTests
     [InlineData("browse-status", false)]
     [InlineData("music-browse:1", false)]
     [InlineData("search-results", false)]
+    [InlineData("search-history", false)]
+    [InlineData("search-clear", false)]
+    [InlineData("playback-state", true)]
+    [InlineData("volume", true)]
     [InlineData("welcome", false)]
     [InlineData("settings", true)]
     [InlineData("playback-song", true)]
@@ -108,7 +142,7 @@ public sealed class WinFormsShellInteractionTests
         string activityId,
         bool expected)
     {
-        Assert.Equal(expected, AccessibleSpeechPolicy.ShouldSpeak(new AccessibleAnnouncement("??", ActivityId: activityId)));
+        Assert.Equal(expected, AccessibleSpeechPolicy.ShouldSpeak(new AccessibleAnnouncement("内容", ActivityId: activityId)));
     }
 
     private static WinFormsShell CreateShell(InteractionBrowseSource source, RecordingAnnouncer announcer, RecordingPlayback? playback = null) =>

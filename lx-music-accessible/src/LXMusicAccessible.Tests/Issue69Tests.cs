@@ -158,6 +158,53 @@ public sealed class Issue69Tests
         });
     }
 
+    /// <summary>
+    /// Previewing moves the reading position into the song list, which a screen reader names together with
+    /// its selected item, so a second sentence repeating 已预览歌曲 only interrupts the reader. The empty
+    /// result has no item to read and therefore keeps its own speech.
+    /// </summary>
+    [Fact]
+    public void Song_preview_echo_stays_silent_when_the_preview_list_takes_focus()
+    {
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            var service = new Issue69ImportService();
+            service.Playlists.Add(RemotePlaylist("A"));
+            service.Songs.Add(Song("song-1"));
+            var announcer = new RecordingAnnouncer();
+            using var form = CreateImportForm(service, announcer);
+            Click(form, "网易云音乐");
+            Click(form, "加载歌单");
+            await WaitFor(() => Texts(announcer).Contains("已加载个人歌单，回车可预览。"), "the personal playlists to load");
+            Assert.IsType<ListBox>(Required(form, "个人歌单")).SelectedIndex = 0;
+            Click(form, "预览歌曲");
+            await WaitFor(() => Texts(announcer).Contains("已预览歌曲。"), "the song preview to load");
+
+            var preview = announcer.Announcements.Single(item => item.Text == "已预览歌曲。");
+            Assert.False(
+                AccessibleSpeechPolicy.ShouldSpeak(preview),
+                "The preview list is read by the screen reader, so the success echo must stay silent.");
+            Assert.True(
+                AccessibleSpeechPolicy.ShouldSpeak(new AccessibleAnnouncement("已预览歌曲。", ActivityId: "playlist-preview")),
+                "The activity itself stays speakable: only this call site is quiet.");
+
+            var withoutSongs = new Issue69ImportService();
+            withoutSongs.Playlists.Add(RemotePlaylist("B"));
+            var emptyAnnouncer = new RecordingAnnouncer();
+            using var empty = CreateImportForm(withoutSongs, emptyAnnouncer);
+            Click(empty, "网易云音乐");
+            Click(empty, "加载歌单");
+            await WaitFor(() => Texts(emptyAnnouncer).Contains("已加载个人歌单，回车可预览。"), "the personal playlists to load");
+            Assert.IsType<ListBox>(Required(empty, "个人歌单")).SelectedIndex = 0;
+            Click(empty, "预览歌曲");
+            await WaitFor(() => Texts(emptyAnnouncer).Contains("没有找到歌曲。"), "the empty song preview");
+
+            Assert.True(
+                AccessibleSpeechPolicy.ShouldSpeak(emptyAnnouncer.Announcements.Single(item => item.Text == "没有找到歌曲。")),
+                "An empty list reads as nothing, so that outcome still has to be spoken.");
+        });
+    }
+
     [Fact]
     public void Every_browse_outcome_uses_a_fresh_activity_id()
     {

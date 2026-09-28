@@ -19,8 +19,9 @@ public class SourceManagerForm : Form
     private readonly IMusicSourceService _sources;
     private readonly Func<KeyEventArgs, bool> _handleHotkey;
     private readonly ListBox _list = WinFormsUi.ListBox("音源", 1);
-    private readonly Label _empty = new() { Text = "暂无自定义音源。", AutoSize = true, TabStop = false };
+    private readonly Label _empty = new() { Text = "暂无自定义音源。", AutoSize = true, Name = "SourceListStatus", TabStop = false };
     private string _sourceSignature = string.Empty;
+    private volatile bool _sourcesChangingByThisWindow;
 
     public SourceManagerForm(IAccessibleAnnouncer announcer, IMusicSourceService sources, Func<KeyEventArgs, bool> handleHotkey)
     {
@@ -40,6 +41,9 @@ public class SourceManagerForm : Form
         _list.SetBounds(12, 48, 720, 440);
         _empty.SetBounds(20, 56, 300, 22);
         Controls.AddRange(new Control[] { importLocal, importNetwork, refresh, _list, _empty });
+        // The empty-state text is added last, which puts it behind the list in the z-order; it has to be
+        // lifted to the front so the message is actually perceivable when there are no sources.
+        _empty.BringToFront();
         var menu = new ContextMenu();
         menu.MenuItems.Add(new MenuItem("设为默认", (_, _) => SetDefault()));
         menu.MenuItems.Add(new MenuItem("启用", async (_, _) => await EnableAsync()));
@@ -49,7 +53,13 @@ public class SourceManagerForm : Form
         menu.MenuItems.Add(new MenuItem("删除", (_, _) => Delete()));
         _list.ContextMenu = menu;
         _list.KeyDown += (_, e) => { if (e.KeyCode is Keys.Enter or Keys.Space) { e.Handled = true; menu.Show(_list, new Point(10, 10)); } };
-        _sources.SourcesChanged += (_, _) => BeginInvoke(RefreshSourcesAfterExternalChange);
+        _sources.SourcesChanged += (_, _) =>
+        {
+            // The service raises the event while a command of this window is still on the stack, so the
+            // marker has to be read here; the refresh itself only runs later on the message loop.
+            var alreadyAnnounced = _sourcesChangingByThisWindow;
+            BeginInvoke(() => RefreshSourcesAfterExternalChange(alreadyAnnounced));
+        };
         RefreshSources();
         Shown += (_, _) => _list.Focus();
     }
@@ -60,11 +70,14 @@ public class SourceManagerForm : Form
         if (_handleHotkey(e)) { e.Handled = true; return; }
         if (e.KeyCode == Keys.Escape) Close();
     }
-    private void RefreshSourcesAfterExternalChange()
+    private void RefreshSourcesAfterExternalChange(bool alreadyAnnounced)
     {
         var before = _sourceSignature;
         RefreshSources();
-        if (before != _sourceSignature) Announce("音源列表已更新", "source-list");
+        // A change this window made already came with its own result ("已禁用音源：X"). Speaking
+        // 音源列表已更新 on top of it would read as a second confirmation of one command, so only a
+        // change that arrived from outside this window (or while focus was elsewhere) is announced.
+        if (!alreadyAnnounced && before != _sourceSignature) Announce("音源列表已更新", "source-list");
     }
 
     internal void RefreshSources()
@@ -109,7 +122,8 @@ public class SourceManagerForm : Form
     {
         try
         {
-            var source = await _sources.ImportFromUrlAsync(label) ?? await _sources.ImportFromFileAsync(label);
+            var source = await InSourceCommand(() => _sources.ImportFromUrlAsync(label))
+                             ?? await InSourceCommand(() => _sources.ImportFromFileAsync(label));
             if (source is null)
             {
                 Announce("导入音源失败，请检查脚本格式。", "source-import", AnnouncementKind.Error);
@@ -126,7 +140,7 @@ public class SourceManagerForm : Form
     {
         var source = Selected();
         if (source is null) return;
-        if (!await _sources.SetDefaultSourceAsync(source.Id))
+        if (!await InSourceCommand(() => _sources.SetDefaultSourceAsync(source.Id)))
         {
             Announce($"默认音源保存失败：{source.Name}", "source-default", AnnouncementKind.Error);
             return;
@@ -139,7 +153,7 @@ public class SourceManagerForm : Form
     {
         var source = Selected();
         if (source is null) return;
-        var result = await _sources.EnableSourceAsync(source);
+        var result = await InSourceCommand(() => _sources.EnableSourceAsync(source));
         RefreshSources();
         Announce(result.Message, "source-enable", result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
@@ -148,13 +162,13 @@ public class SourceManagerForm : Form
     {
         var source = Selected();
         if (source is null) return;
-        if (!await _sources.DisableSourceAsync(source))
+        if (!await InSourceCommand(() => _sources.DisableSourceAsync(source)))
         {
-            Announce($"禁用音源保存失败：{source.Name}", "source-enable", AnnouncementKind.Error);
+            Announce($"禁用音源保存失败：{source.Name}", "source-disable", AnnouncementKind.Error);
             return;
         }
         RefreshSources();
-        Announce($"已禁用音源：{source.Name}", "source-enable");
+        Announce($"已禁用音源：{source.Name}", "source-disable", AnnouncementKind.Success);
     }
 
     private async Task TestAsync()
@@ -169,7 +183,7 @@ public class SourceManagerForm : Form
     {
         var source = Selected();
         if (source is null) return;
-        var ok = await _sources.RefreshSourceAsync(source);
+        var ok = await InSourceCommand(() => _sources.RefreshSourceAsync(source));
         RefreshSources();
         Announce(ok ? $"音源更新成功：{source.Name}" : $"音源更新失败：{source.Name}", "source-update", ok ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
@@ -178,13 +192,30 @@ public class SourceManagerForm : Form
     {
         var source = Selected();
         if (source is null || !WinFormsUi.Confirm(this, $"确定要删除音源“{source.Name}”吗？")) return;
-        if (!await _sources.RemoveSourceAsync(source))
+        if (!await InSourceCommand(() => _sources.RemoveSourceAsync(source)))
         {
             Announce($"删除音源保存失败：{source.Name}", "source-delete", AnnouncementKind.Error);
             return;
         }
         RefreshSources();
         Announce($"已删除音源：{source.Name}", "source-delete", AnnouncementKind.Success);
+    }
+
+    /// <summary>
+    /// Runs a mutation this window owns. The marker lets the deferred list refresh tell a change of its
+    /// own command (already announced by that command) from a change that came from anywhere else.
+    /// </summary>
+    private async Task<T> InSourceCommand<T>(Func<Task<T>> operation)
+    {
+        _sourcesChangingByThisWindow = true;
+        try
+        {
+            return await operation();
+        }
+        finally
+        {
+            _sourcesChangingByThisWindow = false;
+        }
     }
 
     private MusicSource? Selected() => WinFormsUi.Selected<MusicSource>(_list);
@@ -208,14 +239,16 @@ public class DownloadManagerForm : Form
     private readonly IDownloadWorkflow _downloads;
     private readonly Func<KeyEventArgs, bool>? _handleHotkey;
     private readonly ListView _tasks = new() { Name = "DownloadTasks", View = View.Details, FullRowSelect = true, MultiSelect = true, HideSelection = false, TabStop = true, TabIndex = 1, AccessibleName = "下载任务" };
-    private readonly Label _empty = new() { Text = "暂无下载任务。", AutoSize = true, TabStop = false };
+    private readonly Label _empty = new() { Text = "暂无下载任务。", AutoSize = true, Name = "DownloadListStatus", TabStop = false };
+    private readonly Button _cancel;
+    private readonly Button _retry;
+    private readonly Button _clearCompleted;
 
     public DownloadManagerForm(IAccessibleAnnouncer announcer, IDownloadWorkflow downloads, Func<KeyEventArgs, bool>? handleHotkey = null)
     {
         _announcer = announcer;
         _downloads = downloads;
         _handleHotkey = handleHotkey;
-        _tasks.AccessibleName = "下载任务";
         Text = "下载管理";
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(900, 580);
@@ -225,25 +258,23 @@ public class DownloadManagerForm : Form
         _tasks.Columns.Add("进度", 100);
         _tasks.Columns.Add("文件", 300);
         _tasks.ItemSelectionChanged += (_, _) => UpdateButtonState();
-        var cancel = CreateButton("取消", 2, (_, _) => Cancel());
-        var retry = CreateButton("重试", 3, (_, _) => _ = Retry());
+        _cancel = CreateButton("取消", 2, (_, _) => Cancel());
+        _retry = CreateButton("重试", 3, (_, _) => _ = Retry());
         var open = CreateButton("打开文件夹", 4, (_, _) => _downloads.OpenDownloadDirectory());
-        var clear = CreateButton("清除已完成", 5, (_, _) => ClearCompleted());
-        cancel.SetBounds(12, 12, 90, 28);
-        retry.SetBounds(110, 12, 90, 28);
+        _clearCompleted = CreateButton("清除已完成", 5, (_, _) => ClearCompleted());
+        _cancel.SetBounds(12, 12, 90, 28);
+        _retry.SetBounds(110, 12, 90, 28);
         open.SetBounds(208, 12, 105, 28);
-        clear.SetBounds(321, 12, 105, 28);
+        _clearCompleted.SetBounds(321, 12, 105, 28);
         _tasks.SetBounds(12, 48, 860, 440);
         _empty.SetBounds(20, 56, 300, 22);
-        Controls.AddRange(new Control[] { cancel, retry, open, clear, _tasks, _empty });
-        _tasks.AccessibleName = "下载任务";
+        Controls.AddRange(new Control[] { _cancel, _retry, open, _clearCompleted, _tasks, _empty });
+        // Same as in the source manager: the empty-state label must not be hidden behind the task list.
+        _empty.BringToFront();
         Reload();
         ((INotifyCollectionChanged)_downloads.Tasks).CollectionChanged += (_, _) => BeginInvoke(Reload);
         Shown += (_, _) => _tasks.Focus();
-        if (_tasks.Items.Count == 0) _empty.Visible = true;
     }
-
-    protected TextBox? RecordingBox { get; set; }
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
@@ -251,6 +282,7 @@ public class DownloadManagerForm : Form
         if (_handleHotkey?.Invoke(e) == true) { e.Handled = true; return; }
         if (e.KeyCode == Keys.Escape) Close();
     }
+
     private void Reload()
     {
         var selectedIds = Selected().Select(task => task.Id).ToHashSet(StringComparer.Ordinal);
@@ -284,12 +316,18 @@ public class DownloadManagerForm : Form
         var selected = Selected();
         bool downloading = selected.Any(task => task.Status is DownloadTaskStatus.Pending or DownloadTaskStatus.Downloading);
         bool retryable = selected.Any(task => task.Status is DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled);
-        foreach (var button in Controls.OfType<Button>())
-        {
-            if (button.Text == "取消") button.Enabled = downloading;
-            if (button.Text == "重试") button.Enabled = retryable;
-            if (button.Text == "清除已完成") button.Enabled = _downloads.Tasks.Any(task => task.Status == DownloadTaskStatus.Completed);
-        }
+        var focused = ActiveControl;
+        // Each task command keeps its own reference. Matching buttons by their caption stopped enabling or
+        // disabling a command as soon as its text was reworded, and a command that can never enable is
+        // unreachable for a user who cannot see that it is greyed out.
+        _cancel.Enabled = downloading;
+        _retry.Enabled = retryable;
+        _clearCompleted.Enabled = _downloads.Tasks.Any(task => task.Status == DownloadTaskStatus.Completed);
+
+        // A progress update can disable the button the user is standing on, and a disabled control cannot
+        // hold focus: WinForms hands it to the form, which leaves a screen reader with nothing to read.
+        // The reading position returns to the task list the button acts on.
+        if (focused is Button { Enabled: false }) _tasks.Focus();
     }
 
     private void Cancel()
@@ -334,11 +372,15 @@ public class PlaylistImportForm : Form
     private readonly IPlaylistLoginWindowFactory _login;
     private readonly Action<ListBox>? _attachSongList;
     private readonly Func<KeyEventArgs, bool>? _handleHotkey;
-    private readonly ListBox _playlists = WinFormsUi.ListBox("个人歌单", 5);
-    private readonly ListBox _songs = WinFormsUi.ListBox("歌曲预览", 6);
-    private readonly TextBox _cookie = new() { Name = "Cookie", AccessibleName = "Cookie" };
-    private readonly Label _account = new() { Text = "未登录", AutoSize = true, TabStop = false, AccessibleName = "账号状态" };
-    private readonly Label _status = new() { Text = "请选择音乐平台。", AutoSize = true, TabStop = false, AccessibleName = "导入状态" };
+    private readonly ListBox _playlists = WinFormsUi.ListBox("个人歌单", 10);
+    private readonly Button _defaultPlatform;
+    private readonly Button _loadPlaylists;
+    private readonly ListBox _songs = WinFormsUi.ListBox("歌曲预览", 11);
+    private readonly TextBox _cookie = new() { Name = "Cookie", AccessibleName = "登录 Cookie", TabIndex = 8 };
+    private readonly Label _cookieCaption = WinFormsUi.Caption("Cookie：", 7);
+    private readonly Button _submitCookie = new() { Name = "使用 Cookie 登录", AccessibleName = "使用 Cookie 登录", Text = "使用 Cookie 登录", TabIndex = 9 };
+    private readonly Label _account = new() { Text = "未登录", AutoSize = true, TabStop = false, Name = "ImportAccountStatus" };
+    private readonly Label _status = new() { Text = "请选择音乐平台。", AutoSize = true, TabStop = false, Name = "ImportStatus" };
     private string? _platform;
     private IReadOnlyList<RemotePlaylist>? _remotePlaylists;
 
@@ -358,29 +400,37 @@ public class PlaylistImportForm : Form
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(1050, 680);
         KeyPreview = true;
-        var netease = CreateButton("网易云音乐", 1, (_, _) => SelectPlatform("netease"));
-        var qq = CreateButton("QQ音乐", 2, (_, _) => SelectPlatform("qq"));
-        var kg = CreateButton("酷狗音乐", 3, (_, _) => SelectPlatform("kg"));
-        var kw = CreateButton("酷我音乐", 4, (_, _) => SelectPlatform("kw"));
-        var logout = CreateButton("退出登录", 6, (_, _) => _ = LogoutAsync());
-        var load = CreateButton("加载歌单", 7, (_, _) => _ = LoadPlaylistsAsync());
-        var back = CreateButton("返回歌单列表", 8, (_, _) => ShowPlaylists());
-        var preview = CreateButton("预览歌曲", 9, (_, _) => _ = PreviewAsync());
-        var importThis = CreateButton("导入当前歌单", 10, (_, _) => _ = ImportAsync(false));
-        var selectAll = CreateButton("全选歌曲", 11, (_, _) => SelectAllSongs());
-        var importSelected = CreateButton("导入选中歌曲", 12, (_, _) => _ = ImportAsync(true));
-        var cookieCaption = WinFormsUi.Caption("Cookie：", 13);
-        var submitCookie = CreateButton("使用 Cookie 登录", 14, (_, _) => _ = CookieLoginAsync());
-        netease.SetBounds(12, 12, 110, 28); qq.SetBounds(130, 12, 100, 28); kg.SetBounds(238, 12, 100, 28); kw.SetBounds(346, 12, 100, 28);
-        _account.SetBounds(460, 18, 300, 22); logout.SetBounds(770, 12, 90, 28); load.SetBounds(868, 12, 95, 28);
-        cookieCaption.SetBounds(12, 52, 0, 0); _cookie.SetBounds(75, 48, 670, 24); submitCookie.SetBounds(755, 47, 140, 28);
+        _defaultPlatform = CreateButton("网易云音乐", 1, (sender, args) => _ = SelectPlatformAsync("netease", sender));
+        var qq = CreateButton("QQ音乐", 2, (sender, args) => _ = SelectPlatformAsync("qq", sender));
+        var kg = CreateButton("酷狗音乐", 3, (sender, args) => _ = SelectPlatformAsync("kg", sender));
+        var kw = CreateButton("酷我音乐", 4, (sender, args) => _ = SelectPlatformAsync("kw", sender));
+        var logout = CreateButton("退出登录", 5, (_, _) => _ = LogoutAsync());
+        // Kept as a field because it is the visible recovery command after a saved-session check or login load
+        // fails; successful sign-in now starts the load immediately instead of parking focus here.
+        _loadPlaylists = CreateButton("加载歌单", 6, (_, _) => _ = LoadPlaylistsAsync());
+        _cookieCaption.Name = "CookieCaption";
+        var back = CreateButton("返回歌单列表", 12, (_, _) => ShowPlaylists());
+        var preview = CreateButton("预览歌曲", 13, (_, _) => _ = PreviewAsync());
+        var importThis = CreateButton("导入当前歌单", 14, (_, _) => _ = ImportAsync());
+        _submitCookie.Click += (_, _) => _ = CookieLoginAsync();
+        _defaultPlatform.SetBounds(12, 12, 110, 28); qq.SetBounds(130, 12, 100, 28); kg.SetBounds(238, 12, 100, 28); kw.SetBounds(346, 12, 100, 28);
+        _account.SetBounds(460, 18, 300, 22); logout.SetBounds(770, 12, 90, 28); _loadPlaylists.SetBounds(868, 12, 95, 28);
+        _cookieCaption.SetBounds(12, 52, 0, 0); _cookie.SetBounds(75, 48, 670, 24); _submitCookie.SetBounds(755, 47, 140, 28);
         _playlists.SetBounds(12, 85, 350, 500); _songs.SetBounds(370, 85, 650, 500);
         _status.SetBounds(12, 595, 800, 22); back.SetBounds(12, 620, 120, 28); preview.SetBounds(140, 620, 100, 28);
-        importThis.SetBounds(248, 620, 130, 28); selectAll.SetBounds(386, 620, 100, 28); importSelected.SetBounds(494, 620, 130, 28);
-        Controls.AddRange(new Control[] { netease, qq, kg, kw, _account, logout, load, cookieCaption, _cookie, submitCookie, _playlists, _songs, _status, back, preview, importThis, selectAll, importSelected });
+        importThis.SetBounds(248, 620, 130, 28);
+        Controls.AddRange(new Control[] { _defaultPlatform, qq, kg, kw, _account, logout, _loadPlaylists, _cookieCaption, _cookie, _submitCookie, _playlists, _songs, _status, back, preview, importThis });
         _playlists.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = PreviewAsync(); } };
-        _songs.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ImportAsync(false); } };
-        Shown += async (_, _) => { await _service.EnsureAccountsLoadedAsync(); RefreshAccount(); _playlists.Focus(); };
+        // The preview list is a song list, and every song list in the application uses Enter for playback
+        // (the shell attaches that binding when a preview is shown). Importing has its own command, so Enter
+        // is not bound a second time here: one key must not play a song and start an import at once.
+        // The preview list is single-selection by design and the import service can only import a whole
+        // playlist, so there is deliberately no "select all songs"/"import selected songs" pair: those
+        // commands would read as if they could import part of a playlist, which nothing behind them does.
+        // ADR 0004: the import window opens on the platform command that starts the task. The playlist
+        // list is empty until a platform is chosen and loaded, so focusing it would leave the reader with
+        // a name and no content while the status line asks the user to choose a platform.
+        Shown += async (_, _) => { await _service.EnsureAccountsLoadedAsync(); RefreshAccount(); _defaultPlatform.Focus(); };
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -389,19 +439,101 @@ public class PlaylistImportForm : Form
         if (_handleHotkey?.Invoke(e) == true) { e.Handled = true; return; }
         if (e.KeyCode == Keys.Escape) Close();
     }
-    private void SelectPlatform(string platform)
+    /// <summary>
+    /// Selecting a platform first verifies the saved session by loading personal playlists. The network
+    /// answer, not the mere existence of a stored cookie, decides whether returning users are taken straight
+    /// to their playlists or asked to sign in again.
+    /// </summary>
+    private async Task SelectPlatformAsync(string platform, object? origin)
     {
         _platform = platform;
-        _status.Text = "已选择平台，请登录或加载歌单。";
-        Announce(_status.Text, "playlist-import");
+        _remotePlaylists = null;
+        _playlists.Items.Clear();
+        _songs.Items.Clear();
         RefreshAccount();
-        _playlists.Focus();
+        await _service.EnsureAccountsLoadedAsync();
+        RefreshAccount();
+
+        if (_service.GetAccount(platform) is not null)
+        {
+            _status.Text = "正在检测已保存登录状态，请稍候。";
+            Announce(_status.Text, "playlist-import", AnnouncementKind.Busy);
+
+            if (await LoadPlaylistsAsync(reportErrors: false))
+                return;
+
+            _status.Text = "已保存登录状态无效，请重新登录。";
+            Announce(_status.Text, "playlist-login", AnnouncementKind.Error);
+            UpdateCookieControlsVisibility(showCookieLogin: true);
+        }
+        else
+        {
+            _status.Text = "已选择平台，请登录或加载歌单。";
+            Announce(_status.Text, "playlist-import");
+        }
+
+        OpenLoginMethod(platform, origin, "\u5df2\u4fdd\u5b58\u767b\u5f55\u72b6\u6001\u65e0\u6548\u3002");
+    }
+
+    private void OpenLoginMethod(string platform, object? origin, string? reason = null)
+    {
+        switch (_login.SelectLoginMethod(platform, this))
+        {
+            case PlaylistLoginMethod.Web:
+                FinishLogin(_login.ShowWebLogin(platform, this).Succeeded, "网页登录", origin);
+                break;
+            case PlaylistLoginMethod.KugouQr:
+                FinishLogin(_login.ShowKugouQrLogin(this), "扫码登录", origin);
+                break;
+            case PlaylistLoginMethod.Cookie:
+                UpdateCookieControlsVisibility(showCookieLogin: true);
+                _status.Text = (string.IsNullOrEmpty(reason) ? "" : reason) + "请在 Cookie 输入框粘贴完整 Cookie，再按“使用 Cookie 登录”。";
+                Announce(_status.Text, "playlist-login");
+                _cookie.Focus();
+                break;
+            default:
+                (origin as Control ?? _defaultPlatform).Focus();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// A successful window login now continues immediately into the verified playlist load, so the user does
+    /// not have to find a second command before seeing whether the new session really works.
+    /// </summary>
+    private void FinishLogin(bool closed, string method, object? origin)
+    {
+        RefreshAccount();
+        var loggedIn = closed && _platform is not null && _service.GetAccount(_platform) is not null;
+        if (loggedIn)
+        {
+            _status.Text = _account.Text + "。正在加载个人歌单。";
+            Announce(_status.Text, "playlist-login", AnnouncementKind.Success);
+            _ = LoadPlaylistsAsync();
+        }
+        else
+        {
+            _status.Text = method + "未完成。" + _account.Text + "。";
+            Announce(_status.Text, "playlist-login", AnnouncementKind.Status);
+            (origin as Control ?? _defaultPlatform).Focus();
+        }
     }
 
     private void RefreshAccount()
     {
         var account = _platform is null ? null : _service.GetAccount(_platform);
         _account.Text = account is null ? "未登录" : $"已登录：{account.DisplayName ?? account.Platform}";
+        UpdateCookieControlsVisibility();
+    }
+
+    /// <summary>Cookie entry is recovery UI: it is noise after a valid session and returns when login is required.</summary>
+    private void UpdateCookieControlsVisibility(bool showCookieLogin = false)
+    {
+        var account = _platform is null ? null : _service.GetAccount(_platform);
+        var visible = account is null || showCookieLogin;
+        _cookieCaption.Visible = visible;
+        _cookie.Visible = visible;
+        _submitCookie.Visible = visible;
     }
 
     private async Task CookieLoginAsync()
@@ -409,8 +541,16 @@ public class PlaylistImportForm : Form
         if (_platform is null || string.IsNullOrWhiteSpace(_cookie.Text)) return;
         var result = await _service.LoginWithCookieAsync(_platform, _cookie.Text.Trim());
         RefreshAccount();
-        _status.Text = result is null ? "Cookie 登录失败。" : $"Cookie 登录成功：{result.DisplayName}。";
-        Announce(_status.Text, "playlist-login", result is null ? AnnouncementKind.Error : AnnouncementKind.Success);
+        if (result is null)
+        {
+            _status.Text = "Cookie 登录失败。";
+            Announce(_status.Text, "playlist-login", AnnouncementKind.Error);
+            return;
+        }
+
+        _status.Text = $"Cookie 登录成功：{result.DisplayName}。正在加载个人歌单。";
+        Announce(_status.Text, "playlist-login", AnnouncementKind.Success);
+        await LoadPlaylistsAsync();
     }
 
     private async Task LogoutAsync()
@@ -422,20 +562,42 @@ public class PlaylistImportForm : Form
         Announce(_status.Text, "playlist-login");
     }
 
-    private async Task LoadPlaylistsAsync()
+    private async Task<bool> LoadPlaylistsAsync(bool reportErrors = true)
     {
-        if (_platform is null) return;
+        var platform = _platform;
+        if (platform is null) return false;
         try
         {
-            _remotePlaylists = await _service.GetMyPlaylistsAsync(_platform);
+            var playlists = await _service.GetMyPlaylistsAsync(platform);
+            if (!string.Equals(platform, _platform, StringComparison.Ordinal)) return false;
+            _remotePlaylists = playlists;
             _playlists.Items.Clear();
             foreach (var playlist in _remotePlaylists)
                 _playlists.Items.Add(new ObjectBox<RemotePlaylist>(playlist.Name, playlist));
-            _status.Text = _remotePlaylists.Count == 0 ? "没有找到个人歌单。" : "已加载个人歌单，回车可预览。";
+            _status.Text = _remotePlaylists.Count == 0
+                ? "没有找到个人歌单。"
+                : "已加载个人歌单，回车可预览。";
             Announce(_status.Text, "playlist-import", AnnouncementKind.Success);
             ShowPlaylists();
+            return true;
         }
-        catch (Exception ex) { WinFormsUi.Error(this, ex, "加载歌单"); }
+        catch (Exception ex)
+        {
+            if (!string.Equals(platform, _platform, StringComparison.Ordinal)) return false;
+            _remotePlaylists = null;
+            _playlists.Items.Clear();
+            if (reportErrors)
+            {
+                WinFormsUi.Error(this, ex, "加载歌单");
+            }
+            else
+            {
+                _status.Text = "登录状态检测失败：" + ex.Message;
+                Announce(_status.Text, "playlist-import", AnnouncementKind.Error);
+            }
+
+            return false;
+        }
     }
 
     private async Task PreviewAsync()
@@ -449,13 +611,20 @@ public class PlaylistImportForm : Form
             _songs.EndUpdate();
             _attachSongList?.Invoke(_songs);
             _status.Text = songs.Count == 0 ? "没有找到歌曲。" : "已预览歌曲。";
-            Announce(_status.Text, "playlist-preview");
+            // The preview list takes focus immediately afterwards, and the reader names the list and its
+            // selected item by itself, so repeating 已预览歌曲 only interrupts it. An empty list reads as
+            // nothing, therefore only that outcome still speaks. The text reaches the live region either way.
+            Announce(
+                _status.Text,
+                "playlist-preview",
+                AnnouncementKind.Status,
+                songs.Count == 0 ? AnnouncementSpeech.FollowPreference : AnnouncementSpeech.None);
             _songs.Focus();
         }
         catch (Exception ex) { WinFormsUi.Error(this, ex, "预览歌单"); }
     }
 
-    private async Task ImportAsync(bool selectedOnly)
+    private async Task ImportAsync()
     {
         if (_platform is null || _playlists.SelectedItem is not ObjectBox<RemotePlaylist> box) return;
         try
@@ -467,16 +636,20 @@ public class PlaylistImportForm : Form
         catch (Exception ex) { WinFormsUi.Error(this, ex, "导入歌单"); }
     }
 
-    private void SelectAllSongs() { for (var index = 0; index < _songs.Items.Count; index++) _songs.SetSelected(index, true); }
-
     private void ShowPlaylists()
     {
         _playlists.Focus();
-        Announce("已返回歌单列表", "playlist-import");
+        // Moving the focus to the playlist list is the whole result of this command, and the reader names
+        // the newly focused list by itself. The text still reaches the live region to be re-read.
+        Announce("已返回歌单列表", "playlist-import", speech: AnnouncementSpeech.None);
     }
 
-    private void Announce(string message, string activity, AnnouncementKind kind = AnnouncementKind.Status) =>
-        _announcer.Announce(new AccessibleAnnouncement(message, kind, activity));
+    private void Announce(
+        string message,
+        string activity,
+        AnnouncementKind kind = AnnouncementKind.Status,
+        AnnouncementSpeech speech = AnnouncementSpeech.FollowPreference) =>
+        _announcer.Announce(new AccessibleAnnouncement(message, kind, activity, speech));
 
     private static Button CreateButton(string text, int tabIndex, EventHandler onClick)
     {
@@ -493,9 +666,10 @@ public class LyricsForm : Form
     private readonly IAccessibleAnnouncer _announcer;
     private readonly LyricsWorkflow _lyrics;
     private readonly Func<KeyEventArgs, bool> _handleHotkey;
-    private readonly RichTextBox _text = new() { Multiline = true, ReadOnly = true, ScrollBars = RichTextBoxScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window, TabIndex = 1 };
-    private readonly Label _title = new() { Text = "暂无歌词", AutoSize = true, TabStop = false, Dock = DockStyle.Top, AccessibleName = "歌词标题" };
+    private readonly LyricsTextBox _text = new() { Multiline = true, ReadOnly = true, ScrollBars = RichTextBoxScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window, TabIndex = 1 };
+    private readonly Label _title = new() { Text = "暂无歌词", AutoSize = true, TabStop = false, Dock = DockStyle.Top, Name = "LyricsSongInfo" };
     private readonly Button _copy = new() { Text = "复制歌词", Dock = DockStyle.Bottom };
+    private string _rendered = string.Empty;
 
     public LyricsForm(IAccessibleAnnouncer announcer, LyricsWorkflow lyrics, Func<KeyEventArgs, bool> handleHotkey)
     {
@@ -544,11 +718,28 @@ public class LyricsForm : Form
             ? string.IsNullOrWhiteSpace(state.Message) ? "暂无歌词" : state.Message
             : $"歌词：{state.Music.Artist}，{state.Music.Title}";
 
-        _text.Text = state.Lines.Count == 0
+        var lyricText = state.Lines.Count == 0
             ? state.Message
-            : string.Join(Environment.NewLine, state.Lines.Select((line, index) => (index + 1) + ". " + line.DisplayText));
+            : string.Join(Environment.NewLine, state.Lines.Select(line => line.DisplayText));
+        var caret = _text.SelectionStart;
+        var selected = _text.SelectionLength;
+        var replaced = lyricText != _rendered;
+        _rendered = lyricText;
+        _text.Text = lyricText;
 
-        HighlightCurrentLine(state);
+        // 设置→歌词→自动滚动歌词 decides whether the viewer moves the reading position to the line that is
+        // being sung. Switched off, the caret stays exactly where the user put it, so a reader can look ahead
+        // or behind while the song plays and the current line still arrives through 自动朗读当前歌词.
+        // A brand new lyric replaces the whole text, so in that case the position starts from the top again.
+        if (state.AutoScroll) HighlightCurrentLine(state);
+        else if (!replaced) RestoreReadingPosition(caret, selected);
+    }
+
+    private void RestoreReadingPosition(int start, int length)
+    {
+        if (start > _text.TextLength) start = _text.TextLength;
+        if (length > _text.TextLength - start) length = _text.TextLength - start;
+        _text.Select(start, length);
     }
 
     private void HighlightCurrentLine(LyricsState state)
@@ -560,34 +751,39 @@ public class LyricsForm : Form
             return;
         }
 
-        var lines = _text.Text.Split([Environment.NewLine], StringSplitOptions.None);
-        if (state.CurrentIndex >= lines.Length) return;
-        var start = lines.Take(state.CurrentIndex).Sum(line => line.Length + Environment.NewLine.Length);
-        _text.SelectionStart = start;
-        _text.SelectionLength = lines[state.CurrentIndex].Length;
+        // RichTextBox normalizes its Text to LF and a lyric can wrap into several visual lines.
+        // Map the logical lyric to visual lines so the whole current entry is selected for UIA.
+        var visualLines = _text.Lines;
+        var firstVisualLine = state.Lines.Take(state.CurrentIndex)
+            .Sum(line => line.DisplayText.Count(character => character == '\n') + 1);
+        var visualLineCount = state.Lines[state.CurrentIndex].DisplayText
+            .Count(character => character == '\n') + 1;
+        if (firstVisualLine + visualLineCount > visualLines.Length) return;
+
+        var start = _text.GetFirstCharIndexFromLine(firstVisualLine);
+        var lastLine = firstVisualLine + visualLineCount - 1;
+        var length = _text.GetFirstCharIndexFromLine(lastLine) + visualLines[lastLine].Length - start;
+        if (start < 0 || length <= 0) return;
+
+        _text.Select(start, length);
         _text.SelectionBackColor = SystemColors.Highlight;
         _text.SelectionColor = SystemColors.HighlightText;
         _text.ScrollToCaret();
-        _text.SelectionLength = 0;
+        _text.Select(start, length);
+    }
+
+    private sealed class LyricsTextBox : RichTextBox
+    {
+        protected override AccessibleObject CreateAccessibilityInstance() => new LyricsAccessibleObject(this);
+
+        private sealed class LyricsAccessibleObject(Control owner) : ControlAccessibleObject(owner)
+        {
+            public override AccessibleRole Role => AccessibleRole.Document;
+        }
     }
 
     private void Announce(string message, string activity, AnnouncementKind kind = AnnouncementKind.Status) =>
         _announcer.Announce(new AccessibleAnnouncement(message, kind, activity));
-}
-
-/// <summary>Text box whose automation object is intentionally invisible to screen readers.</summary>
-public sealed class SilentTextBox : TextBox
-{
-    protected override AccessibleObject CreateAccessibilityInstance() => new SilentAccessibleObject(this);
-
-    private sealed class SilentAccessibleObject : ControlAccessibleObject
-    {
-        public SilentAccessibleObject(Control owner) : base(owner) { }
-    public override AccessibleRole Role => AccessibleRole.None;
-        public override AccessibleStates State => AccessibleStates.Invisible;
-        public override string Name => string.Empty;
-        public override string Value => string.Empty;
-    }
 }
 
 /// <summary>Manual exact source switching window.</summary>
@@ -595,11 +791,11 @@ public class ManualSourceSwitchForm : Form
 {
     private readonly IAccessibleAnnouncer _announcer;
     private readonly IManualSourceDiscoveryWorkflow _workflow;
-    private readonly MusicInfo? _target;
+    private MusicInfo? _target;
     private readonly Func<KeyEventArgs, bool> _handleHotkey;
     private readonly ListBox _options = WinFormsUi.ListBox("可用音源", 1);
-    private readonly Label _targetLabel = new() { AutoSize = true, TabStop = false, AccessibleName = "目标歌曲" };
-    private readonly Label _status = new() { Text = "按 Enter 搜索可用音源。", AutoSize = true, TabStop = false, AccessibleName = "切换状态" };
+    private readonly Label _targetLabel = new() { AutoSize = true, TabStop = false, Name = "ManualTargetSong" };
+    private readonly Label _status = new() { Text = "按 Enter 搜索可用音源。", AutoSize = true, TabStop = false, Name = "ManualSwitchStatus" };
 
     public ManualSourceSwitchForm(
         IAccessibleAnnouncer announcer,
@@ -617,7 +813,7 @@ public class ManualSourceSwitchForm : Form
         KeyPreview = true;
         var search = CreateButton("搜索可用音源", 2, (_, _) => _ = SearchAsync());
         var play = CreateButton("用选中音源播放", 3, (_, _) => _ = PlayAsync());
-        _targetLabel.Text = target is null ? "未选择歌曲" : $"目标歌曲：{target.Artist}，{target.Title}";
+        DescribeTarget();
         _targetLabel.SetBounds(12, 15, 0, 0);
         search.SetBounds(12, 40, 130, 28); play.SetBounds(150, 40, 140, 28);
         _status.SetBounds(12, 76, 600, 22);
@@ -644,9 +840,33 @@ public class ManualSourceSwitchForm : Form
                 _options.Items.Add(new ObjectBox<ManualSourceOption>($"{option.DisplayLabel}，{option.Platform}", option));
             _status.Text = result.Message;
             Announce(result.Message, "manual-source-query:" + Guid.NewGuid().ToString("N"), result.Status == ManualSourceDiscoveryStatus.Success ? AnnouncementKind.Success : AnnouncementKind.Error);
-            if (_options.Items.Count > 0) _options.SelectedIndex = 0;
+            if (_options.Items.Count > 0)
+            {
+                _options.SelectedIndex = 0;
+                // The results are the point of the command, so the reading position moves to the first one
+                // instead of staying on the button that was just pressed.
+                _options.Focus();
+            }
         }
         catch (Exception ex) { WinFormsUi.Error(this, ex, "搜索音源"); }
+    }
+
+    private void DescribeTarget() => _targetLabel.Text = _target is null
+        ? "未选择歌曲"
+        : $"目标歌曲：{_target.Artist}，{_target.Title}";
+
+    /// <summary>
+    /// Repoints the one allowed instance of this window at another song. Two windows titled 切换音源 cannot be
+    /// told apart in Alt+Tab or in a screen reader's window list, so the second command brings the existing
+    /// window forward and searches for the new target instead of opening an identical copy.
+    /// </summary>
+    internal void ShowTarget(MusicInfo? music)
+    {
+        _target = music;
+        DescribeTarget();
+        _options.Items.Clear();
+        _status.Text = "按 Enter 搜索可用音源。";
+        if (_target is not null) _ = SearchAsync();
     }
 
     private async Task PlayAsync()
@@ -673,7 +893,9 @@ public class ManualSourceSwitchForm : Form
 public class UserGuideForm : Form
 {
     private readonly IAccessibleAnnouncer _announcer;
-    private readonly TextBox _guide = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window, AccessibleName = "使用说明" };
+    // The reading surface needs its own place in the tab order: chapter (1), guide text (2), close (3),
+    // so a keyboard user reaches the new chapter content with a single Tab after changing the chapter.
+    private readonly TextBox _guide = new() { Name = "使用说明", Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window, AccessibleName = "使用说明", TabIndex = 2 };
     private readonly ComboBox _chapter = WinFormsUi.Combo("指南章节", 1);
 
     public UserGuideForm(IAccessibleAnnouncer announcer)
@@ -692,7 +914,7 @@ public class UserGuideForm : Form
         top.Controls.Add(caption);
         top.Controls.Add(_chapter);
         var close = new Button { Text = "关闭", Dock = DockStyle.Bottom };
-        WinFormsUi.Name(close, "关闭", 2);
+        WinFormsUi.Name(close, "关闭", 3);
         Controls.Add(_guide);
         Controls.Add(close);
         Controls.Add(top);
@@ -714,16 +936,20 @@ public class UserGuideForm : Form
             0 => "主窗口包含文件、播放、导航、工具和帮助菜单。\nCtrl+1 到 Ctrl+4 切换四个音乐页面，Ctrl+5 到 Ctrl+8 打开工具窗口。\nEsc 可隐藏窗口或清空搜索。",
             1 => "在搜索关键词中输入内容后按 Enter 或选择搜索。\n列表中选择歌曲后按 Enter 或 Space 播放。\nF5 播放暂停，F6 停止，F3/F4 切歌。",
             2 => "播放列表用于在线收藏；分类歌单和排行榜需先选择分类或榜单。\n列表选择不会自动联网，回车后才加载或播放。\n右键菜单可收藏歌曲或整张歌单。",
-            3 => "设置中的普通项目修改后立即生效，关闭时保存。\n快捷键页选择项目后按 Enter 录制，Delete 清除。",
+            3 => "设置中的普通项目修改后立即生效，关闭时保存。\n路径输入框按 Enter 保存，朗读声音与语速改动立即生效，下次启动仍按保存值恢复。\n快捷键页选择项目后按 Enter 录制，Delete 清除。",
             4 => "F5 播放/暂停，F6 停止，F3 上一首，F4 下一首。\nF7/F8 快退快进，F9/F10 音量，F11/F12 设备，F1 模式，F2 下载。",
-            _ => "所有焦点控件都有语义名称和明确 Tab 顺序。\n状态、进度、错误和完成通过统一播报区域通知。\n列表选择和焦点变化不会触发联网、播放或删除。"
+            _ => "所有焦点控件都有语义名称和明确 Tab 顺序。\n状态、进度、错误和完成既朗读，也写进主窗口底部的播报行；关闭“语音播报”后播报行仍可查看。\n列表选择和焦点变化不会触发联网、播放或删除。"
         };
         _guide.SelectionStart = 0;
         _guide.ScrollToCaret();
-        Announce("已切换到" + _chapter.Text, "guide");
+        // The reader already speaks the new chapter when the combo box selection changes, and the new text
+        // is one Tab away, so repeating the chapter name in TTS only interrupts the reader. The live region
+        // still carries the sentence for anyone who wants to re-read it.
+        Announce("已切换到" + _chapter.Text, "guide", AnnouncementSpeech.None);
     }
 
-    private void Announce(string message, string activity) => _announcer.Announce(new AccessibleAnnouncement(message, AnnouncementKind.Status, activity));
+    private void Announce(string message, string activity, AnnouncementSpeech speech = AnnouncementSpeech.FollowPreference) =>
+        _announcer.Announce(new AccessibleAnnouncement(message, AnnouncementKind.Status, activity, speech));
 }
 
 /// <summary>Native song detail list dialog.</summary>

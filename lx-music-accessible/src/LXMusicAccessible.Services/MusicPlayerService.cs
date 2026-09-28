@@ -1273,7 +1273,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
 
     private static string MusicKey(MusicInfo music) => $"{music.Source}|{music.Id}";
     private sealed record AlternativeResolution(MusicInfo Music, string Url);
-    private static string ActivityId(long revision) => $"playback-{revision}";
+    private static string ActivityId(long revision) => $"playback-track:{revision}";
     private static string? GetDowngradeQuality(string quality) =>
         string.Equals(quality.Trim(), "128k", StringComparison.OrdinalIgnoreCase)
             ? null

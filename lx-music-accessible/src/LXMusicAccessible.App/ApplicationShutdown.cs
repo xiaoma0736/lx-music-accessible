@@ -189,12 +189,17 @@ internal sealed class ShutdownFeedback(IAccessibleAnnouncer announcer) : IShutdo
 
     public void Report(ShutdownResult result)
     {
-        var message = result.Status == ShutdownStatus.TimedOut ? TimeoutMessage : FailureMessage;
-        announcer.Announce(new AccessibleAnnouncement(
-            message,
-            AnnouncementKind.Error,
-            "application-shutdown",
-            AnnouncementSpeech.FollowPreference));
-        MessageBox.Show(message, "落雪音乐无障碍版", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        var announcement = AnnouncementFor(result);
+        announcer.Announce(announcement);
+        // The blocking dialog is the channel for this outcome: it takes the reader with it, so a second
+        // spoken copy of the same sentence from the announcer would only read the warning twice while the
+        // application is already closing. The text still reaches the live region to be re-read.
+        MessageBox.Show(announcement.Text, "落雪音乐无障碍版", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
+
+    internal static AccessibleAnnouncement AnnouncementFor(ShutdownResult result) => new(
+        result.Status == ShutdownStatus.TimedOut ? TimeoutMessage : FailureMessage,
+        AnnouncementKind.Error,
+        "application-shutdown",
+        AnnouncementSpeech.None);
 }

@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using Xunit;
 
 namespace LXMusicAccessible.Tests;
@@ -16,7 +16,7 @@ public sealed class Issue75ShutdownProcessTests
     public void App_force_exits_after_cleanup_so_native_audio_threads_cannot_keep_process_alive()
     {
         var source = File.ReadAllText(Source("LXMusicAccessible.App", "Program.cs"));
-        Assert.Contains("exitCode = await RunCoreAsync(args);", source);
+        Assert.Contains("exitCode = RunCoreAsync(args).GetAwaiter().GetResult();", source);
         Assert.Contains("Environment.Exit(exitCode);", source);
         Assert.Contains("Log.CloseAndFlush();", source);
         Assert.True(source.IndexOf("Environment.Exit(exitCode);") > source.IndexOf("Log.CloseAndFlush();"));

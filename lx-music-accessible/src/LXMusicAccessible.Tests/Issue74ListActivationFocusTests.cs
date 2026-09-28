@@ -14,89 +14,101 @@ namespace LXMusicAccessible.Tests;
 public sealed class Issue74ListActivationFocusTests
 {
     [Fact]
-    public async Task Search_box_enter_loads_results_and_moves_focus_to_search_results()
+    public void Search_box_enter_loads_results_and_moves_focus_to_search_results()
     {
-        var source = new Issue72BrowseNavigationTests.PagedBrowseSource { SearchTotal = 3 };
-        using var shell = CreateShell(source);
-        shell.Show();
-        Application.DoEvents();
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            var source = new Issue72BrowseNavigationTests.PagedBrowseSource { SearchTotal = 3 };
+            using var shell = CreateShell(source);
+            shell.Show();
+            Application.DoEvents();
 
-        var search = RequiredTextBox(shell);
-        search.Text = "query";
-        shell.Activate();
-        search.Focus();
-        Application.DoEvents();
-        RaiseKeyDown(search, Keys.Enter);
+            var search = RequiredTextBox(shell);
+            search.Text = "query";
+            shell.Activate();
+            search.Focus();
+            Application.DoEvents();
+            RaiseKeyDown(search, Keys.Enter);
 
-        await WaitFor(() => source.SearchCalls == 1);
-        var results = RequiredListBox(shell, "SearchResults");
-        await WaitForList(results, 1);
-        await WaitFor(() => shell.ActiveControl == results);
+            await WaitFor(() => source.SearchCalls == 1);
+            var results = RequiredListBox(shell, "SearchResults");
+            await WaitForList(results, 1);
+            await WaitFor(() => shell.ActiveControl == results);
+        });
     }
 
     [Fact]
-    public async Task Search_load_more_entry_activates_on_double_click()
+    public void Search_load_more_entry_activates_on_double_click()
     {
-        var source = new Issue72BrowseNavigationTests.PagedBrowseSource { SearchTotal = 3 };
-        using var shell = CreateShell(source);
-        shell.Show();
-        Application.DoEvents();
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            var source = new Issue72BrowseNavigationTests.PagedBrowseSource { SearchTotal = 3 };
+            using var shell = CreateShell(source);
+            shell.Show();
+            Application.DoEvents();
 
-        var search = RequiredTextBox(shell);
-        search.Text = "query";
-        RaiseKeyDown(search, Keys.Enter);
-        await WaitFor(() => source.SearchCalls == 1);
-        var results = RequiredListBox(shell, "SearchResults");
-        await WaitForList(results, 2);
+            var search = RequiredTextBox(shell);
+            search.Text = "query";
+            RaiseKeyDown(search, Keys.Enter);
+            await WaitFor(() => source.SearchCalls == 1);
+            var results = RequiredListBox(shell, "SearchResults");
+            await WaitForList(results, 2);
 
-        results.SelectedIndex = results.Items.Count - 1;
-        InvokeDoubleClick(results);
+            results.SelectedIndex = results.Items.Count - 1;
+            InvokeDoubleClick(results);
 
-        await WaitFor(() => source.SearchCalls == 2);
-        Assert.Same(results, shell.ActiveControl);
+            await WaitFor(() => source.SearchCalls == 2);
+            Assert.Same(results, shell.ActiveControl);
+        });
     }
 
     [Fact]
-    public async Task Category_list_enter_moves_to_playlist_list_and_playlist_enter_moves_to_songs()
+    public void Category_list_enter_moves_to_playlist_list_and_playlist_enter_moves_to_songs()
     {
-        var source = new Issue72BrowseNavigationTests.PagedBrowseSource();
-        using var shell = CreateShell(source);
-        shell.Show();
-        LoadCategories(shell);
-        var categories = RequiredListBox(shell, "CategoryList");
-        await WaitForList(categories, 1);
-        categories.SelectedIndex = 0;
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            var source = new Issue72BrowseNavigationTests.PagedBrowseSource();
+            using var shell = CreateShell(source);
+            shell.Show();
+            LoadCategories(shell);
+            var categories = RequiredListBox(shell, "CategoryList");
+            await WaitForList(categories, 1);
+            categories.SelectedIndex = 0;
 
-        RaiseKeyDown(categories, Keys.Enter);
-        await WaitFor(() => source.CategoryPlaylistCalls == 1);
-        var playlists = RequiredListBox(shell, "CategoryPlaylists");
-        await WaitForList(playlists, 1);
-        Assert.Same(playlists, shell.ActiveControl);
+            RaiseKeyDown(categories, Keys.Enter);
+            await WaitFor(() => source.CategoryPlaylistCalls == 1);
+            var playlists = RequiredListBox(shell, "CategoryPlaylists");
+            await WaitForList(playlists, 1);
+            Assert.Same(playlists, shell.ActiveControl);
 
-        playlists.SelectedIndex = 0;
-        RaiseKeyDown(playlists, Keys.Enter);
-        await WaitFor(() => source.PlaylistSongCalls == 1);
-        var songs = RequiredListBox(shell, "CategorySongs");
-        await WaitForList(songs, 1);
-        Assert.Same(songs, shell.ActiveControl);
+            playlists.SelectedIndex = 0;
+            RaiseKeyDown(playlists, Keys.Enter);
+            await WaitFor(() => source.PlaylistSongCalls == 1);
+            var songs = RequiredListBox(shell, "CategorySongs");
+            await WaitForList(songs, 1);
+            Assert.Same(songs, shell.ActiveControl);
+        });
     }
 
     [Fact]
-    public async Task Ranking_list_enter_moves_to_ranking_songs()
+    public void Ranking_list_enter_moves_to_ranking_songs()
     {
-        var source = new Issue72BrowseNavigationTests.PagedBrowseSource();
-        using var shell = CreateShell(source);
-        shell.Show();
-        LoadRankings(shell);
-        var rankings = RequiredListBox(shell, "RankingList");
-        await WaitForList(rankings, 1);
-        rankings.SelectedIndex = 0;
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            var source = new Issue72BrowseNavigationTests.PagedBrowseSource();
+            using var shell = CreateShell(source);
+            shell.Show();
+            LoadRankings(shell);
+            var rankings = RequiredListBox(shell, "RankingList");
+            await WaitForList(rankings, 1);
+            rankings.SelectedIndex = 0;
 
-        RaiseKeyDown(rankings, Keys.Enter);
-        await WaitFor(() => source.RankingSongCalls == 1);
-        var songs = RequiredListBox(shell, "RankingSongs");
-        await WaitForList(songs, 1);
-        Assert.Same(songs, shell.ActiveControl);
+            RaiseKeyDown(rankings, Keys.Enter);
+            await WaitFor(() => source.RankingSongCalls == 1);
+            var songs = RequiredListBox(shell, "RankingSongs");
+            await WaitForList(songs, 1);
+            Assert.Same(songs, shell.ActiveControl);
+        });
     }
 
     private static WinFormsShell CreateShell(Issue72BrowseNavigationTests.PagedBrowseSource source) => new(new WinFormsShellServices

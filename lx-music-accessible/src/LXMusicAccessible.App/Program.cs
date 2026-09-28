@@ -20,13 +20,19 @@ internal static class Program
     private static bool _exiting;
 
     [STAThread]
-    private static async Task<int> Main(string[] args)
+    private static int Main(string[] args)
     {
         ConfigureLogging();
+        // WebView2 requires an STA apartment. Do not mark an async Main instead: the compiler-generated
+        // real entry point loses [STAThread], the process starts as MTA, and WebView2 environment
+        // creation fails with RPC_E_CHANGED_MODE (0x80010106) on every platform login page.
+        Log.Information("Application startup thread apartment: {ApartmentState}", Thread.CurrentThread.GetApartmentState());
         int exitCode;
         try
         {
-            exitCode = await RunCoreAsync(args);
+            // Startup and shutdown pump their own message queues while incomplete, so by the time the
+            // async pipeline yields a completed task it is safe for this STA entry point to collect it.
+            exitCode = RunCoreAsync(args).GetAwaiter().GetResult();
         }
         finally
         {
@@ -162,7 +168,7 @@ internal static class Program
                 var shell = _shell;
                 if (shell is { IsDisposed: false })
                 {
-                    try { shell.BeginInvoke(() => shell.Visible = true); } catch (Exception ex) { Debug.WriteLine(ex.GetType().Name); }
+                    try { shell.BeginInvoke(shell.RestoreForSecondLaunch); } catch (Exception ex) { Debug.WriteLine(ex.GetType().Name); }
                 }
             }
         }) { IsBackground = true };

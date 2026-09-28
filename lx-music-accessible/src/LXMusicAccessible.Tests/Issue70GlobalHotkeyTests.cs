@@ -541,8 +541,7 @@ public sealed class Issue70GlobalHotkeyTests
                 workflow,
                 new ProbeTts(),
                 new FakeDownloadWorkflow(),
-                _ => false,
-                _ => { });
+                _ => false);
             form.Show();
             Application.DoEvents();
 

@@ -174,7 +174,7 @@ public class WinFormsShellAccessibilityTests
             var tabs = Assert.IsType<TabControl>(shell.Controls.Find("MainTabs", true)[0]);
             Assert.Equal(4, tabs.TabPages.Count);
             Assert.Equal("搜索关键词", shell.Controls.Find("搜索关键词", true)[0].AccessibleName);
-            Assert.Equal("播放列表", shell.Controls.Find("OnlinePlaylists", true)[0].AccessibleName);
+            Assert.Equal("我的歌单", shell.Controls.Find("OnlinePlaylists", true)[0].AccessibleName);
             Assert.Equal("分类歌曲", shell.Controls.Find("CategorySongs", true)[0].AccessibleName);
             Assert.Equal("排行榜歌曲", shell.Controls.Find("RankingSongs", true)[0].AccessibleName);
             WinFormsAccessibilityAudit.AssertAccessible(shell);

@@ -96,21 +96,28 @@ static class Program
         try
         {
             var target = InstallDirectoryOwnership.ResolveTargetDirectory(parent);
-            var exe = Path.Combine(target, "落雪音乐无障碍版V2.0.exe");
-            var isUpgrade = File.Exists(exe);
+            var exe = Path.Combine(target, "落雪音乐无障碍版V3.0.exe");
+            var previousExecutable = Path.Combine(target, "落雪音乐无障碍版V2.0.exe");
+            var isUpgrade = File.Exists(exe) || File.Exists(previousExecutable);
             if (isUpgrade)
             {
                 var r = MessageBox.Show("检测到该目录已安装过，是否覆盖安装？",
                     "落雪音乐无障碍版 安装", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 if (r != DialogResult.Yes) return 0;
-                CloseInstalledApplication(exe);
+                if (File.Exists(exe)) CloseInstalledApplication(exe);
+                if (File.Exists(previousExecutable)) CloseInstalledApplication(previousExecutable);
             }
 
             MessageBox.Show($"\u6b63\u5728\u5b89\u88c5\u5230\uff1a\n{target}\n\n\u89e3\u538b\u5b8c\u6210\u540e\u4f1a\u81ea\u52a8\u521b\u5efa\u5f00\u59cb\u83dc\u5355\u5feb\u6377\u65b9\u5f0f\uff0c\u8bf7\u7a0d\u5019...",
                 "\u843d\u96ea\u97f3\u4e50\u65e0\u969c\u788d\u7248 \u5b89\u88c5", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-            if (isUpgrade) WaitForFileAvailable(exe);
+            if (isUpgrade)
+            {
+                WaitForFileAvailable(exe);
+                WaitForFileAvailable(previousExecutable);
+            }
             InstallDirectoryOwnership.InstallFromZip(payloadStream, parent);
+            if (File.Exists(previousExecutable)) DeletePreviousExecutable(previousExecutable);
 
             var startMenu = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs");
@@ -144,6 +151,25 @@ static class Program
             MessageBox.Show($"安装失败：{ex.Message}", "落雪音乐无障碍版 安装",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
+        }
+    }
+
+    /// <summary>Removes the superseded V2 executable files after payloads and shortcuts point at V3.</summary>
+    private static void DeletePreviousExecutable(string previousExecutable)
+    {
+        var baseName = Path.Combine(
+            Path.GetDirectoryName(previousExecutable) ?? string.Empty,
+            Path.GetFileNameWithoutExtension(previousExecutable));
+        foreach (var path in new[] { $"{baseName}.exe", $"{baseName}.exe.config", $"{baseName}.pdb" })
+        {
+            try
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Previous executable cleanup failed: Path={path}; ErrorType={ex.GetType().Name}");
+            }
         }
     }
 
@@ -266,17 +292,19 @@ static class Program
             ClientSize = new Size(590, 185)
         };
 
-        var lblDir = new Label { Text = "安装位置：", Location = new Point(18, 28), AutoSize = true };
-        var txtDir = new TextBox { Text = InstallDirectoryOwnership.DefaultParentDirectory, Location = new Point(105, 24), Width = 335 };
-        var btnBrowse = new Button { Text = "浏览...", Location = new Point(448, 22), Width = 102 };
-        var chkDesktop = new CheckBox { Text = "创建桌面快捷方式", Location = new Point(105, 62), AutoSize = true, Checked = true };
+        // 焦点顺序必须写出来，不能靠添加顺序：WinForms 对相同或省略的 TabIndex 按 z 序排队，
+        // 而读屏用户只能靠 Tab 的方向来预期下一个控件。
+        var lblDir = new Label { Text = "安装位置：", Location = new Point(18, 28), AutoSize = true, TabStop = false };
+        var txtDir = new TextBox { Text = InstallDirectoryOwnership.DefaultParentDirectory, Location = new Point(105, 24), Width = 335, TabIndex = 1 };
+        var btnBrowse = new Button { Text = "浏览...", Location = new Point(448, 22), Width = 102, TabIndex = 2 };
+        var chkDesktop = new CheckBox { Text = "创建桌面快捷方式", Location = new Point(105, 62), AutoSize = true, Checked = true, TabIndex = 3 };
         var lblNote = new Label
         {
             Text = $"程序将在所选位置创建 {InstallDirectoryOwnership.ApplicationDirectoryName} 专属子目录。",
-            Location = new Point(105, 92), AutoSize = true, ForeColor = SystemColors.GrayText
+            Location = new Point(105, 92), AutoSize = true, TabStop = false
         };
-        var btnOk = new Button { Text = "安装", DialogResult = DialogResult.OK, Location = new Point(366, 130), Width = 96, Height = 30 };
-        var btnCancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new Point(472, 130), Width = 86, Height = 30 };
+        var btnOk = new Button { Text = "安装", DialogResult = DialogResult.OK, Location = new Point(366, 130), Width = 96, Height = 30, TabIndex = 4 };
+        var btnCancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new Point(472, 130), Width = 86, Height = 30, TabIndex = 5 };
 
         btnBrowse.Click += (s, e) =>
         {

@@ -125,16 +125,33 @@ public sealed class MusicBrowseWorkflowTests
         var workflow = app.Services.GetRequiredService<MusicBrowseWorkflow>();
         var started = NewSignal();
         var cancelled = NewSignal();
+        // The category page is composed from two parallel weapi requests, so both have to observe the
+        // cancellation of the superseded activation before the workflow reports it as replaced. The
+        // cancellation is observed the way production code observes it: the awaited request unwinds
+        // with OperationCanceledException rather than through a token-registration callback.
+        async Task<HttpResponseMessage> PendingAsync(CancellationToken cancellationToken)
+        {
+            started.TrySetResult(null);
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                cancelled.TrySetResult(null);
+                throw;
+            }
+            return Ok();
+        }
+
         app.HttpHandler.RegisterAsync(
             HttpMethod.Post,
             new Uri("https://music.163.com/weapi/playlist/catalogue"),
-            async cancellationToken =>
-            {
-                using var registration = cancellationToken.Register(() => cancelled.TrySetResult(null));
-                started.TrySetResult(null);
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-                return Ok();
-            });
+            PendingAsync);
+        app.HttpHandler.RegisterAsync(
+            HttpMethod.Post,
+            new Uri("https://music.163.com/weapi/playlist/hottags"),
+            PendingAsync);
 
         workflow.SelectCategorySource("netease");
         var activation = workflow.ActivateCategorySourceAsync();
@@ -144,7 +161,7 @@ public sealed class MusicBrowseWorkflowTests
 
         await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(BrowseResultStatus.Superseded, (await activation).Status);
-        Assert.Single(app.HttpHandler.Requests);
+        Assert.Equal(2, app.HttpHandler.Requests.Count);
     }
 
     [Fact]
@@ -169,35 +186,6 @@ public sealed class MusicBrowseWorkflowTests
         Assert.Equal(
             app.Announcer.Announcements[0].ActivityId,
             app.Announcer.Announcements[1].ActivityId);
-    }
-
-    [Fact]
-    public void Browse_controls_expose_explicit_action_semantics_without_selection_side_effects()
-    {
-        var root = FindRepositoryRoot();
-        var xaml = File.ReadAllText(Path.Combine(root, "src", "LXMusicAccessible.App", "MainWindow.xaml"));
-        var window = File.ReadAllText(Path.Combine(root, "src", "LXMusicAccessible.App", "MainWindow.xaml.cs"));
-
-        Assert.DoesNotContain("AutomationProperties.HelpText", xaml);
-        Assert.Contains("KeyDown=\"CategorySourceCombo_KeyDown\"", xaml);
-        Assert.Contains("KeyDown=\"RankingSourceCombo_KeyDown\"", xaml);
-        Assert.Contains("SelectionChanged=\"OnlinePlaylistList_SelectionChanged\"", xaml);
-
-        foreach (var method in new[]
-        {
-            "CategorySourceCombo_SelectionChanged",
-            "CategoryList_SelectionChanged",
-            "CategoryPlaylistsListBox_SelectionChanged",
-            "OnlinePlaylistList_SelectionChanged",
-            "RankingSourceCombo_SelectionChanged",
-            "RankingList_SelectionChanged"
-        })
-        {
-            var body = ExtractMethod(window, method);
-            Assert.DoesNotContain("await ", body, StringComparison.Ordinal);
-            Assert.DoesNotContain("_musicSourceService", body, StringComparison.Ordinal);
-            Assert.DoesNotContain("Focus", body, StringComparison.Ordinal);
-        }
     }
 
     private static async Task<TestApplicationHost> StartBrowseHostAsync() =>

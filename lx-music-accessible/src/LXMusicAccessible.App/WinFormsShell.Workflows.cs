@@ -24,7 +24,9 @@ public partial class WinFormsShell
             || !SearchLoadMore.Enabled)
             return false;
 
-        _ = SearchAsync(false);
+        // Enter reaches both KeyDown and KeyPress. Start only once; the second event still reports
+        // handled so it cannot fall through to song activation while the page request is running.
+        if (!_searchLoading) _ = SearchAsync(false);
         return true;
     }
 
@@ -80,15 +82,37 @@ public partial class WinFormsShell
         }
         catch (Exception ex)
         {
-            Announce(operation + "失败，请检查网络", operation);
+            Announce(operation + "失败，请检查网络", operation, AnnouncementKind.Error);
             if (!IsDisposed) WinFormsUi.Error(this, ex, operation);
         }
     }
 
+    /// <summary>
+    /// Switches to a page because of a command the user issued. Only this path may fill a page with data:
+    /// moving focus across the tab headers with the arrow keys or Ctrl+Tab never reaches it.
+    /// </summary>
+    private void ChangeTabPage(int index)
+    {
+        _pageLoadRequested = true;
+        try { MainTabs.SelectedIndex = index; }
+        finally { _pageLoadRequested = false; }
+    }
+
     private void SelectTab(int index)
     {
-        MainTabs.SelectedIndex = index;
+        ChangeTabPage(index);
         MainTabs.Focus();
+    }
+
+    /// <summary>Lazily loads the content of a page that the user opened on purpose.</summary>
+    private void LoadTabPageContent(int index)
+    {
+        if (index == 1 && _services.SavedPlaylists is not null && FavoriteSongs.Items.Count == 0)
+            _ = RunAsync(() => _services.SavedPlaylists.LoadAsync(), result => RenderSaved(result.Snapshot, result.Message), "刷新播放列表");
+        else if (index == 2 && CategoryList.Items.Count == 0)
+            LoadCategories();
+        else if (index == 3 && RankingList.Items.Count == 0)
+            LoadRankings();
     }
 
     private void ClearSearch()
@@ -140,14 +164,17 @@ public partial class WinFormsShell
                 _browse.SelectSearch(query, SearchTypeName(), SourceId(SearchSource.Text));
                 await _browse.RecordSearchAsync(query);
             }
-            var result = await _browse.ActivateSearchAsync(!reset);
+            var result = await _browse.ActivateSearchAsync(reset);
             if (result.Succeeded && result.Value is not null)
             {
                 _searchSongs = result.Value.Items.ToList();
                 var selected = WinFormsUi.Selected<MusicInfo>(SearchResults)?.Id;
+                var loadMoreSelected = SearchResults.SelectedItem is ObjectBox<LoadMoreAction>;
                 WinFormsUi.FillSongs(SearchResults, _searchSongs);
                 RestoreSelection(SearchResults, _searchSongs, selected);
                 UpdateLoadMore(SearchLoadMore, SearchResults, result.Value.HasMore, () => SearchAsync(false));
+                if (loadMoreSelected && result.Value.HasMore)
+                    SearchResults.SelectedIndex = SearchResults.Items.Count - 1;
                 Announce(result.Message, "search-results");
             }
             else if (!string.IsNullOrWhiteSpace(result.Message))
@@ -250,9 +277,6 @@ public partial class WinFormsShell
     private void ShowPlayback(MusicInfo music)
     {
         _current = music;
-        CurrentTitle.Text = music.Title;
-        CurrentArtist.Text = music.Artist;
-        CurrentAlbum.Text = music.Album;
         Text = string.IsNullOrWhiteSpace(music.Artist) ? $"{music.Title} - {BaseTitle}" : $"{music.Artist} - {music.Title} - {BaseTitle}";
         RefreshPlaybackStatus();
     }
@@ -464,6 +488,11 @@ public partial class WinFormsShell
         if (restoreFocus && !list.IsDisposed && list.CanFocus) list.Focus();
     }
 
+    /// <summary>
+    /// Backspace returns to the list the current one was opened from. The focus move is the
+    /// result: a screen reader already names the list that just took focus, so the 已返回 line only
+    /// mirrors into the announcement row and never interrupts the reader.
+    /// </summary>
     private bool HandleBrowseBack(ListBox? source = null)
     {
         source ??= ActiveControl as ListBox;
@@ -476,25 +505,25 @@ public partial class WinFormsShell
         if (source == CategorySongs)
         {
             CategoryPlaylists.Focus();
-            Announce("已返回歌单列表", "browse-back");
+            Announce("已返回歌单列表", "browse-back", speech: AnnouncementSpeech.None);
             return true;
         }
         if (source == CategoryPlaylists)
         {
             CategoryList.Focus();
-            Announce("已返回分类列表", "browse-back");
+            Announce("已返回分类列表", "browse-back", speech: AnnouncementSpeech.None);
             return true;
         }
         if (source == RankingSongs)
         {
             RankingList.Focus();
-            Announce("已返回榜单列表", "browse-back");
+            Announce("已返回榜单列表", "browse-back", speech: AnnouncementSpeech.None);
             return true;
         }
         if (source == FavoriteSongs)
         {
             OnlinePlaylists.Focus();
-            Announce("已返回歌单列表", "browse-back");
+            Announce("已返回歌单列表", "browse-back", speech: AnnouncementSpeech.None);
             return true;
         }
         return false;
@@ -512,7 +541,7 @@ public partial class WinFormsShell
         UpdateLoadMore(SearchLoadMore, SearchResults, search.HasMore, () => SearchAsync(false));
         RestoreSelection(SearchResults, items, selected);
         SearchResults.Focus();
-        Announce("已返回搜索结果", "browse-back");
+        Announce("已返回搜索结果", "browse-back", speech: AnnouncementSpeech.None);
         return Task.CompletedTask;
     }
 
@@ -627,11 +656,12 @@ public partial class WinFormsShell
         if (_services.Playback.IsPlaying)
         {
             _services.Playback.Pause();
-            Announce("已暂停", "playback-state");
+            // The music stopping is the feedback; speaking it only interrupts the screen reader.
+            Announce("已暂停", "playback-state", AnnouncementKind.Status);
         }
         else
         {
-            _ = RunAsync(async () => await _services.Playback.ReplayAsync(), _ => { }, "恢复播放");
+            _ = RunAsync(async () => await _services.Playback.ReplayAsync(), _ => Announce("恢复播放", "playback-state", AnnouncementKind.Success), "恢复播放");
         }
     }
 
@@ -639,10 +669,9 @@ public partial class WinFormsShell
     {
         _services.Playback?.Stop();
         _current = null;
-        CurrentTitle.Text = "未播放";
         Text = BaseTitle;
         PlaybackInfoText.Text = "未播放";
-        Announce("已停止播放", "playback-state");
+        Announce("已停止播放", "playback-state", AnnouncementKind.Status);
     }
 
     private async Task MovePlayback(bool previous)
@@ -650,7 +679,13 @@ public partial class WinFormsShell
         if (_services.Playback is null) return;
         var result = previous ? await _services.Playback.PreviousAsync() : await _services.Playback.NextAsync();
         if (result.Music is not null) ShowPlayback(result.Music);
-        Announce(result.Status == PlaybackResultStatus.Playing || result.Status == PlaybackResultStatus.QueueCompleted ? "已切换歌曲" : result.Message, "playback-song", result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted ? AnnouncementKind.Success : AnnouncementKind.Error);
+        // Saying 已切换歌曲 without the title left the user to find the new song in the window caption, which
+        // assistive technology does not re-read on its own. The title is the only way to learn what started.
+        var started = result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted;
+        var spoken = !started
+            ? result.Message
+            : result.Music is null ? "已切换歌曲" : $"正在播放：{result.Music.Artist}，{result.Music.Title}";
+        Announce(spoken, "playback-song", started ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
     private void Seek(double seconds)
@@ -660,6 +695,7 @@ public partial class WinFormsShell
         if (target < TimeSpan.Zero) target = TimeSpan.Zero;
         if (target > _services.Audio.Duration) target = _services.Audio.Duration;
         _services.Audio.SeekTo(target);
+        Announce($"已跳转到 {FormatTime(target)}", "seek", AnnouncementKind.Status);
     }
 
     private void ChangeVolume(double delta)
@@ -667,7 +703,8 @@ public partial class WinFormsShell
         if (_services.Audio is null) return;
         var volume = Math.Max(0.0, Math.Min(1.0, _services.Audio.Volume + delta));
         _services.Audio.SetVolume(volume);
-        Announce($"音量 {volume:0%}", "volume");
+        // The changed loudness is audible; announcing every step competes with the music and the reader.
+        Announce($"音量 {volume:0%}", "volume", AnnouncementKind.Status);
     }
 
     private void SwitchDevice(int direction)
@@ -680,9 +717,11 @@ public partial class WinFormsShell
     private void TogglePlayMode()
     {
         _playMode = (PlayMode)(((int)_playMode + 1) % 4);
-        CurrentPlayModeText.Text = "播放模式：" + PlayModeName(_playMode);
         var edit = _services.Settings?.Edit(settings => settings.DefaultPlayMode = _playMode);
-        Announce(PlayModeName(_playMode), "play-mode", AnnouncementKind.Status, AnnouncementSpeech.Always);
+        // 语音播报 is the master switch for routine announcements, so a mode change obeys it: the sentence
+        // still reaches the visible announcement line when speech is off. Only the lyric reader bypasses
+        // this switch, because it is controlled by its own 歌词播报 item.
+        Announce(PlayModeName(_playMode), "play-mode");
         if (edit is not null) _ = SaveSettingsAsync(edit);
     }
 
@@ -709,8 +748,10 @@ public partial class WinFormsShell
         if (song is null || _services.Downloads is null) return;
         try
         {
+            // The download workflow owns the spoken feedback for a task: it reports the start and then the
+            // result. The shell used to add 已加入下载 after the transfer had already finished, which both
+            // repeated a state the user could hear and arrived too late to describe it.
             await _services.Downloads.DownloadAsync(new DownloadRequest(song, _services.Settings?.Current.Settings.DefaultDownloadQuality ?? "128k"));
-            Announce($"已加入下载：{song.Title}", "download:" + song.Id);
         }
         catch (Exception ex)
         {
@@ -749,9 +790,32 @@ public partial class WinFormsShell
     {
         var song = WinFormsUi.Selected<MusicInfo>(list);
         if (song is null) return;
-        var lines = new[] { $"标题：{song.Title}", $"歌手：{song.Artist}", $"专辑：{song.Album}", $"时长：{song.Duration}", $"音源：{song.Source}" };
-        using var dialog = new SongDetailForm(song.Title, lines);
+        using var dialog = new SongDetailForm(song.Title, BuildSongDetailLines(song));
         dialog.ShowDialog(this);
+    }
+
+    private string[] BuildSongDetailLines(MusicInfo song)
+    {
+        var lines = new List<string>
+        {
+            $"标题：{song.Title}",
+            $"歌手：{song.Artist}",
+            $"专辑：{song.Album}",
+            $"时长：{song.Duration}",
+            $"音质：{TranslateQualityLevel(song.Quality)}"
+        };
+
+        // Detail windows can also be opened from the queue for the active song. The stream may have fallen
+        // back from the source-advertised quality, so surface the actually detected media quality separately.
+        var actual = _services.Audio?.ActualQuality;
+        if (!string.IsNullOrWhiteSpace(actual)
+            && string.Equals(_current?.Id, song.Id, StringComparison.Ordinal))
+        {
+            lines.Add($"当前播放音质：{TranslateQuality(actual)}");
+        }
+
+        lines.Add($"音源：{song.Source}");
+        return lines.ToArray();
     }
 
     private async Task AddFavorites(IReadOnlyList<MusicInfo> songs)
@@ -804,22 +868,30 @@ public partial class WinFormsShell
     private void OpenLyrics(MusicInfo? music)
     {
         if (_services.Windows is null) return;
-        var window = _services.Windows.CreateLyrics(HandleHotkey);
         if (music is not null) _ = _services.Lyrics?.LoadAsync(music);
-        window.Show(this);
+        if (BringToolToFront<LyricsForm>()) return;
+        _services.Windows.CreateLyrics(HandleHotkey).Show(this);
+    }
+
+    private void OpenUserGuide()
+    {
+        if (BringToolToFront<UserGuideForm>()) return;
+        _services.Windows?.CreateUserGuide(this);
     }
 
     private void OpenManualSource(MusicInfo? music = null)
     {
         if (_services.Windows is null) return;
-        var window = _services.Windows.CreateManualSource(this, HandleHotkey, _services.ManualSources, music ?? _current);
-        window.Show(this);
+        var target = music ?? _current;
+        if (BringToolToFront<ManualSourceSwitchForm>(form => form.ShowTarget(target))) return;
+        _services.Windows.CreateManualSource(this, HandleHotkey, _services.ManualSources, target).Show(this);
     }
 
     private void OpenTool<T>(Func<T?> create) where T : Form
     {
         try
         {
+            if (BringToolToFront<T>()) return;
             var window = create();
             window?.Show(this);
         }
@@ -829,11 +901,28 @@ public partial class WinFormsShell
         }
     }
 
+    /// <summary>
+    /// Brings an already open tool window of this kind forward instead of creating a second one, which is
+    /// what ADR 0002 promises for every tool. A duplicated 下载管理 or 歌词 window subscribes to the same
+    /// live list twice, so the user hears the same result twice and gets two identical Alt+Tab targets,
+    /// and a duplicated 音源管理 or 使用说明 window is a second copy of the same thing to tell apart.
+    /// Hidden members of the window group become visible again because the command asked for this window.
+    /// </summary>
+    private bool BringToolToFront<TForm>(Action<TForm>? onReuse = null) where TForm : Form
+    {
+        var open = OwnedForms.FirstOrDefault(form => !form.IsDisposed && form is TForm);
+        if (open is null) return false;
+        if (!open.Visible) open.Visible = true;
+        onReuse?.Invoke((TForm)open);
+        open.Activate();
+        return true;
+    }
+
     private void ShowSettings(Hotkey? reconfigure)
     {
         if (_services.Windows is null) return;
         var previousFocus = ActiveControl;
-        var window = _services.Windows.CreateSettings(this, HandleHotkey, suppress => { }, reconfigure);
+        var window = _services.Windows.CreateSettings(this, HandleHotkey, reconfigure);
         window.ShowDialog(this);
         previousFocus?.Focus();
     }
@@ -852,7 +941,7 @@ public partial class WinFormsShell
             ExecuteLocalHotkey(args.KeyCode);
             return false;
         }
-        return ExecuteConfiguredHotkey(args.KeyCode);
+        return ExecuteConfiguredHotkey(args);
     }
 
     private void ExecuteHotkey(string actionId)
@@ -884,25 +973,25 @@ public partial class WinFormsShell
     /// native registration is not live runs here as a fallback; a natively registered global binding
     /// is deliberately left to the message window so the action runs exactly once instead of twice.
     /// </summary>
-    private bool ExecuteConfiguredHotkey(Keys keyData)
+    private bool ExecuteConfiguredHotkey(KeyEventArgs args)
     {
         var settings = _services.Settings;
         if (settings is null) return false;
-        var key = KeyboardKeys.FromVirtualKey((uint)(keyData & Keys.KeyCode));
+        var key = KeyboardKeys.FromVirtualKey((uint)(args.KeyCode & Keys.KeyCode));
         if (key == PlatformKey.None) return false;
-        var modifiers = ModifiersOf(keyData);
+        var modifiers = ModifiersOf(args);
         var hotkey = settings.MatchLocalHotkey(key, modifiers) ?? settings.MatchFallback(key, modifiers);
         if (hotkey is null) return false;
         ExecuteHotkey(hotkey.ActionId);
         return true;
     }
 
-    private static PlatformModifiers ModifiersOf(Keys keyData)
+    private static PlatformModifiers ModifiersOf(KeyEventArgs args)
     {
         var modifiers = PlatformModifiers.None;
-        if ((keyData & Keys.Control) != 0) modifiers |= PlatformModifiers.Control;
-        if ((keyData & Keys.Alt) != 0) modifiers |= PlatformModifiers.Alt;
-        if ((keyData & Keys.Shift) != 0) modifiers |= PlatformModifiers.Shift;
+        if ((args.KeyData & Keys.Control) != 0) modifiers |= PlatformModifiers.Control;
+        if ((args.KeyData & Keys.Alt) != 0) modifiers |= PlatformModifiers.Alt;
+        if ((args.KeyData & Keys.Shift) != 0) modifiers |= PlatformModifiers.Shift;
         return modifiers;
     }
 
@@ -922,25 +1011,30 @@ public partial class WinFormsShell
         return focused is TextBoxBase { ReadOnly: false };
     }
 
-    private void ExecuteLocalHotkey(Keys key)
+    /// <summary>
+    /// Legacy table for shells composed without a SettingsWorkflow (deterministic UI tests). Production
+    /// shells resolve every local key through the configured bindings above. The return value says whether
+    /// the key belonged to a command: several of these function keys are also menu shortcuts, and letting
+    /// the base window process a command that has already run would perform it twice.
+    /// </summary>
+    private bool ExecuteLocalHotkey(Keys key)
     {
-        // Legacy table for shells composed without a SettingsWorkflow (deterministic UI tests).
-        // Production shells resolve every local key through the configured bindings above.
         switch (key)
         {
-            case Keys.F5: TogglePlayback(); break;
-            case Keys.F6: StopPlayback(); break;
-            case Keys.F3: _ = MovePlayback(true); break;
-            case Keys.F4: _ = MovePlayback(false); break;
-            case Keys.F7: Seek(-10); break;
-            case Keys.F8: Seek(10); break;
-            case Keys.F9: ChangeVolume(-VolumeStep); break;
-            case Keys.F11: SwitchDevice(-1); break;
-            case Keys.F12: SwitchDevice(1); break;
-            case Keys.F1: TogglePlayMode(); break;
-            case Keys.F2: DownloadSelected(); break;
-            case Keys.Up when ModifierKeys == Keys.Control: MainTabs.SelectedIndex = Math.Max(0, MainTabs.SelectedIndex - 1); break;
-            case Keys.Down when ModifierKeys == Keys.Control: MainTabs.SelectedIndex = Math.Min(MainTabs.TabPages.Count - 1, MainTabs.SelectedIndex + 1); break;
+            case Keys.F5: TogglePlayback(); return true;
+            case Keys.F6: StopPlayback(); return true;
+            case Keys.F3: _ = MovePlayback(true); return true;
+            case Keys.F4: _ = MovePlayback(false); return true;
+            case Keys.F7: Seek(-10); return true;
+            case Keys.F8: Seek(10); return true;
+            case Keys.F9: ChangeVolume(-VolumeStep); return true;
+            case Keys.F11: SwitchDevice(-1); return true;
+            case Keys.F12: SwitchDevice(1); return true;
+            case Keys.F1: TogglePlayMode(); return true;
+            case Keys.F2: DownloadSelected(); return true;
+            case Keys.Up when ModifierKeys == Keys.Control: ChangeTabPage(Math.Max(0, MainTabs.SelectedIndex - 1)); return true;
+            case Keys.Down when ModifierKeys == Keys.Control: ChangeTabPage(Math.Min(MainTabs.TabPages.Count - 1, MainTabs.SelectedIndex + 1)); return true;
+            default: return false;
         }
     }
 
@@ -971,12 +1065,12 @@ public partial class WinFormsShell
         if (keyData == (Keys.Alt | Keys.R)) { SelectTab(3); RankingList.Focus(); return true; }
         if (keyData == (Keys.Control | Keys.Up))
         {
-            MainTabs.SelectedIndex = Math.Max(0, MainTabs.SelectedIndex - 1);
+            ChangeTabPage(Math.Max(0, MainTabs.SelectedIndex - 1));
             return true;
         }
         if (keyData == (Keys.Control | Keys.Down))
         {
-            MainTabs.SelectedIndex = Math.Min(MainTabs.TabPages.Count - 1, MainTabs.SelectedIndex + 1);
+            ChangeTabPage(Math.Min(MainTabs.TabPages.Count - 1, MainTabs.SelectedIndex + 1));
             return true;
         }
         if (_services.Settings is null)
@@ -986,11 +1080,11 @@ public partial class WinFormsShell
                 ChangeVolume(VolumeStep);
                 return true;
             }
-            ExecuteLocalHotkey(keyData);
+            if (ExecuteLocalHotkey(keyData)) return true;
             return base.ProcessCmdKey(ref msg, keyData);
         }
         if (IsHotkeySuppressed(msg.HWnd)) return base.ProcessCmdKey(ref msg, keyData);
-        if (ExecuteConfiguredHotkey(keyData)) return true;
+        if (ExecuteConfiguredHotkey(new KeyEventArgs(keyData))) return true;
         return base.ProcessCmdKey(ref msg, keyData);
     }
 
@@ -1022,6 +1116,25 @@ public partial class WinFormsShell
     {
         if (Visible) _services.Desktop?.ExecuteAsync(DesktopCommand.Escape);
         else _services.Desktop?.ExecuteAsync(DesktopCommand.Restore);
+    }
+
+    /// <summary>
+    /// Brings the window back when a second launch of the same application is detected. Hiding to the tray
+    /// minimises the shell and removes its taskbar button, so flipping Visible alone left a keyboard-only
+    /// user with a window that was on screen but unreachable; this runs the same restore as the tray menu.
+    /// </summary>
+    internal void RestoreForSecondLaunch()
+    {
+        if (_services.Desktop is { } desktop)
+        {
+            _ = desktop.ExecuteAsync(DesktopCommand.Restore);
+            return;
+        }
+
+        ShowInTaskbar = true;
+        Visible = true;
+        WindowState = FormWindowState.Normal;
+        Activate();
     }
 
     private async Task<bool> RequestExit()

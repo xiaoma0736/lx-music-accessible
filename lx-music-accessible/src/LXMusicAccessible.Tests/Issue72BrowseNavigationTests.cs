@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -20,7 +20,7 @@ public sealed class Issue72BrowseNavigationTests
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
-            var source = new PagedBrowseSource { SearchTotal = 3 };
+            var source = new PagedBrowseSource { SearchTotal = 4 };
             using var shell = CreateShell(source);
             shell.Show();
             Application.DoEvents();
@@ -40,6 +40,15 @@ public sealed class Issue72BrowseNavigationTests
             RaiseKeyDown(search, Keys.Enter);
             await WaitFor(() => source.SearchCalls == 2);
             Assert.Same(search, shell.ActiveControl);
+
+            // A refreshed marker must remain the reading position so the next explicit activation
+            // loads the following page without requiring the user to rediscover the list end.
+            search.SelectedIndex = search.Items.Count - 1;
+            RaiseKeyDown(search, Keys.Enter);
+            await WaitFor(() => source.SearchCalls == 3);
+            await WaitForList(search, 4);
+            Assert.True(search.SelectedItem?.ToString()?.Contains("加载更多", StringComparison.Ordinal) == true,
+                $"Expected the refreshed load-more marker to stay selected, got {search.SelectedItem}.");
         });
     }
 
@@ -83,7 +92,7 @@ public sealed class Issue72BrowseNavigationTests
             shell.Show();
             Application.DoEvents();
 
-            Tabs(shell).SelectedIndex = 2;
+            shell.SelectTabForTests(2);
             shell.LoadCategoryPlaylistsForTests();
             await WaitFor(() => source.CategoryCalls > 0);
             var categories = RequiredListBox(shell, "CategoryList");
@@ -110,6 +119,10 @@ public sealed class Issue72BrowseNavigationTests
             RaiseKeyDown(songs, Keys.Back);
             await WaitFor(() => ContainsAnnouncement(shell, "已返回歌单列表"));
             Assert.Same(playlists, shell.ActiveControl);
+            // Going back is a focus move, and the reader names the list that just took focus: the mirror
+            // line must stay silent so the command is not spoken a second time.
+            Assert.Equal(AnnouncementSpeech.None, Announcer(shell).Announcements
+                .Last(item => item.Text.Contains("已返回歌单列表", StringComparison.Ordinal)).Speech);
         });
     }
 
@@ -123,7 +136,7 @@ public sealed class Issue72BrowseNavigationTests
             shell.Show();
             Application.DoEvents();
 
-            Tabs(shell).SelectedIndex = 3;
+            shell.SelectTabForTests(3);
             var rankings = RequiredListBox(shell, "RankingList");
             await WaitForList(rankings, 1);
             Select(rankings, 0);

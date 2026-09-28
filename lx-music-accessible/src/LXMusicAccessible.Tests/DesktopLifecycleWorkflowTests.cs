@@ -32,9 +32,9 @@ public sealed class DesktopLifecycleWorkflowTests
         Assert.Equal(0, fixture.Shutdown.RequestCount);
         Assert.Collection(
             fixture.Announcer.Announcements,
-            item => AssertAnnouncement(item, "已隐藏到系统托盘，音乐继续播放"),
-            item => AssertAnnouncement(item, "已恢复主窗口"),
-            item => AssertAnnouncement(item, "已隐藏到系统托盘，音乐继续播放"));
+            item => AssertAnnouncement(item, "已隐藏"),
+            item => AssertAnnouncement(item, "已显示"),
+            item => AssertAnnouncement(item, "已隐藏"));
 
         await fixture.Workflow.ExecuteAsync(DesktopCommand.Restore);
         var closed = await fixture.Workflow.ExecuteAsync(DesktopCommand.AltF4, hideOnAltF4: false);

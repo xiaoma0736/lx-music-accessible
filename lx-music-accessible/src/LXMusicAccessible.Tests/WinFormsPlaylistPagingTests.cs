@@ -16,22 +16,39 @@ namespace LXMusicAccessible.Tests;
 
 public sealed class WinFormsPlaylistPagingTests
 {
+    /// <summary>
+    /// Every list pages with exactly one reachable command: a load-more button whose name says what it
+    /// loads. The old first/previous/next page buttons and the page label were permanently hidden, which
+    /// made them unreachable for keyboard and screen reader users, so they are gone for good.
+    /// </summary>
     [Fact]
-    public void Category_paging_controls_have_accessible_names_and_names_do_not_repeat_roles()
+    public void Paging_is_one_reachable_command_per_list_with_a_specific_accessible_name()
     {
         WinFormsTestRunner.Run(() =>
         {
             using var shell = CreateShell(new CountingBrowseSource());
-            foreach (var name in new[] { "CategoryPlaylistPreviousPage", "CategoryPlaylistNextPage", "CategoryPlaylistPage", "CategorySongsLoadMore" })
+            var expected = new Dictionary<string, string>
+            {
+                ["SearchLoadMore"] = "加载更多搜索歌曲",
+                ["SavedPlaylistLoadMore"] = "加载更多收藏歌曲",
+                ["CategoryPlaylistsLoadMore"] = "加载更多歌单",
+                ["CategorySongsLoadMore"] = "加载更多歌单歌曲",
+                ["RankingSongsLoadMore"] = "加载更多榜单歌曲"
+            };
+            foreach (var (name, accessibleName) in expected)
             {
                 var controls = shell.Controls.Find(name, true);
                 Assert.True(controls.Length == 1, name + " was not found");
-                Assert.Equal(name, controls[0].Name);
-                Assert.False(string.IsNullOrWhiteSpace(controls[0].AccessibleName), name + " has no AccessibleName");
-                Assert.DoesNotContain("按钮", controls[0].AccessibleName, StringComparison.Ordinal);
-                if (controls[0] is Button button) Assert.False(button.TabStop);
+                var button = Assert.IsType<Button>(controls[0]);
+                Assert.Equal(accessibleName, button.AccessibleName);
+                Assert.DoesNotContain("按钮", button.AccessibleName, StringComparison.Ordinal);
+                Assert.False(button.TabStop, name + " would duplicate the list's own keyboard command in the tab chain.");
             }
-            Assert.Equal("加载更多歌单歌曲", shell.Controls.Find("CategorySongsLoadMore", true)[0].AccessibleName);
+
+            // Nothing in the shell is named after the removed paging widgets.
+            Assert.Empty(shell.Controls.Find("CategoryPlaylistPreviousPage", true));
+            Assert.Empty(shell.Controls.Find("CategoryPlaylistNextPage", true));
+            Assert.Empty(shell.Controls.Find("CategoryPlaylistPage", true));
             WinFormsAccessibilityAudit.AssertAccessible(shell);
         });
     }

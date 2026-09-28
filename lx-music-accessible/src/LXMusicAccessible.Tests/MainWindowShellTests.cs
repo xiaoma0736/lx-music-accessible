@@ -1,73 +1,10 @@
 using System.IO;
-using System.Xml.Linq;
 using Xunit;
 
 namespace LXMusicAccessible.Tests;
 
 public sealed class MainWindowShellTests
 {
-    private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
-
-    [Fact]
-    public void Main_window_contains_only_the_four_music_pages_and_playback_status_stays_outside()
-    {
-        var main = LoadMainWindow();
-        var tabs = main.Descendants()
-            .Single(element => Id(element) == "MainTabControl");
-
-        Assert.Equal(
-            ["搜索", "播放列表", "分类歌单", "排行榜"],
-            tabs.Elements()
-                .Where(element => element.Name.LocalName == "TabItem")
-                .Select(element => (string?)element.Attribute("Header")));
-        Assert.DoesNotContain(tabs.Descendants(), element => Id(element) is
-            "HotkeyListBox" or "SourceList" or "DownloadTaskList" or "PlatformNeteaseBtn");
-        Assert.DoesNotContain(tabs.Descendants(), element => Id(element) is "CurrentTitle" or "StatusText");
-        Assert.Single(main.Descendants(), element => Id(element) == "CurrentTitle");
-        Assert.Single(main.Descendants(), element => Id(element) == "StatusText");
-    }
-
-    [Fact]
-    public void Tools_have_one_menu_path_and_fixed_number_shortcuts_for_browse_and_tool_windows()
-    {
-        var root = LoadMainWindow();
-        var tools = root.Descendants()
-            .Single(element => (string?)element.Attribute("Header") == "工具(_T)");
-        var expected = new[]
-        {
-            "下载管理(_D)", "导入个人歌单(_I)", "Separator", "音源管理(_M)", "设置(_S)"
-        };
-
-        Assert.Equal(expected, tools.Elements().Select(element =>
-            element.Name.LocalName == "Separator"
-                ? "Separator"
-                : (string?)element.Attribute("Header")));
-        foreach (var header in expected.Where(header => header != "Separator"))
-            Assert.Single(root.Descendants(), element => (string?)element.Attribute("Header") == header);
-
-        var code = File.ReadAllText(Path.Combine(FindRepositoryRoot(),
-            "src", "LXMusicAccessible.App", "MainWindow.xaml.cs"));
-        var shortcuts = File.ReadAllText(Path.Combine(FindRepositoryRoot(),
-            "src", "LXMusicAccessible.App", "WindowShortcuts.cs"));
-        var targets = new[]
-        {
-            "System.Windows.Input.Key.D1 or System.Windows.Input.Key.NumPad1 => WindowShortcutTarget.Search",
-            "System.Windows.Input.Key.D2 or System.Windows.Input.Key.NumPad2 => WindowShortcutTarget.Playlist",
-            "System.Windows.Input.Key.D3 or System.Windows.Input.Key.NumPad3 => WindowShortcutTarget.CategoryPlaylists",
-            "System.Windows.Input.Key.D4 or System.Windows.Input.Key.NumPad4 => WindowShortcutTarget.Rankings",
-            "System.Windows.Input.Key.D5 or System.Windows.Input.Key.NumPad5 => WindowShortcutTarget.DownloadManager",
-            "System.Windows.Input.Key.D6 or System.Windows.Input.Key.NumPad6 => WindowShortcutTarget.PlaylistImport",
-            "System.Windows.Input.Key.D7 or System.Windows.Input.Key.NumPad7 => WindowShortcutTarget.SourceManager",
-            "_ => WindowShortcutTarget.Settings"
-        };
-        foreach (var target in targets)
-            Assert.Contains(target, shortcuts, StringComparison.Ordinal);
-        Assert.Contains("case 0: FocusControl(SearchBox)", code, StringComparison.Ordinal);
-        Assert.Contains("case 1: FocusListContent(FavoriteSongsList)", code, StringComparison.Ordinal);
-        Assert.Contains("case 2: FocusListContent(CategoryList)", code, StringComparison.Ordinal);
-        Assert.Contains("case 3: FocusListContent(RankingList)", code, StringComparison.Ordinal);
-    }
-
     [Fact]
     public void User_documents_describe_the_final_navigation_and_tool_window_contract()
     {
@@ -112,11 +49,6 @@ public sealed class MainWindowShellTests
             Assert.Contains(expected, releaseChecklist, StringComparison.Ordinal);
         }
     }
-
-    private static XElement LoadMainWindow() => XDocument.Load(Path.Combine(
-        FindRepositoryRoot(), "src", "LXMusicAccessible.App", "MainWindow.xaml")).Root!;
-
-    private static string Id(XElement element) => element.Attribute(Xaml + "Name")?.Value ?? string.Empty;
 
     private static string FindRepositoryRoot()
     {

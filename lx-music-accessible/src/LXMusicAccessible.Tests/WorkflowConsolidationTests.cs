@@ -81,33 +81,6 @@ public sealed class WorkflowConsolidationTests
         Assert.Null(await workflow.ContinuePlaybackAsync(PlaybackQueueOrigin.Search));
     }
 
-    [Fact]
-    public void Main_window_is_only_a_wpf_and_platform_adapter()
-    {
-        var root = FindRepositoryRoot();
-        var window = File.ReadAllText(Path.Combine(
-            root, "src", "LXMusicAccessible.App", "MainWindow.xaml.cs"));
-
-        foreach (var forbidden in new[]
-        {
-            "IDataService", "IDataStorageService", "IProcessLauncher", "HttpClient",
-            "Sqlite", "AppDataPaths", "File.", "Directory.", "PersistShutdownAsync",
-            "SaveMusicSourcesAsync", "_onlinePlaylists", "_selectedOnlinePlaylist",
-            "_searchHistory", "_categoryCurrentPage", "_rankingCurrentPage", "_autoPaging"
-        })
-        {
-            Assert.DoesNotContain(forbidden, window, StringComparison.Ordinal);
-        }
-
-        Assert.Contains("_browseWorkflow.ContinuePlaybackAsync", window, StringComparison.Ordinal);
-        Assert.Contains("_savedPlaylists", window, StringComparison.Ordinal);
-        Assert.DoesNotContain("(HostWindow as MainWindow)", File.ReadAllText(Path.Combine(
-            root, "src", "LXMusicAccessible.App", "PlaylistImportWindow.xaml.cs")), StringComparison.Ordinal);
-        Assert.Empty(Directory.Exists(Path.Combine(root, ".github", "workflows"))
-            ? Directory.EnumerateFiles(Path.Combine(root, ".github", "workflows"))
-            : []);
-    }
-
     private static string FindRepositoryRoot()
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory);

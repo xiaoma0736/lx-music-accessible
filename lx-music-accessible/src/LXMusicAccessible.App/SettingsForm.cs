@@ -23,23 +23,37 @@ public class SettingsForm : Form
     private readonly ITtsService _tts;
     private readonly IDownloadWorkflow _downloads;
     private readonly Func<KeyEventArgs, bool> _handleHotkey;
-    private readonly ListBox _hotkeys = WinFormsUi.ListBox("快捷键", 20);
+    private readonly ListBox _hotkeys = WinFormsUi.ListBox("快捷键", 2);
     private readonly ComboBox _closeBehavior = WinFormsUi.Combo("关闭行为", 1, "关闭应用", "隐藏到托盘");
     private readonly ComboBox _quality = WinFormsUi.Combo("默认播放音质", 2, "标准", "较高", "极高", "无损", "Hi-Res");
     private readonly ComboBox _playMode = WinFormsUi.Combo("默认播放模式", 3, "顺序播放", "列表循环", "单曲循环", "随机播放");
-    private readonly TextBox _playerPath = new() { AccessibleName = "第三方播放器路径" };
+    private readonly TextBox _playerPath = new();
     private readonly CheckBox _lyricAnnounce = new() { Text = "自动播报歌词" };
     private readonly CheckBox _lyricScroll = new() { Text = "自动滚动歌词" };
-    private readonly TextBox _downloadPath = new() { AccessibleName = "下载目录" };
+    private readonly TextBox _downloadPath = new();
     private readonly ComboBox _downloadQuality = WinFormsUi.Combo("默认下载音质", 7, "标准", "较高", "极高", "无损", "Hi-Res");
     private readonly CheckBox _downloadLyric = new() { Text = "同时下载歌词" };
     private readonly CheckBox _nameQuality = new() { Text = "文件名包含音质" };
     private readonly ComboBox _nameOrder = WinFormsUi.Combo("文件名顺序", 10, "歌手 - 标题", "标题 - 歌手");
-    private readonly TextBox _dataDir = new() { ReadOnly = true, AccessibleName = "数据目录" };
+    private readonly TextBox _dataDir = new() { ReadOnly = true };
     private readonly CheckBox _voiceEnabled = new() { Text = "启用语音朗读提示" };
-    private readonly Label _backend = new() { AutoSize = true, TabStop = false };
+    private readonly Label _backend = new() { AutoSize = true, Name = "SpeechBackend", TabStop = false };
     private readonly ComboBox _voice = WinFormsUi.Combo("朗读声音", 13);
     private readonly ComboBox _rate = WinFormsUi.Combo("朗读语速", 14, "0.5", "0.75", "1", "1.25", "1.5", "2");
+    private readonly GroupBox _speechScope = new()
+    {
+        Name = "SpeechScope",
+        AccessibleName = "语音提示范围",
+        Text = "语音提示范围",
+        TabStop = false
+    };
+    private readonly CheckBox _announcePlaybackState = new() { Text = "播放状态", UseVisualStyleBackColor = true };
+    private readonly CheckBox _announceTrackChange = new() { Text = "切歌播报", UseVisualStyleBackColor = true };
+    private readonly CheckBox _announceVolume = new() { Text = "音量变化", UseVisualStyleBackColor = true };
+    private readonly CheckBox _announceSeek = new() { Text = "快进快退位置", UseVisualStyleBackColor = true };
+    private readonly CheckBox _announceWindowVisibility = new() { Text = "窗口显隐", UseVisualStyleBackColor = true };
+    private readonly CheckBox _announcePlaybackMode = new() { Text = "播放模式", UseVisualStyleBackColor = true };
+    private readonly CheckBox _announceAudioDevice = new() { Text = "播放设备", UseVisualStyleBackColor = true };
     private HotkeySettingItem? _recording;
     private bool _loading = true;
 
@@ -49,7 +63,6 @@ public class SettingsForm : Form
         ITtsService tts,
         IDownloadWorkflow downloads,
         Func<KeyEventArgs, bool> handleHotkey,
-        Action<bool> setInputSuppressed,
         Hotkey? reconfigure = null)
     {
         _announcer = announcer;
@@ -72,6 +85,10 @@ public class SettingsForm : Form
         tabs.TabPages.Add(CreateHotkeys());
         Controls.Add(tabs);
         KeyPreview = true;
+        // The voice list has to exist before the stored settings are read into the controls: the saved
+        // voice identifier can only be selected against the list, and a list built afterwards left the
+        // combo box on its first row and overwrote the choice the user had made.
+        PopulateVoices();
         LoadControls(settings.Current.Settings);
         BuildHotkeys();
         tabs.SelectedIndex = reconfigure is null ? 0 : 6;
@@ -86,13 +103,37 @@ public class SettingsForm : Form
             _hotkeys.Focus();
             StartRecording(item.Value);
         };
-        _voice.Items.Add("自动检测（推荐）");
-        foreach (var voice in tts.GetAvailableVoices()) _voice.Items.Add($"{voice.Name}（{voice.Culture}）");
-        _voice.SelectedIndex = 0;
         _backend.Text = "朗读后端：" + tts.ActiveBackendName + "（自动检测）";
     }
 
     internal bool IsRecordingHotkey => _recording is not null;
+
+    /// <summary>
+    /// Every row carries the native voice identifier behind its display text, so 朗读声音 stores the value
+    /// that the speech backend can resolve and selects the same row again when the window is reopened.
+    /// The first row means "let the backend choose" and stores no identifier.
+    /// </summary>
+    private void PopulateVoices()
+    {
+        _voice.Items.Add(new ObjectBox<VoiceInfo>("自动检测（推荐）", new VoiceInfo()));
+        foreach (var voice in _tts.GetAvailableVoices())
+            _voice.Items.Add(new ObjectBox<VoiceInfo>(voice.Name + "（" + voice.Culture + "）", voice));
+    }
+
+    private string SelectedVoiceId() =>
+        _voice.SelectedItem is ObjectBox<VoiceInfo> box ? box.Value.Id : string.Empty;
+
+    private int VoiceIndexOf(string? voiceId)
+    {
+        if (string.IsNullOrWhiteSpace(voiceId)) return 0;
+        for (var index = 1; index < _voice.Items.Count; index++)
+        {
+            if (_voice.Items[index] is ObjectBox<VoiceInfo> box
+                && string.Equals(box.Value.Id, voiceId, StringComparison.Ordinal)) return index;
+        }
+
+        return 0;
+    }
 
     private TabPage CreateGeneral()
     {
@@ -103,10 +144,17 @@ public class SettingsForm : Form
         WinFormsUi.Name(browse, "浏览第三方播放器", 4);
         caption.SetBounds(12, 18, 0, 0);
         _closeBehavior.SetBounds(100, 14, 180, 24);
+        WinFormsUi.Name(_playerPath, "第三方播放器路径", 2);
         playerCaption.SetBounds(12, 55, 0, 0);
         _playerPath.SetBounds(12, 75, 560, 24);
         browse.SetBounds(580, 74, 80, 26);
-        _playerPath.LostFocus += (_, _) => CommitPath(settings => settings.ThirdPartyPlayerPath = _playerPath.Text.Trim());
+        _playerPath.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            CommitPath(settings => settings.ThirdPartyPlayerPath = _playerPath.Text.Trim());
+        };
         browse.Click += (_, _) => BrowsePath(_playerPath, "选择第三方播放器", "程序|*.exe|所有文件|*.*", settings => settings.ThirdPartyPlayerPath = _playerPath.Text.Trim());
         page.Controls.AddRange(new Control[] { caption, _closeBehavior, playerCaption, _playerPath, browse });
         _closeBehavior.SelectedIndexChanged += (_, _) => Apply(settings => settings.HideToTrayOnAltF4 = _closeBehavior.SelectedIndex == 1);
@@ -148,6 +196,9 @@ public class SettingsForm : Form
         var browse = new Button { Text = "浏览", Width = 80 };
         WinFormsUi.Name(browse, "浏览下载目录", 3);
         var qualityCaption = WinFormsUi.Caption("默认下载音质：", 4);
+        WinFormsUi.Name(_downloadPath, "下载目录", 2);
+        WinFormsUi.Name(_downloadLyric, "同时下载歌词", 8);
+        WinFormsUi.Name(_nameQuality, "文件名包含音质", 9);
         pathCaption.SetBounds(12, 18, 0, 0);
         _downloadPath.SetBounds(12, 38, 560, 24);
         browse.SetBounds(580, 37, 80, 26);
@@ -166,7 +217,13 @@ public class SettingsForm : Form
             _downloadPath.Text = dialog.SelectedPath;
             if (Apply(settings => settings.DownloadPath = dialog.SelectedPath)) Announce("下载目录已设置为 " + dialog.SelectedPath, "settings", AnnouncementKind.Success);
         };
-        _downloadPath.LostFocus += (_, _) => Apply(settings => settings.DownloadPath = _downloadPath.Text.Trim());
+        _downloadPath.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            CommitDownloadPath();
+        };
         _downloadQuality.SelectedIndexChanged += (_, _) => Apply(settings => settings.DefaultDownloadQuality = QualityId(_downloadQuality.Text, "128k"));
         _downloadLyric.CheckedChanged += (_, _) => Apply(settings => settings.DownloadLyric = _downloadLyric.Checked);
         _nameQuality.CheckedChanged += (_, _) => Apply(settings => settings.DownloadNameIncludeQuality = _nameQuality.Checked);
@@ -182,6 +239,7 @@ public class SettingsForm : Form
         WinFormsUi.Name(browse, "更改数据目录", 2);
         var clear = new Button { Text = "清理缓存", Width = 100 };
         WinFormsUi.Name(clear, "清理缓存", 3);
+        WinFormsUi.Name(_dataDir, "数据目录", 1);
         caption.SetBounds(12, 18, 0, 0);
         _dataDir.SetBounds(12, 38, 560, 24);
         browse.SetBounds(580, 37, 80, 26);
@@ -216,14 +274,48 @@ public class SettingsForm : Form
         _voice.SetBounds(90, 74, 250, 24);
         rateCaption.SetBounds(12, 112, 0, 0);
         _rate.SetBounds(90, 108, 120, 24);
-        page.Controls.AddRange(new Control[] { _voiceEnabled, _backend, voiceCaption, _voice, rateCaption, _rate });
+        WinFormsUi.Name(_announcePlaybackState, "播放状态", 15);
+        _announcePlaybackState.Name = "AnnouncePlaybackState";
+        WinFormsUi.Name(_announceTrackChange, "切歌播报", 16);
+        _announceTrackChange.Name = "AnnounceTrackChange";
+        WinFormsUi.Name(_announceVolume, "音量变化", 17);
+        _announceVolume.Name = "AnnounceVolume";
+        WinFormsUi.Name(_announceSeek, "快进快退位置", 18);
+        _announceSeek.Name = "AnnounceSeek";
+        WinFormsUi.Name(_announceWindowVisibility, "窗口显隐", 19);
+        _announceWindowVisibility.Name = "AnnounceWindowVisibility";
+        WinFormsUi.Name(_announcePlaybackMode, "播放模式", 20);
+        _announcePlaybackMode.Name = "AnnouncePlaybackMode";
+        WinFormsUi.Name(_announceAudioDevice, "播放设备", 21);
+        _announceAudioDevice.Name = "AnnounceAudioDevice";
+        _speechScope.SetBounds(12, 140, 520, 150);
+        _announcePlaybackState.SetBounds(15, 25, 230, 24);
+        _announceTrackChange.SetBounds(265, 25, 230, 24);
+        _announceVolume.SetBounds(15, 55, 230, 24);
+        _announceSeek.SetBounds(265, 55, 230, 24);
+        _announceWindowVisibility.SetBounds(15, 85, 230, 24);
+        _announcePlaybackMode.SetBounds(265, 85, 230, 24);
+        _announceAudioDevice.SetBounds(15, 115, 230, 24);
+        _speechScope.Controls.AddRange(new Control[]
+        {
+            _announcePlaybackState, _announceTrackChange, _announceVolume, _announceSeek,
+            _announceWindowVisibility, _announcePlaybackMode, _announceAudioDevice
+        });
+        page.Controls.AddRange(new Control[] { _voiceEnabled, _backend, voiceCaption, _voice, rateCaption, _rate, _speechScope });
         _voiceEnabled.CheckedChanged += (_, _) =>
         {
             if (Apply(settings => settings.EnableVoiceAnnouncement = _voiceEnabled.Checked))
                 Announce(_voiceEnabled.Checked ? "已开启语音朗读提示" : "已关闭语音朗读提示", "settings", AnnouncementKind.Status, AnnouncementSpeech.Always);
         };
-        _voice.SelectedIndexChanged += (_, _) => Apply(settings => settings.AccessibilitySettings.AnnouncementVoiceId = _voice.SelectedIndex == 0 ? string.Empty : _voice.Text);
+        _voice.SelectedIndexChanged += (_, _) => Apply(settings => settings.AccessibilitySettings.AnnouncementVoiceId = SelectedVoiceId());
         _rate.SelectedIndexChanged += (_, _) => { if (double.TryParse(_rate.Text, NumberStyles.Number, CultureInfo.InvariantCulture, out var rate)) Apply(settings => settings.AccessibilitySettings.AnnouncementRate = rate); };
+        _announcePlaybackState.CheckedChanged += (_, _) => Apply(settings => settings.AccessibilitySettings.AnnouncePlaybackState = _announcePlaybackState.Checked);
+        _announceTrackChange.CheckedChanged += (_, _) => Apply(settings => settings.AccessibilitySettings.AnnounceTrackChange = _announceTrackChange.Checked);
+        _announceVolume.CheckedChanged += (_, _) => Apply(settings => settings.AccessibilitySettings.AnnounceVolume = _announceVolume.Checked);
+        _announceSeek.CheckedChanged += (_, _) => Apply(settings => settings.AccessibilitySettings.AnnounceSeek = _announceSeek.Checked);
+        _announceWindowVisibility.CheckedChanged += (_, _) => Apply(settings => settings.AccessibilitySettings.AnnounceWindowVisibility = _announceWindowVisibility.Checked);
+        _announcePlaybackMode.CheckedChanged += (_, _) => Apply(settings => settings.AccessibilitySettings.AnnouncePlaybackMode = _announcePlaybackMode.Checked);
+        _announceAudioDevice.CheckedChanged += (_, _) => Apply(settings => settings.AccessibilitySettings.AnnounceAudioDevice = _announceAudioDevice.Checked);
         return page;
     }
 
@@ -267,6 +359,14 @@ public class SettingsForm : Form
         _dataDir.Text = _settings.DataDirectory;
         _voiceEnabled.Checked = settings.EnableVoiceAnnouncement;
         _rate.Text = settings.AccessibilitySettings.AnnouncementRate.ToString("0.##", CultureInfo.InvariantCulture);
+        _voice.SelectedIndex = VoiceIndexOf(settings.AccessibilitySettings.AnnouncementVoiceId);
+        _announcePlaybackState.Checked = settings.AccessibilitySettings.AnnouncePlaybackState;
+        _announceTrackChange.Checked = settings.AccessibilitySettings.AnnounceTrackChange;
+        _announceVolume.Checked = settings.AccessibilitySettings.AnnounceVolume;
+        _announceSeek.Checked = settings.AccessibilitySettings.AnnounceSeek;
+        _announceWindowVisibility.Checked = settings.AccessibilitySettings.AnnounceWindowVisibility;
+        _announcePlaybackMode.Checked = settings.AccessibilitySettings.AnnouncePlaybackMode;
+        _announceAudioDevice.Checked = settings.AccessibilitySettings.AnnounceAudioDevice;
     }
 
     private static int QualityIndex(string? quality) => quality switch
@@ -296,15 +396,45 @@ public class SettingsForm : Form
         return false;
     }
 
-    private void CommitPath(Action<UserSettings> edit)
+    private void CommitPath(Action<UserSettings> edit, bool returnFocusOnError = true)
     {
         if (_loading) return;
         var result = _settings.Edit(edit);
         if (!result.Accepted)
         {
-            _playerPath.Focus();
+            if (returnFocusOnError) _playerPath.Focus();
             Announce(string.Join(" ", result.Errors), "settings", AnnouncementKind.Error);
+            return;
         }
+        var committed = _playerPath.Text.Trim();
+        Announce(committed.Length == 0
+            ? "第三方播放器路径已清空"
+            : "第三方播放器路径已保存：" + committed, "settings", AnnouncementKind.Success);
+    }
+
+    private void CommitDownloadPath()
+    {
+        if (!Apply(settings => settings.DownloadPath = _downloadPath.Text.Trim())) return;
+        var committed = _downloadPath.Text.Trim();
+        Announce(committed.Length == 0
+            ? "下载目录已清空"
+            : "下载目录已设置为 " + committed, "settings", AnnouncementKind.Success);
+    }
+
+    /// <summary>
+    /// A typed path only becomes a setting through an explicit command: Enter in the box, picking a file in
+    /// the browse dialog, or closing the window. Moving focus away from a text box must not run work, so
+    /// tabbing past the box no longer writes a half-finished value, and a path that was typed but never
+    /// confirmed is still collected when the window closes instead of being silently lost.
+    /// </summary>
+    private void CommitTypedPaths()
+    {
+        var playerPath = _playerPath.Text.Trim();
+        if (!string.Equals(playerPath, _settings.Current.Settings.ThirdPartyPlayerPath ?? string.Empty, StringComparison.Ordinal))
+            CommitPath(settings => settings.ThirdPartyPlayerPath = playerPath, returnFocusOnError: false);
+        var downloadPath = _downloadPath.Text.Trim();
+        if (!string.Equals(downloadPath, _settings.Current.Settings.DownloadPath ?? string.Empty, StringComparison.Ordinal))
+            CommitDownloadPath();
     }
 
     private void BrowsePath(TextBox target, string title, string filter, Action<UserSettings> edit)
@@ -430,6 +560,7 @@ public class SettingsForm : Form
     protected override async void OnFormClosing(FormClosingEventArgs e)
     {
         base.OnFormClosing(e);
+        CommitTypedPaths();
         var result = await _settings.SaveAsync(_settings.Current);
         if (!result.Succeeded) Announce("设置保存失败，将在应用退出时重试", "settings", AnnouncementKind.Error);
     }

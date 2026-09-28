@@ -137,6 +137,9 @@ public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer
 
     public bool SpeechEnabled { get; set; } = true;
 
+    /// <summary>语音朗读范围；空值按默认范围处理，不影响主开关。</summary>
+    public AccessibilitySettings? SpeechScope { get; set; }
+
     public void Attach(Control liveRegion) => _liveRegion = liveRegion;
 
     public void Announce(AccessibleAnnouncement announcement)
@@ -175,7 +178,7 @@ public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer
     private bool ShouldSpeak(AccessibleAnnouncement announcement) =>
         _speech?.IsAvailable == true
         && (SpeechEnabled || announcement.Speech == AnnouncementSpeech.Always)
-        && AccessibleSpeechPolicy.ShouldSpeak(announcement);
+        && AccessibleSpeechPolicy.ShouldSpeak(announcement, SpeechScope ?? new AccessibilitySettings());
 
     private async Task SpeakAsync(AccessibleAnnouncement announcement)
     {

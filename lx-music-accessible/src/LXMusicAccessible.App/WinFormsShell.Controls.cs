@@ -22,6 +22,7 @@ public sealed class WinFormsShellServices
     public LyricsWorkflow? Lyrics { get; init; }
     public IDownloadWorkflow? Downloads { get; init; }
     public SettingsWorkflow? Settings { get; init; }
+    public ITtsService? Tts { get; init; }
     public IMusicSourceService? Sources { get; init; }
     public IManualSourceDiscoveryWorkflow? ManualSources { get; init; }
     public ApplicationWindowFactory? Windows { get; init; }
@@ -41,8 +42,11 @@ public partial class WinFormsShell : Form
     private List<MusicInfo> _rankingSongs = new();
     private List<MusicInfo> _favoriteSongs = new();
     private PlayMode _playMode = PlayMode.Sequential;
+    private double? _appliedAnnouncementRate;
+    private string? _appliedAnnouncementVoiceId;
     private MusicInfo? _current;
     private bool _searchLoading;
+    private bool _pageLoadRequested;
     private bool _categoryPlaylistsLoading;
     private int _categoryPlaylistsRevision;
     private bool _categorySongsLoading;
@@ -71,11 +75,8 @@ public partial class WinFormsShell : Form
     protected ListBox RankingSongs;
     protected Label StatusText;
     protected Label PlaybackInfoText;
-    protected Label CurrentTitle;
-    protected Label CurrentArtist;
-    protected Label CurrentAlbum;
-    protected Label CurrentPlayModeText;
-    protected Label PositionText;
+    protected MenuItem VoiceAnnouncementItem;
+    protected MenuItem LyricAnnouncementItem;
     protected Label LiveRegion;
     protected Button CategorySongsLoadMore;
     protected Button SearchLoadMore;
@@ -104,12 +105,15 @@ public partial class WinFormsShell : Form
         var menu = BuildMenu();
         Menu = menu;
 
-        var status = new StatusBar { TabStop = false, TabIndex = 900, ShowPanels = false };
-        StatusText = new Label { Text = "正在初始化...", AutoSize = true, TabStop = false, TabIndex = 901 };
+        // StatusBarPanel text is painted, never exposed: a StatusBar accessible object reports no children,
+        // so the status, now-playing and clock text live in real child labels a screen reader can reach.
+        // Their Text is the accessible name, which is why no fixed AccessibleName is set on them.
+        var status = new StatusBar { TabStop = false, TabIndex = 900, ShowPanels = false, AccessibleName = "应用状态" };
+        StatusText = new Label { Text = "正在初始化...", AutoSize = true, TabStop = false, TabIndex = 901, Name = "StatusText" };
         status.Controls.Add(StatusText);
-        PlaybackInfoText = new Label { Text = "未播放", AutoSize = true, TabStop = false, TabIndex = 902, AccessibleName = "播放信息", Left = 280 };
+        PlaybackInfoText = new Label { Text = "未播放", AutoSize = true, TabStop = false, TabIndex = 902, Name = "PlaybackInfo", Left = 280 };
         status.Controls.Add(PlaybackInfoText);
-        var timeLabel = new Label { Text = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture), AutoSize = true, TabStop = false, TabIndex = 903, AccessibleName = "当前时间", Left = 900 };
+        var timeLabel = new Label { Text = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture), AutoSize = true, TabStop = false, TabIndex = 903, Name = "ClockText", Left = 900 };
         status.Controls.Add(timeLabel);
         var statusTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         statusTimer.Tick += (_, _) => timeLabel.Text = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
@@ -120,30 +124,48 @@ public partial class WinFormsShell : Form
         MainTabs.Controls.Add(CreatePlaylistPage());
         MainTabs.Controls.Add(CreateCategoryPage());
         MainTabs.Controls.Add(CreateRankingPage());
+        // Page content is filled in lazily, but only for a page the user opened with a navigation
+        // command: the 导航 menu, Ctrl+1 to Ctrl+4, Ctrl+Up/Down, the Alt page keys or Ctrl+R.
+        // Arrow keys and Ctrl+Tab on the tab headers are pure focus movement and must not start a
+        // network request, a history load or an announcement.
         MainTabs.SelectedIndexChanged += (_, _) =>
         {
-            if (MainTabs.SelectedIndex == 1 && services.SavedPlaylists is not null && FavoriteSongs.Items.Count == 0)
-                _ = RunAsync(() => services.SavedPlaylists.LoadAsync(), result => RenderSaved(result.Snapshot, result.Message), "刷新播放列表");
-            else if (MainTabs.SelectedIndex == 2 && CategoryList.Items.Count == 0)
-                LoadCategories();
-            else if (MainTabs.SelectedIndex == 3 && RankingList.Items.Count == 0)
-                LoadRankings();
+            if (_pageLoadRequested) LoadTabPageContent(MainTabs.SelectedIndex);
         };
 
         CreatePlaybackState();
 
-        LiveRegion = new Label { Text = string.Empty, Size = new Size(1, 1), TabStop = false, TabIndex = 999 };
+        // The mirror of every announcement has to be a line a reader can actually reach. A 1x1 label is
+        // never rendered, so Narrator's scan mode, JAWS review and a magnifier user all skip it and the
+        // sentence exists only as speech: with 语音播报 turned off, no status message was perceivable at
+        // all. This is a real bottom row that carries the same text the reader speaks.
+        LiveRegion = new Label
+        {
+            Name = "AnnouncementRegion",
+            Text = string.Empty,
+            AutoSize = false,
+            Dock = DockStyle.Bottom,
+            Height = 22,
+            TextAlign = ContentAlignment.MiddleLeft,
+            TabStop = false,
+            TabIndex = 999
+        };
+        // Docking is resolved from the last control added back to the first, so the status bar keeps the
+        // bottom edge, the announcement line sits directly above it and the pages fill the rest.
         Controls.Add(MainTabs);
-        Controls.Add(status);
         Controls.Add(LiveRegion);
+        Controls.Add(status);
         if (services.Announcer is WinFormsAccessibleAnnouncer native) native.Attach(LiveRegion);
         AssignSongContextMenu(SearchResults);
         AssignSongContextMenu(FavoriteSongs);
         AssignSongContextMenu(CategorySongs);
         AssignSongContextMenu(RankingSongs);
         HookEvents();
+        // Settings load before the shell is composed, so the persisted voice preference, play mode,
+        // lyric announcement and download options apply at startup instead of waiting for a change.
+        ApplySettings();
         StatusText.Text = "就绪";
-        Announce("欢迎使用落雪音乐无障碍版", "welcome");
+        Announce("欢迎使用落雪音乐无障碍版", "welcome", speech: AnnouncementSpeech.None);
         _ = _browse.LoadSearchHistoryAsync();
     }
 
@@ -158,13 +180,16 @@ public partial class WinFormsShell : Form
     private MainMenu BuildMenu()
     {
         var menu = new MainMenu();
-        var file = new MenuItem("&文件");
-        file.MenuItems.Add(new MenuItem("隐藏/显示窗口(&H)", (_, _) => ToggleVisibility(), Shortcut.CtrlH));
+        var file = new MenuItem("文件(&F)");
+        // Ctrl+H is the standard "delete previous character" key of every Windows edit control, so the
+        // command keeps its place in the menu and its access key, but the accelerator is not taken: the
+        // documented global binding for this action is Ctrl+Alt+H, shown here so it stays discoverable.
+        file.MenuItems.Add(new MenuItem("隐藏/显示窗口（Ctrl+Alt+H）(&H)", (_, _) => ToggleVisibility()));
         file.MenuItems.Add(new MenuItem("打开本地文件(&O)", (_, _) => OpenLocalFile()));
         file.MenuItems.Add(new MenuItem("打开下载目录(&D)", (_, _) => _services.Downloads?.OpenDownloadDirectory()));
         file.MenuItems.Add(new MenuItem("-"));
         file.MenuItems.Add(new MenuItem("退出(&X)", (_, _) => _ = RequestExit(), Shortcut.CtrlQ));
-        var play = new MenuItem("&播放");
+        var play = new MenuItem("播放(&B)");
         play.MenuItems.Add(new MenuItem("播放/暂停(&P)", (_, _) => TogglePlayback()));
         play.MenuItems.Add(new MenuItem("停止(&S)", (_, _) => StopPlayback(), Shortcut.F6));
         play.MenuItems.Add(new MenuItem("上一首(&V)", (_, _) => _ = MovePlayback(true), Shortcut.F3));
@@ -173,30 +198,34 @@ public partial class WinFormsShell : Form
         play.MenuItems.Add(new MenuItem("快退十秒(&R)", (_, _) => Seek(-10), Shortcut.F7));
         play.MenuItems.Add(new MenuItem("快进十秒(&F)", (_, _) => Seek(10), Shortcut.F8));
         play.MenuItems.Add(new MenuItem("音量减(&L)", (_, _) => ChangeVolume(-VolumeStep), Shortcut.F9));
-        play.MenuItems.Add(new MenuItem("音量加(&G)", (_, _) => ChangeVolume(VolumeStep)));
+        // F10 is not bound as a MenuItem shortcut: that accelerator is resolved through the configurable hotkey
+        // table and must stay free for the classic menu key, so the default key is named in the text instead.
+        play.MenuItems.Add(new MenuItem("音量加（默认 F10）(&G)", (_, _) => ChangeVolume(VolumeStep)));
         play.MenuItems.Add(new MenuItem("上一个播放设备(&E)", (_, _) => SwitchDevice(-1), Shortcut.F11));
         play.MenuItems.Add(new MenuItem("下一个播放设备(&X)", (_, _) => SwitchDevice(1), Shortcut.F12));
         play.MenuItems.Add(new MenuItem("切换播放模式(&M)", (_, _) => TogglePlayMode(), Shortcut.F1));
         play.MenuItems.Add(new MenuItem("下载当前歌曲(&W)", (_, _) => DownloadSelected(), Shortcut.F2));
-        var navigate = new MenuItem("&导航");
+        var navigate = new MenuItem("导航(&D)");
         navigate.MenuItems.Add(new MenuItem("搜索(&1)", (_, _) => SelectTab(0), Shortcut.Ctrl1));
         navigate.MenuItems.Add(new MenuItem("播放列表(&2)", (_, _) => SelectTab(1), Shortcut.Ctrl2));
         navigate.MenuItems.Add(new MenuItem("分类歌单(&3)", (_, _) => SelectTab(2), Shortcut.Ctrl3));
         navigate.MenuItems.Add(new MenuItem("排行榜(&4)", (_, _) => SelectTab(3), Shortcut.Ctrl4));
         navigate.MenuItems.Add(new MenuItem("歌词(&Y)", (_, _) => OpenLyrics()));
-        var tools = new MenuItem("&工具");
+        var tools = new MenuItem("工具(&T)");
         tools.MenuItems.Add(new MenuItem("下载管理(&D)", (_, _) => OpenTool(() => _services.Windows?.CreateDownloadManager(this, HandleHotkey)), Shortcut.Ctrl5));
         tools.MenuItems.Add(new MenuItem("导入个人歌单(&I)", (_, _) => OpenTool(() => _services.Windows?.CreatePlaylistImport(this, HandleHotkey, AttachSongList, DetachSongList)), Shortcut.Ctrl6));
         tools.MenuItems.Add(new MenuItem("音源管理(&M)", (_, _) => OpenTool(() => _services.Windows?.CreateSourceManager(this, HandleHotkey)), Shortcut.Ctrl7));
         tools.MenuItems.Add(new MenuItem("设置(&S)", (_, _) => ShowSettings(null), Shortcut.Ctrl8));
         tools.MenuItems.Add(new MenuItem("-"));
-        tools.MenuItems.Add(new MenuItem("切换语音播报(&V)", (_, _) => _services.Announcements?.ToggleVoiceAnnouncement()));
-        tools.MenuItems.Add(new MenuItem("切换歌词播报(&L)", (_, _) => _services.Announcements?.ToggleLyricAnnouncement()));
+        VoiceAnnouncementItem = new MenuItem("语音播报(&V)", (_, _) => _services.Announcements?.ToggleVoiceAnnouncement());
+        LyricAnnouncementItem = new MenuItem("歌词播报(&L)", (_, _) => _services.Announcements?.ToggleLyricAnnouncement());
+        tools.MenuItems.Add(VoiceAnnouncementItem);
+        tools.MenuItems.Add(LyricAnnouncementItem);
         tools.MenuItems.Add(new MenuItem("歌词延后(&J)", (_, _) => _services.Lyrics?.AdjustOffset(500)));
         tools.MenuItems.Add(new MenuItem("歌词提前(&K)", (_, _) => _services.Lyrics?.AdjustOffset(-500)));
         tools.MenuItems.Add(new MenuItem("切换音源(&C)", (_, _) => OpenManualSource()));
-        var help = new MenuItem("&帮助");
-        help.MenuItems.Add(new MenuItem("使用说明(&G)", (_, _) => _services.Windows?.CreateUserGuide(this).Show()));
+        var help = new MenuItem("帮助(&H)");
+        help.MenuItems.Add(new MenuItem("使用说明(&G)", (_, _) => OpenUserGuide()));
         help.MenuItems.Add(new MenuItem("赞助(&Z)", (_, _) => _services.Windows?.CreateSponsor(this).ShowDialog(this)));
         help.MenuItems.Add(new MenuItem("关于(&A)", (_, _) => MessageBox.Show(this, "落雪音乐无障碍版 3.0\n专为盲人用户优化的音乐播放器。", "关于", MessageBoxButtons.OK, MessageBoxIcon.Information)));
         foreach (var item in new[] { file, play, navigate, tools, help })
@@ -222,9 +251,7 @@ public partial class WinFormsShell : Form
         WinFormsUi.Name(SearchClearButton, "清空搜索", 7);
         SearchResults = WinFormsUi.ListBox("SearchResults", "搜索结果", 8);
         SearchResults.Size = new Size(830, 450);
-        var previous = new Button { Text = "上一页", Width = 80, TabStop = false, TabIndex = 9 };
         SearchLoadMore = new Button { Text = "加载更多歌曲", Width = 150, TabStop = false, TabIndex = 10, Name = "SearchLoadMore", AccessibleName = "加载更多搜索歌曲", Enabled = false };
-        var pageInfo = new Label { Text = "第 1 页", AutoSize = true, TabStop = false, TabIndex = 11, AccessibleName = "搜索页码" };
         sourceLabel.SetBounds(10, 14, 0, 0);
         SearchSource.SetBounds(65, 10, 150, 24);
         typeLabel.SetBounds(225, 14, 0, 0);
@@ -233,10 +260,8 @@ public partial class WinFormsShell : Form
         SearchButton.SetBounds(320, 43, 90, 26);
         SearchClearButton.SetBounds(420, 43, 80, 26);
         SearchResults.SetBounds(10, 78, 830, 450);
-        previous.Visible = false;
-        pageInfo.Visible = false;
         SearchLoadMore.SetBounds(340, 536, 160, 26);
-        page.Controls.AddRange(new Control[] { sourceLabel, SearchSource, typeLabel, SearchType, SearchText, SearchButton, SearchClearButton, SearchResults, previous, pageInfo, SearchLoadMore });
+        page.Controls.AddRange(new Control[] { sourceLabel, SearchSource, typeLabel, SearchType, SearchText, SearchButton, SearchClearButton, SearchResults, SearchLoadMore });
         SearchButton.Click += (_, _) => _ = SearchAsync(true);
         SearchClearButton.Click += (_, _) => ClearSearch();
         SearchText.KeyDown += (_, e) =>
@@ -294,7 +319,6 @@ public partial class WinFormsShell : Form
                 TogglePlayback();
             }
         };
-        previous.Click += (_, _) => Announce("已到第一页", "search-page");
         SearchLoadMore.Click += (_, _) => _ = SearchAsync(false);
         return page;
     }
@@ -302,7 +326,7 @@ public partial class WinFormsShell : Form
     private TabPage CreatePlaylistPage()
     {
         var page = new TabPage("播放列表") { AccessibleName = "播放列表", Padding = new Padding(10) };
-        OnlinePlaylists = WinFormsUi.ListBox("OnlinePlaylists", "播放列表", 2);
+        OnlinePlaylists = WinFormsUi.ListBox("OnlinePlaylists", "我的歌单", 2);
         FavoriteSongs = WinFormsUi.ListBox("FavoriteSongs", "收藏歌曲", 3);
         var newButton = CreateButton("新建歌单", 4, (_, _) => _ = ManagePlaylistAsync("新建歌单名称", name => _services.SavedPlaylists!.CreateAsync(name!)));
         var renameButton = CreateButton("重命名歌单", 5, (_, _) => _ = ManagePlaylistAsync("重命名歌单", name => _services.SavedPlaylists!.RenameSelectedAsync(name!)));
@@ -352,15 +376,10 @@ public partial class WinFormsShell : Form
         CategoryPlaylists = WinFormsUi.ListBox("CategoryPlaylists", "歌单", 5);
         CategorySongs = WinFormsUi.ListBox("CategorySongs", "分类歌曲", 6);
 
-        var playlistPrevious = CreateButton("上一页", 20, (_, _) => LoadCategoryPlaylists(GetCurrentCategoryPage() - 1));
-        var playlistNext = CreateButton("下一页", 21, (_, _) => LoadCategoryPlaylists(GetCurrentCategoryPage() + 1));
-        var playlistPage = new Label { Text = "第 1 页", AutoSize = true, TabStop = false };
-        WinFormsUi.Name(playlistPage, "CategoryPlaylistPage", 22, false);
-        playlistPrevious.Name = playlistPrevious.AccessibleName = "CategoryPlaylistPreviousPage";
-        playlistNext.Name = playlistNext.AccessibleName = "CategoryPlaylistNextPage";
-        playlistPrevious.TabStop = playlistNext.TabStop = false;
-        playlistPrevious.TabIndex = 20; playlistNext.TabIndex = 21;
-        playlistPrevious.Visible = playlistNext.Visible = playlistPage.Visible = false;
+        // Category playlists are paged by appending through the load-more command below. The earlier
+        // first/previous/next page buttons and the page indicator were permanently hidden, so a screen
+        // reader could never reach them; they are gone rather than renamed because they are not part of
+        // the interface at all.
 
         CategoryPlaylistsLoadMore = CreateButton("加载更多歌单", 21, (_, _) => _ = LoadCategoryPlaylistsAsync(GetCurrentCategoryPage() + 1, append: true));
         CategoryPlaylistsLoadMore.Name = "CategoryPlaylistsLoadMore";
@@ -377,9 +396,6 @@ public partial class WinFormsShell : Form
         sourceLabel.SetBounds(10, 14, 0, 0);
         CategorySource.SetBounds(60, 10, 150, 24);
         refresh.SetBounds(220, 9, 80, 26);
-        playlistPrevious.SetBounds(310, 9, 70, 26);
-        playlistNext.SetBounds(385, 9, 70, 26);
-        playlistPage.SetBounds(460, 13, 80, 20);
         CategoryPlaylistsLoadMore.SetBounds(310, 9, 140, 26);
         CategoryList.SetBounds(10, 44, 175, 500);
         CategoryPlaylists.SetBounds(195, 44, 250, 500);
@@ -387,7 +403,7 @@ public partial class WinFormsShell : Form
         CategorySongsLoadMore.SetBounds(455, 550, 160, 26);
         page.Controls.AddRange(new Control[]
         {
-            sourceLabel, CategorySource, refresh, playlistPrevious, playlistNext, playlistPage,
+            sourceLabel, CategorySource, refresh,
             CategoryPlaylistsLoadMore, CategorySongsLoadMore, CategoryList, CategoryPlaylists, CategorySongs
         });
         CategoryList.KeyDown += async (_, e) =>
@@ -422,6 +438,9 @@ public partial class WinFormsShell : Form
     internal IAccessibleAnnouncer AnnouncerForTests => _announcer;
     internal Label StatusTextForTests => StatusText;
     internal Label PlaybackInfoForTests => PlaybackInfoText;
+    internal Label LiveRegionForTests => LiveRegion;
+    internal MenuItem VoiceAnnouncementItemForTests => VoiceAnnouncementItem;
+    internal MenuItem LyricAnnouncementItemForTests => LyricAnnouncementItem;
     internal void SelectTabForTests(int index) => SelectTab(index);
     internal void LoadCategoryPlaylistsForTests() => LoadCategoryPlaylists();
     internal Task LoadMoreCategoryPlaylistsForTests() => LoadCategoryPlaylistsAsync(GetCurrentCategoryPage() + 1, append: true);
@@ -479,13 +498,13 @@ public partial class WinFormsShell : Form
         return page;
     }
 
+    /// <summary>
+    /// Keeps the status bar's now-playing text in step with the audio clock. There used to be five more
+    /// playback labels here, but they were never added to the form, so every write to them was invisible
+    /// to users and to assistive technology; the status bar label below is the single source of truth.
+    /// </summary>
     private void CreatePlaybackState()
     {
-        CurrentTitle = new Label { Text = "未播放", Visible = false, TabStop = false };
-        CurrentArtist = new Label { Visible = false, TabStop = false };
-        CurrentAlbum = new Label { Visible = false, TabStop = false };
-        CurrentPlayModeText = new Label { Text = "播放模式：顺序播放", Visible = false, TabStop = false };
-        PositionText = new Label { Text = "00:00 / 00:00", Visible = false, TabStop = false };
         var positionTimer = new System.Windows.Forms.Timer { Interval = 500 };
         positionTimer.Tick += (_, _) => RefreshPlaybackStatus();
         positionTimer.Start();
@@ -534,21 +553,49 @@ public partial class WinFormsShell : Form
             : value.ToString(@"mm\:ss", CultureInfo.InvariantCulture);
     }
 
+    /// <summary>Translates the source-level quality number carried by MusicInfo.</summary>
+    protected static string TranslateQualityLevel(int quality) => quality switch
+    {
+        >= 999 => "无损",
+        >= 320 => "极高",
+        >= 192 => "较高",
+        >= 128 => "标准",
+        _ => "未知"
+    };
+
+    /// <summary>
+    /// Actual stream quality is preferred because it describes the media that is really decoding. If BASS
+    /// cannot report it (for example before the codec exposes bitrate), fall back to the source metadata
+    /// instead of showing 未知 while a known-quality song is active.
+    /// </summary>
+    protected string PlaybackQualityText(MusicInfo? music)
+    {
+        if (music is null) return "未知";
+        var actual = _services.Audio?.ActualQuality;
+        return string.IsNullOrWhiteSpace(actual)
+            ? TranslateQualityLevel(music.Quality)
+            : TranslateQuality(actual);
+    }
+
+    private string BuildPlaybackStatusText()
+    {
+        if (_current is null) return "未播放";
+        var text = $"{_current.Artist} - {_current.Title}，音质：{PlaybackQualityText(_current)}";
+        if (_services.Playback?.IsPlaying == true && _services.Audio is not null)
+        {
+            text += $"，总时长 {FormatTime(_services.Audio.Duration)}，当前位置 {FormatTime(_services.Audio.Position)}";
+        }
+        return text;
+    }
+
     protected void RefreshPlaybackStatus()
     {
-        if (_services.Audio is null)
+        if (_services.Audio is not null)
         {
-            PlaybackInfoText.Text = _current is null ? "未播放" : $"{_current.Artist} - {_current.Title}";
-            return;
+            try { _services.Audio.SyncVolumeFromDevice(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex.GetType().Name); }
         }
-        try { _services.Audio.SyncVolumeFromDevice(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex.GetType().Name); }
-        PositionText.Text = $"{FormatTime(_services.Audio.Position)} / {FormatTime(_services.Audio.Duration)}";
-        if (!_services.Playback?.IsPlaying == true)
-        {
-            PlaybackInfoText.Text = _current is null ? "未播放" : $"{_current.Artist} - {_current.Title}";
-            return;
-        }
-        PlaybackInfoText.Text = $"{_current?.Artist} - {_current?.Title}，{TranslateQuality(_services.Audio.ActualQuality)}，总时长 {FormatTime(_services.Audio.Duration)}，当前位置 {FormatTime(_services.Audio.Position)}";
+        PlaybackInfoText.Text = BuildPlaybackStatusText();
     }
 
     protected void ApplyHistory(SearchHistoryNavigation navigation)
@@ -594,11 +641,45 @@ public partial class WinFormsShell : Form
         if (_services.Settings is null) return;
         var settings = _services.Settings.Current.Settings;
         _playMode = settings.DefaultPlayMode ?? PlayMode.Sequential;
-        CurrentPlayModeText.Text = "播放模式：" + PlayModeName(_playMode);
         if (_services.Lyrics is not null)
             _services.Lyrics.ApplySettings(settings.LyricAutoAnnounce, settings.LyricAutoScroll, _services.Lyrics.GetOffsetsSnapshot());
         _announcer.SpeechEnabled = settings.EnableVoiceAnnouncement;
+        if (_announcer is WinFormsAccessibleAnnouncer nativeAnnouncer)
+            nativeAnnouncer.SpeechScope = settings.AccessibilitySettings;
+        // 朗读声音 and 朗读语速 are engine settings, so a stored preference only works when it is handed to
+        // the speech backend here: this runs once at startup and again for every change the user makes.
+        // Applying it is guarded by the last value, because this method also runs for unrelated settings
+        // changes and a native voice switch mid-sentence would be work the user never asked for.
+        if (_services.Tts is { IsAvailable: true } tts)
+        {
+            var rate = settings.AccessibilitySettings.AnnouncementRate;
+            if (_appliedAnnouncementRate != rate)
+            {
+                _appliedAnnouncementRate = rate;
+                tts.SetRate(rate);
+            }
+
+            var voiceId = settings.AccessibilitySettings.AnnouncementVoiceId;
+            if (!string.Equals(_appliedAnnouncementVoiceId, voiceId, StringComparison.Ordinal))
+            {
+                _appliedAnnouncementVoiceId = voiceId;
+                tts.SetVoice(voiceId);
+            }
+        }
         _services.Downloads?.ApplyPreferences(new(settings.DownloadLyric, settings.DownloadNameOrder, settings.DownloadNameIncludeQuality));
+        RefreshAnnouncementMenuChecks();
+    }
+
+    /// <summary>
+    /// The two announcement switches are states, not commands, so they carry a check mark. Screen
+    /// readers announce a checked menu item, which is the only way to read the current setting back.
+    /// </summary>
+    private void RefreshAnnouncementMenuChecks()
+    {
+        if (_services.Settings is null) return;
+        var settings = _services.Settings.Current.Settings;
+        if (VoiceAnnouncementItem is not null) VoiceAnnouncementItem.Checked = settings.EnableVoiceAnnouncement;
+        if (LyricAnnouncementItem is not null) LyricAnnouncementItem.Checked = settings.LyricAutoAnnounce;
     }
 
     protected static string PlayModeName(PlayMode mode) => mode switch

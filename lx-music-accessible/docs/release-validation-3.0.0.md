@@ -16,7 +16,7 @@
 - 诊断写入 `%LocalAppData%\LXMusicAccessible\setup\net48-diagnostics.txt`，记录时间、`installed`、required release、当前 release 和诊断摘要。
 - 网页登录需要 Microsoft Edge WebView2 Runtime。BASS/APE/FLAC/Opus、SQLite、ClearScript V8、Prism、Tolk、保益桥接和 WebView2 Loader 的 x64 原生库随应用分发；ClearScript V8 不可用时回退 Jint。
 - 数据默认路径继续为 `%LocalAppData%\lxmusic`；目录指针 schema 为 1，默认目录所有权记录继续使用 `.lxmusic-default-owner.json`。覆盖安装保留 SQLite（schema `user_version=1`）、设置、歌单、登录凭据、快捷键和可信音源。
-- 可执行文件名继续为 `落雪音乐无障碍版V2.0.exe` 以保留升级身份；其产品/文件版本和安装器注册表版本为 3.0.0。保留卸载会保留未知文件和用户数据；完全卸载只移除所有权清单允许的安装内容。
+- 可执行文件名为 `落雪音乐无障碍版V3.0.exe`；安装器会检测并关闭旧版 `落雪音乐无障碍版V2.0.exe`，升级后移除旧可执行文件。保留卸载会保留未知文件和用户数据；完全卸载只移除所有权清单允许的安装内容。
 
 ## LX 音源与官方平台
 
@@ -31,11 +31,11 @@ SHA-256 均为小写。`release-manifest.json` 记录 15 个载荷文件及以�
 
 | 产物 | 字节 | SHA-256 |
 | --- | ---: | --- |
-| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 22,006,165 | `23f494a79ce67409aab20d25fe41b221a9f22584c616123078e85f174c9b10d1` |
-| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 22,639,104 | `f873620b453092bfaeb54678fd54c7d2ba6208b5ee91ac8637ebb24773dd533c` |
+| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 22,045,362 | `789f80ba7d29850516410c40dfe79adcb6c4f2cb71d337c9cde591a0cae49223` |
+| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 22,679,552 | `d41f1868cee6b69868ddff3759e1adc724fb8713e8f57b77470394801fed50f5` |
 | `release-manifest.json`（清单，不入哈希清单） | 4,587 | 构建内逐字段校验 |
 
-清单运行时元数据：`version=3.0.0`、`runtime=win-x64`、`framework=net48`、`sqliteVersion=3.53.3`；生成时间 `2026-09-17T04:05:30.1681085Z`。
+清单运行时元数据：`version=3.0.0`、`runtime=win-x64`、`framework=net48`、`sqliteVersion=3.53.3`；生成时间 `2026-09-28T23:48:11.4271975Z`。
 
 ## 自动化回归与最终质量门
 

@@ -12,6 +12,31 @@ namespace LXMusicAccessible.Tests;
 
 public sealed class ApplicationShutdownTests
 {
+    /// <summary>
+    /// A failed exit is reported by a blocking warning dialog, which the screen reader reads as soon as it
+    /// takes the foreground. The announcement therefore mirrors the same sentence into the live region for
+    /// re-reading but stays out of speech: two copies of one warning is exactly the redundancy the speech
+    /// policy exists to prevent.
+    /// </summary>
+    [Theory]
+    [InlineData(ShutdownStatus.Failed)]
+    [InlineData(ShutdownStatus.TimedOut)]
+    public void Shutdown_warning_mirrors_the_dialog_text_without_a_second_spoken_copy(ShutdownStatus status)
+    {
+        var announcement = ShutdownFeedback.AnnouncementFor(new ShutdownResult(status, "persistence"));
+
+        Assert.Equal(
+            status == ShutdownStatus.TimedOut
+                ? ShutdownFeedback.TimeoutMessage
+                : ShutdownFeedback.FailureMessage,
+            announcement.Text);
+        Assert.Equal(AnnouncementKind.Error, announcement.Kind);
+        Assert.Equal("application-shutdown", announcement.ActivityId);
+        Assert.False(
+            AccessibleSpeechPolicy.ShouldSpeak(announcement),
+            "The modal dialog already speaks this outcome, so the announcer must stay quiet.");
+    }
+
     [Fact]
     public async Task Concurrent_requests_capture_quiesce_persist_and_release_exactly_once_in_order()
     {
@@ -177,36 +202,7 @@ public sealed class ApplicationShutdownTests
         }
     }
 
-    [Fact]
-    public void Every_window_exit_entry_routes_to_close_and_on_exit_is_synchronous_fallback()
-    {
-        var root = FindRepositoryRoot();
-        var window = File.ReadAllText(Path.Combine(
-            root,
-            "src",
-            "LXMusicAccessible.App",
-            "MainWindow.xaml.cs"));
-        var app = File.ReadAllText(Path.Combine(
-            root,
-            "src",
-            "LXMusicAccessible.App",
-            "App.xaml.cs"));
-        var desktop = File.ReadAllText(Path.Combine(
-            root,
-            "src",
-            "LXMusicAccessible.App",
-            "DesktopLifecycleWorkflow.cs"));
 
-        Assert.Contains("DesktopCommand.Exit", window);
-        Assert.Contains("DesktopCommand.AltF4", window);
-        Assert.Contains("protected override void OnClosing(CancelEventArgs e)", window);
-        Assert.DoesNotContain("_applicationShutdown", window);
-        Assert.Contains("await _shutdown.RequestAsync();", desktop);
-        Assert.Contains("_desktop.CompleteExit();", desktop);
-        Assert.DoesNotContain("SaveSettingsOnExit", window);
-        Assert.Contains("protected override void OnExit(ExitEventArgs e)", app);
-        Assert.DoesNotContain("protected override async void OnExit", app);
-    }
 
     private static ApplicationShutdownCoordinator CreateCoordinator(
         RecordingParticipant participant,

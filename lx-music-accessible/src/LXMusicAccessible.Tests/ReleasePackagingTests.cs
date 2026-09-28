@@ -42,7 +42,7 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
-    public void Application_is_net48_x64_and_preserves_upgrade_identity_with_version_3()
+    public void Application_is_net48_x64_and_names_executable_version_3()
     {
         var path = Path.Combine(SourceDirectory(), "LXMusicAccessible.App", "LXMusicAccessible.App.csproj");
         var project = XDocument.Load(path).Root!;
@@ -50,7 +50,7 @@ public sealed class ReleasePackagingTests
         Assert.Equal("net48", project.Elements("PropertyGroup").Elements("TargetFramework").Single().Value);
         Assert.Equal("x64", project.Elements("PropertyGroup").Elements("PlatformTarget").Single().Value);
         Assert.Equal("win-x64", project.Elements("PropertyGroup").Elements("RuntimeIdentifier").Single().Value);
-        Assert.Equal("落雪音乐无障碍版V2.0", project.Elements("PropertyGroup").Elements("AssemblyName").Single().Value);
+        Assert.Equal("落雪音乐无障碍版V3.0", project.Elements("PropertyGroup").Elements("AssemblyName").Single().Value);
         Assert.Equal("3.0.0", project.Elements("PropertyGroup").Elements("Version").Single().Value);
     }
 
@@ -93,6 +93,10 @@ public sealed class ReleasePackagingTests
     public void Setup_source_checks_net48_before_install_and_records_diagnostics()
     {
         var setup = File.ReadAllText(Path.Combine(SourceDirectory(), "LXMusicAccessible.Setup", "Program.cs"));
+        Assert.Contains("落雪音乐无障碍版V3.0.exe", setup);
+        Assert.Contains("落雪音乐无障碍版V2.0.exe", setup);
+        Assert.Contains("previousExecutable", setup);
+        Assert.Contains("DeletePreviousExecutable", setup);
         Assert.Contains("DotNetFrameworkRequirement.Evaluate()", setup);
         Assert.Contains("WriteRuntimeDiagnostics", setup);
         Assert.Contains("DotNetFrameworkRequirement.DownloadUrl", setup);
