@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 if (-not ("NativeSqliteVersion" -as [type])) {
@@ -77,11 +78,50 @@ function Assert-Payload([string]$Directory, [string[]]$RequiredFiles) {
 function Assert-ZipPayload([string]$ArchivePath, [string[]]$RequiredFiles) {
     $archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
     try {
-        $entries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('/', '\') })
+        $entries = @($archive.Entries | ForEach-Object { $_.FullName })
+        $invalidEntries = @($entries | Where-Object { $_.Contains('\') })
+        if ($invalidEntries.Count -gt 0) {
+            throw "Archive $ArchivePath contains non-portable backslash entry names: $($invalidEntries[0])"
+        }
+
         foreach ($relativePath in $RequiredFiles) {
-            if ($entries -notcontains $relativePath.Replace('/', '\')) {
+            $portablePath = $relativePath.Replace('\', '/')
+            if ($entries -notcontains $portablePath) {
                 throw "Archive $ArchivePath is missing: $relativePath"
             }
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
+
+function New-ReleaseZip([string]$SourceDirectory, [string]$ArchivePath) {
+    $sourceFullPath = [System.IO.Path]::GetFullPath($SourceDirectory)
+    $archiveFullPath = [System.IO.Path]::GetFullPath($ArchivePath)
+    $sourcePrefix = $sourceFullPath.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    $releasePrefix = [System.IO.Path]::GetFullPath($releaseRoot).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+
+    if (-not ($archiveFullPath.StartsWith($releasePrefix, [System.StringComparison]::OrdinalIgnoreCase))) {
+        throw "Release ZIP path is outside the release directory: $archiveFullPath"
+    }
+    if (Test-Path -LiteralPath $archiveFullPath) {
+        Remove-Item -LiteralPath $archiveFullPath -Force
+    }
+
+    $archive = [System.IO.Compression.ZipFile]::Open($archiveFullPath, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in Get-ChildItem -LiteralPath $sourceFullPath -File -Recurse | Sort-Object FullName) {
+            $fileFullPath = [System.IO.Path]::GetFullPath($file.FullName)
+            if (-not $fileFullPath.StartsWith($sourcePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Payload file is outside the source directory: $fileFullPath"
+            }
+
+            $entryName = $fileFullPath.Substring($sourcePrefix.Length).Replace('\', '/')
+            if ($entryName.Contains('\') -or [System.IO.Path]::IsPathRooted($entryName) -or $entryName -match '(^|/)\.\.(/|$)') {
+                throw "Unsafe ZIP entry name: $entryName"
+            }
+            $null = [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $fileFullPath, $entryName, [System.IO.Compression.CompressionLevel]::Optimal)
         }
     }
     finally {
@@ -270,11 +310,7 @@ if (-not (Test-Path -LiteralPath $setupArtifact -PathType Leaf)) {
     throw "Inno Setup installer was not produced: $setupArtifact"
 }
 
-[System.IO.Compression.ZipFile]::CreateFromDirectory(
-    $application,
-    $frameworkZip,
-    [System.IO.Compression.CompressionLevel]::Optimal,
-    $false)
+New-ReleaseZip -SourceDirectory $application -ArchivePath $frameworkZip
 
 Write-Host "== 3/5 Validate artifact contents and versions =="
 Assert-ZipPayload $frameworkZip $requiredPayload
@@ -327,6 +363,47 @@ foreach ($payload in $savedManifest.payload) {
     if ($actualHash -ne $payload.sha256) {
         throw "Release payload hash mismatch: $($payload.path)"
     }
+}
+
+$releaseZip = [System.IO.Compression.ZipFile]::OpenRead($frameworkZip)
+try {
+    $zipEntries = @{}
+    foreach ($entry in $releaseZip.Entries) {
+        if ($entry.FullName.Contains('\')) {
+            throw "Release ZIP contains non-portable entry name: $($entry.FullName)"
+        }
+        $zipEntries[$entry.FullName] = $entry
+    }
+
+    foreach ($payload in $savedManifest.payload) {
+        if (-not $zipEntries.ContainsKey($payload.path)) {
+            throw "Release ZIP is missing manifest payload: $($payload.path)"
+        }
+        $entry = $zipEntries[$payload.path]
+        if ($entry.Length -ne $payload.bytes) {
+            throw "Release ZIP payload size mismatch: $($payload.path)"
+        }
+
+        $entryStream = $entry.Open()
+        try {
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                $actualHash = [System.BitConverter]::ToString($sha.ComputeHash($entryStream)).Replace('-', '').ToLowerInvariant()
+            }
+            finally {
+                $sha.Dispose()
+            }
+        }
+        finally {
+            $entryStream.Dispose()
+        }
+        if ($actualHash -ne $payload.sha256) {
+            throw "Release ZIP payload hash mismatch: $($payload.path)"
+        }
+    }
+}
+finally {
+    $releaseZip.Dispose()
 }
 foreach ($artifact in $savedManifest.artifacts) {
     $artifactPath = Join-Path $releaseRoot $artifact.file
