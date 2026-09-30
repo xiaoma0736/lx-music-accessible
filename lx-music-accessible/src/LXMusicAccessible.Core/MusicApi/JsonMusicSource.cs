@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -232,7 +232,22 @@ public sealed class JsonMusicSource(
         if (!manifest.Platforms.TryGetValue(ReversePlatform(platform), out var definition)
             || definition.Url is null)
             return null;
-        return definition.Url.Qualities.TryGetValue(NormalizeQuality(quality), out var supplierQuality)
+        if (definition.Url.Qualities.TryGetValue(NormalizeQuality(quality), out var supplierQuality)
+            && !string.IsNullOrWhiteSpace(supplierQuality))
+            return supplierQuality;
+        var rawQuality = quality.ToLowerInvariant();
+        if (definition.Url.Qualities.TryGetValue(rawQuality, out supplierQuality)
+            && !string.IsNullOrWhiteSpace(supplierQuality))
+            return supplierQuality;
+        var canonicalQuality = NormalizeQuality(quality);
+        var identityQuality = canonicalQuality switch
+        {
+            "standard" => "128k",
+            "high" => "320k",
+            "lossless" => "flac24bit",
+            _ => canonicalQuality
+        };
+        return definition.Url.Qualities.TryGetValue(identityQuality, out supplierQuality)
             && !string.IsNullOrWhiteSpace(supplierQuality)
             ? supplierQuality
             : null;
@@ -240,9 +255,10 @@ public sealed class JsonMusicSource(
 
     private static string NormalizeQuality(string quality) => quality.ToLowerInvariant() switch
     {
-        "128k" or "192k" => "standard",
-        "320k" => "high",
-        "flac" or "flac24bit" => "lossless",
+        "128k" or "192k" or "standard" => "standard",
+        "320k" or "high" => "high",
+        "flac" => "flac",
+        "flac24bit" or "lossless" => "lossless",
         _ => quality.ToLowerInvariant()
     };
 

@@ -636,7 +636,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         _logger.LogInformation("获取播放URL: {MusicId}, 来源: {Source}, 音质: {Quality}", musicId, source, quality);
 
         // 解析顺序：默认源 → 其余已启用脚本源（按优先级，超时保护） → 官方API（当前源优先，再跨源）
-        var defaultSourceId = _sources.FirstOrDefault(s => s.IsDefault)?.Id;
+        var defaultSource = _sources.FirstOrDefault(s => s.IsDefault && s.IsEnabled);
+        var defaultSourceId = defaultSource?.Id;
         var scripts = _scriptSource.GetAllScripts();
 
         // 第1级: 默认音源（限时 3 秒，超时回退，避免卡住播放）
@@ -651,7 +652,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
                 {
                     using var attempt = CancellationTokenSource.CreateLinkedTokenSource(
                         cancellationToken);
-                    attempt.CancelAfter(TimeSpan.FromSeconds(5));
+                    attempt.CancelAfter(TimeSpan.FromSeconds(10));
                     var url = await TryResolveScriptUrlAsync(
                         defaultScript,
                         musicId,
@@ -694,7 +695,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             {
                 using var attempt = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken);
-                attempt.CancelAfter(TimeSpan.FromSeconds(10));
+                attempt.CancelAfter(TimeSpan.FromSeconds(20));
                 var url = await TryResolveScriptUrlAsync(
                     script,
                     musicId,
@@ -783,13 +784,38 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             source,
             quality,
             cancellationToken);
-        if (string.IsNullOrEmpty(url) && music != null && !string.IsNullOrEmpty(script.RawScript))
-            url = await _scriptEngine.GetPlayUrlAsync(
-                script,
-                music,
-                source,
-                quality,
-                cancellationToken);
+        if (!string.IsNullOrEmpty(url) &&
+            (url.Contains("undefined", StringComparison.OrdinalIgnoreCase) ||
+             url.Contains("null", StringComparison.OrdinalIgnoreCase)))
+        {
+            _logger.LogDebug("Script source [{ScriptId}] returned an invalid placeholder URL", script.Id);
+            url = null;
+        }
+
+        // A recognized fast-path response can still be unplayable. Keep the real script
+        // engine available until we know the fast-path URL can actually be played. Original
+        // LX musicUrl scripts only require the music identity (id/hash/songmid), so an
+        // ID-only lookup also gets a valid musicInfo object.
+        if (!string.IsNullOrEmpty(url) && await IsPlayableAsync(url, cancellationToken))
+        {
+            MarkScriptSuccess(script.Id);
+            return url;
+        }
+
+        if (string.IsNullOrEmpty(script.RawScript))
+            return null;
+
+        var scriptMusic = music ?? new MusicInfo
+        {
+            Id = musicId,
+            Source = source
+        };
+        url = await _scriptEngine.GetPlayUrlAsync(
+            script,
+            scriptMusic,
+            source,
+            quality,
+            cancellationToken);
 
         // 脚本拿不到歌曲 ID 时常返回 id=undefined/null 之类的占位 URL，视为解析失败，继续尝试其他音源
         if (!string.IsNullOrEmpty(url) &&
@@ -815,7 +841,6 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         }
         return url;
     }
-
     /// <summary>轻量可播性校验：Range GET 首段，2xx/206 且 audio/* 内容类型、或长度>64KB、或首字节为音频魔数即通过</summary>
     private async Task<bool> IsPlayableAsync(
         string url,
@@ -1365,9 +1390,26 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         FrameworkCompatibility.ThrowIfNull(s);
         var index = _sources.IndexOf(s);
         if (index < 0) return false;
+        var wasDefault = s.IsDefault;
+        var previousDefaults = _sources.Where(item => item.IsDefault)
+            .Select(item => (Source: item, IsDefault: item.IsDefault))
+            .ToArray();
         var script = _scriptSource.GetScript(s.Id);
         _sources.RemoveAt(index);
         _scriptSource.Remove(s.Id);
+        if (wasDefault)
+        {
+            var replacement = _sources
+                .Where(item => !item.IsSystemHidden && item.IsEnabled
+                    && item.TrustState != ScriptTrustState.Untrusted)
+                .OrderBy(item => item.Priority)
+                .FirstOrDefault();
+            foreach (var item in _sources)
+                item.IsDefault = false;
+            if (replacement is not null)
+                replacement.IsDefault = true;
+        }
+
         try
         {
             await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
@@ -1377,6 +1419,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             _sources.Insert(index, s);
             if (script?.RawScript is not null)
                 _scriptSource.RegisterVerified(script, ScriptMusicSource.ComputeSha256(script.RawScript));
+            foreach (var item in previousDefaults)
+                item.Source.IsDefault = item.IsDefault;
             _logger.LogError(ex, "音源删除保存失败，已恢复: {Id}", s.Id);
             return false;
         }
@@ -1515,11 +1559,20 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             AddedDate = DateTime.Now,
             LastUpdateDate = DateTime.Now
         };
+        // 新导入的脚本已通过执行校验，导入动作本身就是用户“立即使用”的意图。
+        // 让它作为唯一默认源进入同一次启用持久化，否则默认源仍可能是旧订阅，
+        // 屏幕阅读器用户很难发现还需要单独执行“设为默认”。
+        var previousDefaults = _sources.Where(item => item.IsDefault).ToArray();
+        foreach (var item in _sources)
+            item.IsDefault = false;
+        source.IsDefault = true;
         _sources.Add(source);
         var activation = await EnableSourceAsync(source, cancellationToken);
         if (!activation.Succeeded)
         {
             _sources.Remove(source);
+            foreach (var item in previousDefaults)
+                item.IsDefault = true;
             _scriptSource.Remove(source.Id);
             _logger.LogWarning(
                 "音源导入验证失败: SourceId={SourceId}, Status={Status}",
@@ -1527,6 +1580,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
                 activation.Status);
             return null;
         }
+        _defaultTouchedByUser = true;
         return source;
     }
 

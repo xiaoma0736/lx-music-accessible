@@ -334,17 +334,21 @@ public partial class WinFormsShell : Form
         var refresh = CreateButton("刷新", 7, (_, _) => _ = RefreshSavedAsync());
         var remove = CreateButton("移除歌曲", 8, (_, _) => _ = RemoveFavoriteAsync());
         var clear = CreateButton("清空歌曲", 9, (_, _) => ClearFavorites());
+        var openLocalFile = CreateButton("打开本地文件", 10, (_, _) => _ = AddLocalFilesToPlaylist());
+        var openLocalFolder = CreateButton("打开本地文件夹", 11, (_, _) => _ = AddLocalFolderToPlaylist());
         newButton.SetBounds(10, 10, 95, 27);
         renameButton.SetBounds(112, 10, 105, 27);
         deleteButton.SetBounds(224, 10, 90, 27);
         refresh.SetBounds(321, 10, 75, 27);
         remove.SetBounds(403, 10, 90, 27);
         clear.SetBounds(500, 10, 90, 27);
+        openLocalFile.SetBounds(597, 10, 125, 27);
+        openLocalFolder.SetBounds(730, 10, 145, 27);
         OnlinePlaylists.SetBounds(10, 45, 250, 520);
-        SavedPlaylistLoadMore = new Button { Text = "加载更多歌曲", Width = 160, TabStop = false, TabIndex = 10, Name = "SavedPlaylistLoadMore", AccessibleName = "加载更多收藏歌曲", Enabled = false };
+        SavedPlaylistLoadMore = new Button { Text = "加载更多歌曲", Width = 160, TabStop = false, TabIndex = 12, Name = "SavedPlaylistLoadMore", AccessibleName = "加载更多收藏歌曲", Enabled = false };
         SavedPlaylistLoadMore.SetBounds(270, 570, 160, 26);
         FavoriteSongs.SetBounds(270, 45, 680, 520);
-        page.Controls.AddRange(new Control[] { OnlinePlaylists, FavoriteSongs, SavedPlaylistLoadMore, newButton, renameButton, deleteButton, refresh, remove, clear });
+        page.Controls.AddRange(new Control[] { OnlinePlaylists, FavoriteSongs, SavedPlaylistLoadMore, newButton, renameButton, deleteButton, refresh, remove, clear, openLocalFile, openLocalFolder });
         OnlinePlaylists.SelectedIndexChanged += (_, _) =>
         {
             _services.SavedPlaylists?.Select(WinFormsUi.Selected<Playlist>(OnlinePlaylists));
@@ -434,6 +438,9 @@ public partial class WinFormsShell : Form
         CategoryPlaylists.ContextMenu = playlistMenu;
         return page;
     }
+
+    internal static IReadOnlyList<MusicInfo> CreateLocalMusicInfosForTests(IEnumerable<string> paths, out int skippedCount) =>
+        CreateLocalMusicInfos(paths, out skippedCount);
 
     internal IAccessibleAnnouncer AnnouncerForTests => _announcer;
     internal Label StatusTextForTests => StatusText;

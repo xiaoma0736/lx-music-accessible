@@ -19,10 +19,11 @@ public sealed class DatabaseMigrationTests
         var migration = await initializer.InitializeAsync();
 
         Assert.True(migration.Succeeded, migration.Message);
-        Assert.Equal(1, migration.CurrentVersion);
+        Assert.Equal(2, migration.CurrentVersion);
         Assert.Null(migration.BackupPath);
 
         var data = CreateDataService(fixture.Path);
+        Assert.Equal(2, (await data.GetPlaylistsAsync()).Count);
         var playlist = CreatePlaylist("playlist-1", "Before");
         var song = CreateSong("song-1");
         await data.SavePlaylistAsync(playlist);
@@ -55,7 +56,7 @@ public sealed class DatabaseMigrationTests
 
         Assert.True(first.Succeeded, first.Message);
         Assert.Equal(0, first.PreviousVersion);
-        Assert.Equal(1, first.CurrentVersion);
+        Assert.Equal(2, first.CurrentVersion);
         Assert.Equal(1, first.OrphansRemoved);
         Assert.NotNull(first.BackupPath);
         Assert.True(File.Exists(first.BackupPath));
@@ -69,7 +70,7 @@ public sealed class DatabaseMigrationTests
         using (var connection = await OpenAsync(fixture.DatabasePath, foreignKeys: true))
         {
             Assert.Equal(1, await connection.QuerySingleAsync<int>("PRAGMA foreign_keys"));
-            Assert.Equal(1, await connection.QuerySingleAsync<int>("PRAGMA user_version"));
+            Assert.Equal(2, await connection.QuerySingleAsync<int>("PRAGMA user_version"));
             Assert.Equal(1, await connection.QuerySingleAsync<int>(
                 "SELECT COUNT(*) FROM PlaylistItems WHERE PlaylistId = 'legacy-playlist'"));
             var legalMusic = await connection.QuerySingleAsync<string>(
@@ -83,7 +84,7 @@ public sealed class DatabaseMigrationTests
         var backupsBeforeRepeat = Directory.GetFiles(fixture.Path, "*.bak").Length;
         var second = await initializer.InitializeAsync();
         Assert.True(second.Succeeded, second.Message);
-        Assert.Equal(1, second.PreviousVersion);
+        Assert.Equal(2, second.PreviousVersion);
         Assert.Equal(0, second.OrphansRemoved);
         Assert.Null(second.BackupPath);
         Assert.Equal(backupsBeforeRepeat, Directory.GetFiles(fixture.Path, "*.bak").Length);

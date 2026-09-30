@@ -23,13 +23,11 @@ public sealed class Issue75ShutdownProcessTests
     }
 
     [Fact]
-    public void Installer_closes_and_waits_for_the_installed_process_before_extracting_payload()
+    public void Inno_installer_closes_the_application_before_upgrade_and_does_not_restart_it()
     {
-        var source = File.ReadAllText(Source("LXMusicAccessible.Setup", "Program.cs"));
-        Assert.Contains("CloseInstalledApplication(exe);", source);
-        Assert.Contains("WaitForFileAvailable(exe);", source);
-        Assert.Contains("CloseMainWindow()", source);
-        Assert.Contains("Kill()", source);
-        Assert.True(source.IndexOf("CloseInstalledApplication(exe);") < source.IndexOf("InstallDirectoryOwnership.InstallFromZip(payloadStream, parent);"));
+        var source = File.ReadAllText(Source("..", "packaging", "inno", "LXMusicAccessible.iss"));
+        Assert.Contains("CloseApplications=yes", source);
+        Assert.Contains("RestartApplications=no", source);
+        Assert.DoesNotContain("RestartApplications=yes", source);
     }
 }

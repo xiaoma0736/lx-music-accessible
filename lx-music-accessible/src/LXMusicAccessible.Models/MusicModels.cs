@@ -1,4 +1,4 @@
-﻿using System.Linq;
+using System.Linq;
 
 namespace LXMusicAccessible.Models;
 
@@ -229,7 +229,9 @@ public class MusicSource
     /// <summary>状态显示文本（默认优先）</summary>
     public string StatusText => TrustState == ScriptTrustState.Untrusted
         ? "已暂存，未信任"
-        : IsDefault ? "默认" : (IsEnabled ? "已启用" : "已禁用");
+        : IsDefault
+            ? (IsEnabled ? "默认" : "默认，已禁用")
+            : (IsEnabled ? "已启用" : "已禁用");
 
     /// <summary>读屏聚焦名称包含音源标识和必要的启用/信任状态。</summary>
     public string AccessibleName

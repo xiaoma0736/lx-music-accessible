@@ -343,7 +343,10 @@ public partial class WinFormsShell
     private async Task ManagePlaylistAsync(string prompt, Func<string?, Task<SavedPlaylistResult>> action)
     {
         if (_services.SavedPlaylists is null) return;
-        var selected = WinFormsUi.Selected<Playlist>(OnlinePlaylists)?.Name;
+        var selectedPlaylist = WinFormsUi.Selected<Playlist>(OnlinePlaylists);
+        if (prompt.StartsWith("重命名", StringComparison.Ordinal) && selectedPlaylist is not null)
+            prompt = SavedPlaylistWorkflow.RenamePrompt(selectedPlaylist);
+        var selected = selectedPlaylist?.Name;
         var value = WinFormsUi.AskText(this, prompt, prompt + "：", prompt.StartsWith("重命名", StringComparison.Ordinal) ? selected : null);
         if (string.IsNullOrWhiteSpace(value)) return;
         var result = await action(value);
@@ -354,7 +357,13 @@ public partial class WinFormsShell
     {
         if (_services.SavedPlaylists is null) return;
         var playlist = WinFormsUi.Selected<Playlist>(OnlinePlaylists);
-        if (playlist is null || !WinFormsUi.Confirm(this, $"确定要删除歌单“{playlist.Name}”吗？")) return;
+        if (playlist is null) return;
+        if (!SavedPlaylistWorkflow.CanDelete(playlist))
+        {
+            Announce(playlist.IsLocal ? "默认本地歌曲歌单不能删除。" : "默认在线歌单不能删除。", "saved-playlists", AnnouncementKind.Error);
+            return;
+        }
+        if (!WinFormsUi.Confirm(this, SavedPlaylistWorkflow.DeleteConfirmation(playlist))) return;
         var result = await _services.SavedPlaylists.DeleteSelectedAsync();
         RenderSaved(result.Snapshot, result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
@@ -367,9 +376,96 @@ public partial class WinFormsShell
         RenderSaved(result.Snapshot, result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
+    private async Task AddLocalFilesToPlaylist()
+    {
+        try
+        {
+            using var dialog = new OpenFileDialog
+            {
+                Title = "添加本地音频到本地歌曲",
+                Filter = "音频文件|*.mp3;*.flac;*.ape;*.m4a;*.wav;*.ogg|所有文件|*.*",
+                Multiselect = true
+            };
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            await AddLocalPathsToPlaylistAsync(dialog.FileNames);
+        }
+        catch (Exception ex)
+        {
+            WinFormsUi.Error(this, ex, "添加本地音频");
+        }
+    }
+
+    private async Task AddLocalFolderToPlaylist()
+    {
+        try
+        {
+            using var dialog = new FolderBrowserDialog { Description = "选择要添加到本地歌曲的音频文件夹" };
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ".mp3", ".flac", ".ape", ".m4a", ".wav", ".ogg"
+            };
+            var paths = Directory.EnumerateFiles(dialog.SelectedPath, "*", SearchOption.AllDirectories)
+                .Where(path => extensions.Contains(Path.GetExtension(path)))
+                .ToArray();
+            await AddLocalPathsToPlaylistAsync(paths);
+        }
+        catch (Exception ex)
+        {
+            WinFormsUi.Error(this, ex, "添加本地音频文件夹");
+        }
+    }
+
+    private async Task AddLocalPathsToPlaylistAsync(IEnumerable<string> paths)
+    {
+        var songs = CreateLocalMusicInfos(paths, out var skippedCount);
+        if (songs.Count == 0)
+        {
+            Announce("没有找到支持的音频文件。", "local-playlist", AnnouncementKind.Error);
+            return;
+        }
+
+        if (_services.SavedPlaylists is null) return;
+        var result = await _services.SavedPlaylists.AddSongsAsync(songs);
+        var message = result.Message;
+        if (result.Succeeded && skippedCount > 0)
+            message += $"；已跳过 {skippedCount} 个不支持的文件";
+        RenderSaved(result.Snapshot, message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
+    }
+
+    private static IReadOnlyList<MusicInfo> CreateLocalMusicInfos(IEnumerable<string> paths, out int skippedCount)
+    {
+        if (paths is null) throw new ArgumentNullException(nameof(paths));
+        var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".mp3", ".flac", ".ape", ".m4a", ".wav", ".ogg"
+        };
+        var songs = new List<MusicInfo>();
+        skippedCount = 0;
+        foreach (var path in paths)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !extensions.Contains(Path.GetExtension(path)))
+            {
+                skippedCount++;
+                continue;
+            }
+
+            songs.Add(new MusicInfo
+            {
+                Id = "Local|" + path,
+                Title = Path.GetFileNameWithoutExtension(path),
+                Source = "Local",
+                PlayUrl = path
+            });
+        }
+
+        return songs;
+    }
     private async void ClearFavorites()
     {
-        if (_services.SavedPlaylists is null || !WinFormsUi.Confirm(this, "确定要清空当前在线歌单中的全部歌曲吗？")) return;
+        if (_services.SavedPlaylists is null) return;
+        var playlist = WinFormsUi.Selected<Playlist>(OnlinePlaylists);
+        if (playlist is null || !WinFormsUi.Confirm(this, SavedPlaylistWorkflow.ClearConfirmation(playlist))) return;
         var result = await _services.SavedPlaylists.ClearAsync();
         RenderSaved(result.Snapshot, result.Message, result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
@@ -625,7 +721,7 @@ public partial class WinFormsShell
     private async void FavoriteCategoryPlaylist()
     {
         var playlist = WinFormsUi.Selected<Playlist>(CategoryPlaylists);
-        await FavoriteRemotePlaylist(playlist?.Name, SourceId(CategorySource.Text), playlist?.Id, PlaylistType.Recommend);
+        await FavoriteRemotePlaylist(playlist?.Name, SourceId(CategorySource.Text), playlist?.Id, PlaylistType.Cloud);
     }
 
     private async void FavoriteRanking()

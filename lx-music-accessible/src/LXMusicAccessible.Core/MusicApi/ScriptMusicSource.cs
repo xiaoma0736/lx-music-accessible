@@ -520,9 +520,10 @@ public class ScriptMusicSource : IDisposable
     /// <summary>我们的源ID → LX 源ID</summary>
     private static string? MapQuality(string quality) => quality.ToLowerInvariant() switch
     {
-        "standard" => "128k",
-        "high" => "320k",
-        "lossless" => "flac24bit",
+        "128k" or "192k" or "standard" => "128k",
+        "320k" or "high" => "320k",
+        "flac" => "flac",
+        "flac24bit" or "lossless" => "flac24bit",
         _ => null
     };
 

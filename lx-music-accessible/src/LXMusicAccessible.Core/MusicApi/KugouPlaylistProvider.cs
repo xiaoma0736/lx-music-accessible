@@ -134,7 +134,10 @@ public class KugouPlaylistProvider : IPlaylistImportProvider
     private async Task<List<RemotePlaylist>> FetchUserListsAsync(int type, bool isCollected)
     {
         var result = new List<RemotePlaylist>();
-        try
+        const int pageSize = 100;
+        var seen = new HashSet<long>();
+
+        for (var page = 1; ; page++)
         {
             var body = new Dictionary<string, object>
             {
@@ -142,24 +145,26 @@ public class KugouPlaylistProvider : IPlaylistImportProvider
                 ["token"] = _token,
                 ["total_ver"] = 979,
                 ["type"] = type,
-                ["page"] = 1,
-                ["pagesize"] = 100
+                ["page"] = page,
+                ["pagesize"] = pageSize
             };
             var resp = await PostAndroidAsync<JsonElement>("/v7/get_all_list", body, "cloudlist.service.kugou.com");
             if (resp.ValueKind == JsonValueKind.Undefined)
                 throw new InvalidOperationException("获取歌单失败：网络异常");
-            if (resp.TryGetProperty("error_code", out var ec) && ec.ValueKind == System.Text.Json.JsonValueKind.Number && ec.GetInt32() != 0)
+            if (resp.TryGetProperty("error_code", out var ec) && ec.ValueKind == JsonValueKind.Number && ec.GetInt32() != 0)
             {
-                _logger.LogWarning("酷狗云歌单接口返回 error_code={Code}，tokenLen={TokenLen}",
-                    ec.GetInt32(), _token?.Length ?? 0);
+                _logger.LogWarning(
+                    "酷狗云歌单接口返回 error_code={Code}，type={Type}，page={Page}，tokenLen={TokenLen}",
+                    ec.GetInt32(), type, page, _token?.Length ?? 0);
                 throw new InvalidOperationException("酷狗登录已失效，请重新粘贴Cookie登录");
             }
+
             var lists = FindPlaylistArray(resp);
             foreach (var item in lists)
             {
                 var id = GetPlaylistId(item);
                 var name = GetPlaylistName(item);
-                if (id <= 0 || string.IsNullOrEmpty(name)) continue;
+                if (id <= 0 || string.IsNullOrEmpty(name) || !seen.Add(id)) continue;
                 result.Add(new RemotePlaylist
                 {
                     Platform = "kg",
@@ -171,17 +176,21 @@ public class KugouPlaylistProvider : IPlaylistImportProvider
                     CoverUrl = GetPlaylistCover(item)
                 });
             }
+
+            // total is accepted when present, but a short page remains authoritative for endpoints that
+            // omit it; this avoids stopping after a full page when total is stale.
+            var total = resp.TryGetProperty("data", out var data)
+                && data.TryGetProperty("total", out var totalElement)
+                && totalElement.ValueKind == JsonValueKind.Number
+                ? totalElement.GetInt32()
+                : -1;
+            if (lists.Count < pageSize || (total >= 0 && result.Count >= total)) break;
+            if (page >= 100)
+                throw new InvalidOperationException("获取歌单失败：分页数量异常。");
         }
-        catch (InvalidOperationException) { throw; }
-        catch (Exception)
-        {
-            _logger.LogWarning("酷狗拉取我的歌单失败 type={Type}：{Diagnostic}", type,
-                LoginDiagnostics.CreateSafeSummary(PlatformId, string.Empty, LoginDiagnosticOutcome.Exception,
-                    LoginDiagnosticError.Unexpected, LoginDiagnostics.CreateCorrelationId()));
-        }
+
         return result;
     }
-
     // ============ 歌单歌曲（公开接口，已验证） ============
 
     /// <summary>歌单歌曲：cloudlist.service.kugou.com/v4/get_list_all_file（Android 签名，需客户端 token，用 listid）</summary>

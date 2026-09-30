@@ -28,18 +28,6 @@ public sealed class ReleasePackagingTests
         Assert.Contains("Assert-SystemTextJsonRuntime", releaseScript);
         Assert.Contains("8.0.0.6", releaseScript);
     }
-    private static string SourceDirectory()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && current.Name != "src") current = current.Parent;
-        return current?.FullName ?? throw new InvalidOperationException("Could not locate src directory.");
-    }
-
-    private static string RepositoryDirectory()
-    {
-        var src = SourceDirectory();
-        return Directory.GetParent(src)!.FullName;
-    }
 
     [Fact]
     public void Application_is_net48_x64_and_names_executable_version_3()
@@ -55,14 +43,19 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
-    public void Installer_is_x64_and_version_3()
+    public void Inno_installer_targets_x64_and_checks_net48()
     {
-        var path = Path.Combine(SourceDirectory(), "LXMusicAccessible.Setup", "LXMusicAccessible.Setup.csproj");
-        var project = XDocument.Load(path).Root!;
+        var path = Path.Combine(RepositoryDirectory(), "packaging", "inno", "LXMusicAccessible.iss");
+        var script = File.ReadAllText(path);
 
-        Assert.Equal("net48", project.Elements("PropertyGroup").Elements("TargetFramework").Single().Value);
-        Assert.Equal("x64", project.Elements("PropertyGroup").Elements("PlatformTarget").Single().Value);
-        Assert.Equal("3.0.0", project.Elements("PropertyGroup").Elements("Version").Single().Value);
+        Assert.Contains("AppVersion={#AppVersion}", script);
+        Assert.Contains("PrivilegesRequired=lowest", script);
+        Assert.Contains("ArchitecturesAllowed=x64compatible", script);
+        Assert.Contains("ArchitecturesInstallIn64BitMode=x64compatible", script);
+        Assert.Contains("DefaultDirName={autopf}\\LXMusicAccessible", script);
+        Assert.Contains("OutputBaseFilename=LXMusicAccessible-Setup-{#AppVersion}-win-x64", script);
+        Assert.Contains("ChineseSimplified.isl", script);
+        Assert.Contains("Release >= 528040", script);
     }
 
     [Fact]
@@ -78,35 +71,43 @@ public sealed class ReleasePackagingTests
         Assert.DoesNotContain("\"--self-contained\", \"true\"", script);
         Assert.DoesNotContain("\"-p:PublishSingleFile=true\"", script);
         Assert.DoesNotContain("win-x64-self-contained.zip", script);
-        Assert.DoesNotContain("\"publish\", $appProject", script);
 
-        Assert.Contains("ClearScriptV8.win-x64.dll", script);
-        Assert.Contains("ClearScript.V8.ICUData.dll", script);
-        Assert.Contains("WebView2Loader.dll", script);
-        Assert.Contains("Assert-NativeArchitecture", script);
+        Assert.Contains("\"publish\", $appProject", script);
+        Assert.Contains("& $innoCompiler", script);
+        Assert.Contains("packaging\\inno\\LXMusicAccessible.iss", script);
+        Assert.DoesNotContain("$setupProject", script);
+        Assert.DoesNotContain("$setupExecutable", script);
         Assert.Contains("@($frameworkZip, $setupArtifact))", normalizedScript);
         Assert.DoesNotContain("@($frameworkZip, $setupArtifact, $manifestPath))", normalizedScript);
         Assert.Contains("528040", script);
     }
 
     [Fact]
-    public void Setup_source_checks_net48_before_install_and_records_diagnostics()
+    public void Release_script_smoke_tests_inno_install_upgrade_and_preserving_uninstall()
     {
-        var setup = File.ReadAllText(Path.Combine(SourceDirectory(), "LXMusicAccessible.Setup", "Program.cs"));
-        Assert.Contains("落雪音乐无障碍版V3.0.exe", setup);
-        Assert.Contains("落雪音乐无障碍版V2.0.exe", setup);
-        Assert.Contains("previousExecutable", setup);
-        Assert.Contains("DeletePreviousExecutable", setup);
-        Assert.Contains("DotNetFrameworkRequirement.Evaluate()", setup);
-        Assert.Contains("WriteRuntimeDiagnostics", setup);
-        Assert.Contains("DotNetFrameworkRequirement.DownloadUrl", setup);
-        Assert.Contains("RunInstaller(args)", setup);
-        Assert.Contains("catch (FileNotFoundException", setup);
-        Assert.Contains("MissingFile", setup);
-        var setupProjectPath = Path.Combine(SourceDirectory(), "LXMusicAccessible.Setup", "LXMusicAccessible.Setup.csproj");
-        var setupProject = File.ReadAllText(setupProjectPath);
-        Assert.Contains("LXMusicAccessible.Core\\DotNetFrameworkRequirement.cs", setupProject);
-        Assert.Contains("LXMusicAccessible.Core\\InstallDirectoryOwnership.cs", setupProject);
-        Assert.DoesNotContain("<ProjectReference Include=\"..\\LXMusicAccessible.Core\\LXMusicAccessible.Core.csproj\" />", setupProject);
+        var script = File.ReadAllText(Path.Combine(RepositoryDirectory(), "build_release.ps1"));
+
+        Assert.Contains("/VERYSILENT", script);
+        Assert.Contains("/DIR=$smokeTarget", script);
+        Assert.Contains("Installed application executable is missing.", script);
+        Assert.Contains("Upgrade smoke test failed.", script);
+        Assert.Contains("unins000.exe", script);
+        Assert.Contains("unknown-user-file.txt", script);
+        Assert.Contains("Uninstall removed unknown, parent, or retained user data.", script);
+        Assert.Contains("Complete install smoke test failed.", script);
+        Assert.Contains("Complete uninstall left the application directory behind.", script);
+    }
+
+    private static string SourceDirectory()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null && current.Name != "src") current = current.Parent;
+        return current?.FullName ?? throw new InvalidOperationException("Could not locate src directory.");
+    }
+
+    private static string RepositoryDirectory()
+    {
+        var src = SourceDirectory();
+        return Directory.GetParent(src)!.FullName;
     }
 }

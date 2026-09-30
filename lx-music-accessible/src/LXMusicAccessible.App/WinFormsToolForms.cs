@@ -102,36 +102,34 @@ public class SourceManagerForm : Form
     {
         using var dialog = new OpenFileDialog { Title = "导入本地音源", Filter = "音源脚本|*.js;*.json|所有文件|*.*", Multiselect = false };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        await ImportAsync(File.ReadAllText(dialog.FileName), dialog.FileName);
+        await ImportSourceAsync(dialog.FileName);
     }
 
     private async void ImportNetwork()
     {
         var url = WinFormsUi.AskText(this, "导入网络音源", "音源地址：");
         if (string.IsNullOrWhiteSpace(url)) return;
-        using var client = new System.Net.Http.HttpClient();
-        try
-        {
-            var content = await client.GetStringAsync(url);
-            await ImportAsync(content, url);
-        }
-        catch (Exception ex) { WinFormsUi.Error(this, ex, "下载音源"); }
+        await ImportSourceAsync(url);
     }
 
-    private async Task ImportAsync(string content, string label)
+    private async Task ImportSourceAsync(string label)
     {
         try
         {
-            var source = await InSourceCommand(() => _sources.ImportFromUrlAsync(label))
-                             ?? await InSourceCommand(() => _sources.ImportFromFileAsync(label));
+            var isHttpLocation = Uri.TryCreate(label, UriKind.Absolute, out var location)
+                && (string.Equals(location.Scheme, "http", StringComparison.Ordinal)
+                    || string.Equals(location.Scheme, "https", StringComparison.Ordinal));
+            var source = await InSourceCommand(() => isHttpLocation
+                ? _sources.ImportFromUrlAsync(label)
+                : _sources.ImportFromFileAsync(label));
             if (source is null)
             {
                 Announce("导入音源失败，请检查脚本格式。", "source-import", AnnouncementKind.Error);
                 return;
             }
-            source.ScriptContent = content;
+
             RefreshSources();
-            Announce($"已导入音源：{source.Name}", "source-import", AnnouncementKind.Success);
+            Announce($"已导入并设为默认音源：{source.Name}", "source-import", AnnouncementKind.Success);
         }
         catch (Exception ex) { WinFormsUi.Error(this, ex, "导入音源"); }
     }
@@ -222,6 +220,7 @@ public class SourceManagerForm : Form
 
     private void Announce(string message, string activity, AnnouncementKind kind = AnnouncementKind.Status) =>
         _announcer.Announce(new AccessibleAnnouncement(message, kind, activity));
+
 
     private static Button CreateButton(string text, int tabIndex, EventHandler onClick)
     {
@@ -383,6 +382,8 @@ public class PlaylistImportForm : Form
     private readonly Label _status = new() { Text = "请选择音乐平台。", AutoSize = true, TabStop = false, Name = "ImportStatus" };
     private string? _platform;
     private IReadOnlyList<RemotePlaylist>? _remotePlaylists;
+    private bool _busy;
+    private bool _previewingSongs;
 
     public PlaylistImportForm(
         IPlaylistImportService service,
@@ -400,27 +401,29 @@ public class PlaylistImportForm : Form
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(1050, 680);
         KeyPreview = true;
-        _defaultPlatform = CreateButton("网易云音乐", 1, (sender, args) => _ = SelectPlatformAsync("netease", sender));
-        var qq = CreateButton("QQ音乐", 2, (sender, args) => _ = SelectPlatformAsync("qq", sender));
-        var kg = CreateButton("酷狗音乐", 3, (sender, args) => _ = SelectPlatformAsync("kg", sender));
-        var kw = CreateButton("酷我音乐", 4, (sender, args) => _ = SelectPlatformAsync("kw", sender));
+        _defaultPlatform = CreateButton("网易云音乐", 1, (sender, args) => _ = SelectPlatformCommandAsync("netease", sender));
+        var qq = CreateButton("QQ音乐", 2, (sender, args) => _ = SelectPlatformCommandAsync("qq", sender));
+        var kg = CreateButton("酷狗音乐", 3, (sender, args) => _ = SelectPlatformCommandAsync("kg", sender));
+        var kw = CreateButton("酷我音乐", 4, (sender, args) => _ = SelectPlatformCommandAsync("kw", sender));
         var logout = CreateButton("退出登录", 5, (_, _) => _ = LogoutAsync());
         // Kept as a field because it is the visible recovery command after a saved-session check or login load
         // fails; successful sign-in now starts the load immediately instead of parking focus here.
-        _loadPlaylists = CreateButton("加载歌单", 6, (_, _) => _ = LoadPlaylistsAsync());
+        _loadPlaylists = CreateButton("加载歌单", 6, (_, _) => _ = LoadPlaylistsCommandAsync());
         _cookieCaption.Name = "CookieCaption";
         var back = CreateButton("返回歌单列表", 12, (_, _) => ShowPlaylists());
-        var preview = CreateButton("预览歌曲", 13, (_, _) => _ = PreviewAsync());
+        var preview = CreateButton("预览歌曲", 13, (_, _) => _ = PreviewCommandAsync());
         var importThis = CreateButton("导入当前歌单", 14, (_, _) => _ = ImportAsync());
-        _submitCookie.Click += (_, _) => _ = CookieLoginAsync();
+        var importAll = CreateButton("导入全部歌单", 15, (_, _) => _ = ImportAllAsync());
+        _submitCookie.Click += (_, _) => _ = CookieLoginCommandAsync();
         _defaultPlatform.SetBounds(12, 12, 110, 28); qq.SetBounds(130, 12, 100, 28); kg.SetBounds(238, 12, 100, 28); kw.SetBounds(346, 12, 100, 28);
         _account.SetBounds(460, 18, 300, 22); logout.SetBounds(770, 12, 90, 28); _loadPlaylists.SetBounds(868, 12, 95, 28);
         _cookieCaption.SetBounds(12, 52, 0, 0); _cookie.SetBounds(75, 48, 670, 24); _submitCookie.SetBounds(755, 47, 140, 28);
         _playlists.SetBounds(12, 85, 350, 500); _songs.SetBounds(370, 85, 650, 500);
         _status.SetBounds(12, 595, 800, 22); back.SetBounds(12, 620, 120, 28); preview.SetBounds(140, 620, 100, 28);
         importThis.SetBounds(248, 620, 130, 28);
-        Controls.AddRange(new Control[] { _defaultPlatform, qq, kg, kw, _account, logout, _loadPlaylists, _cookieCaption, _cookie, _submitCookie, _playlists, _songs, _status, back, preview, importThis });
-        _playlists.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = PreviewAsync(); } };
+        importAll.SetBounds(386, 620, 125, 28);
+        Controls.AddRange(new Control[] { _defaultPlatform, qq, kg, kw, _account, logout, _loadPlaylists, _cookieCaption, _cookie, _submitCookie, _playlists, _songs, _status, back, preview, importThis, importAll });
+        _playlists.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = PreviewCommandAsync(); } };
         // The preview list is a song list, and every song list in the application uses Enter for playback
         // (the shell attaches that binding when a preview is shown). Importing has its own command, so Enter
         // is not bound a second time here: one key must not play a song and start an import at once.
@@ -437,13 +440,29 @@ public class PlaylistImportForm : Form
     {
         base.OnKeyDown(e);
         if (_handleHotkey?.Invoke(e) == true) { e.Handled = true; return; }
-        if (e.KeyCode == Keys.Escape) Close();
+        if (e.KeyCode != Keys.Escape) return;
+
+        if (_previewingSongs)
+        {
+            e.Handled = true;
+            ShowPlaylists();
+            return;
+        }
+
+        Close();
     }
     /// <summary>
     /// Selecting a platform first verifies the saved session by loading personal playlists. The network
     /// answer, not the mere existence of a stored cookie, decides whether returning users are taken straight
     /// to their playlists or asked to sign in again.
     /// </summary>
+    private async Task SelectPlatformCommandAsync(string platform, object? origin)
+    {
+        if (!TryBeginBusy()) return;
+        try { await SelectPlatformAsync(platform, origin); }
+        finally { EndBusy(); }
+    }
+
     private async Task SelectPlatformAsync(string platform, object? origin)
     {
         _platform = platform;
@@ -459,7 +478,7 @@ public class PlaylistImportForm : Form
             _status.Text = "正在检测已保存登录状态，请稍候。";
             Announce(_status.Text, "playlist-import", AnnouncementKind.Busy);
 
-            if (await LoadPlaylistsAsync(reportErrors: false))
+            if (await LoadPlaylistsCoreAsync(reportErrors: false))
                 return;
 
             _status.Text = "已保存登录状态无效，请重新登录。";
@@ -509,7 +528,7 @@ public class PlaylistImportForm : Form
         {
             _status.Text = _account.Text + "。正在加载个人歌单。";
             Announce(_status.Text, "playlist-login", AnnouncementKind.Success);
-            _ = LoadPlaylistsAsync();
+            _ = LoadPlaylistsCoreAsync();
         }
         else
         {
@@ -536,6 +555,13 @@ public class PlaylistImportForm : Form
         _submitCookie.Visible = visible;
     }
 
+    private async Task CookieLoginCommandAsync()
+    {
+        if (!TryBeginBusy()) return;
+        try { await CookieLoginAsync(); }
+        finally { EndBusy(); }
+    }
+
     private async Task CookieLoginAsync()
     {
         if (_platform is null || string.IsNullOrWhiteSpace(_cookie.Text)) return;
@@ -550,7 +576,14 @@ public class PlaylistImportForm : Form
 
         _status.Text = $"Cookie 登录成功：{result.DisplayName}。正在加载个人歌单。";
         Announce(_status.Text, "playlist-login", AnnouncementKind.Success);
-        await LoadPlaylistsAsync();
+        await LoadPlaylistsCoreAsync();
+    }
+
+    private async Task LogoutCommandAsync()
+    {
+        if (!TryBeginBusy()) return;
+        try { await LogoutAsync(); }
+        finally { EndBusy(); }
     }
 
     private async Task LogoutAsync()
@@ -562,7 +595,14 @@ public class PlaylistImportForm : Form
         Announce(_status.Text, "playlist-login");
     }
 
-    private async Task<bool> LoadPlaylistsAsync(bool reportErrors = true)
+    private async Task LoadPlaylistsCommandAsync()
+    {
+        if (!TryBeginBusy()) return;
+        try { await LoadPlaylistsCoreAsync(); }
+        finally { EndBusy(); }
+    }
+
+    private async Task<bool> LoadPlaylistsCoreAsync(bool reportErrors = true)
     {
         var platform = _platform;
         if (platform is null) return false;
@@ -600,11 +640,19 @@ public class PlaylistImportForm : Form
         }
     }
 
+    private async Task PreviewCommandAsync()
+    {
+        if (!TryBeginBusy()) return;
+        try { await PreviewAsync(); }
+        finally { EndBusy(); }
+    }
+
     private async Task PreviewAsync()
     {
         if (_platform is null || _remotePlaylists is null || _playlists.SelectedItem is not ObjectBox<RemotePlaylist> box) return;
         try
         {
+            _previewingSongs = false;
             var songs = await _service.GetPlaylistSongsPreviewAsync(_platform, box.Value);
             _songs.BeginUpdate(); _songs.Items.Clear();
             foreach (var song in songs) _songs.Items.Add(new ObjectBox<MusicInfo>(song.AccessibleName, song));
@@ -620,13 +668,15 @@ public class PlaylistImportForm : Form
                 AnnouncementKind.Status,
                 songs.Count == 0 ? AnnouncementSpeech.FollowPreference : AnnouncementSpeech.None);
             _songs.Focus();
+            _previewingSongs = true;
         }
         catch (Exception ex) { WinFormsUi.Error(this, ex, "预览歌单"); }
     }
 
     private async Task ImportAsync()
     {
-        if (_platform is null || _playlists.SelectedItem is not ObjectBox<RemotePlaylist> box) return;
+        if (_busy || _platform is null || _playlists.SelectedItem is not ObjectBox<RemotePlaylist> box) return;
+        TryBeginBusy();
         try
         {
             var result = await _service.ImportPlaylistAsync(_platform, box.Value, message => { _status.Text = message; Announce(message, "playlist-import", AnnouncementKind.Busy); });
@@ -634,10 +684,30 @@ public class PlaylistImportForm : Form
             Announce(_status.Text, "playlist-import", AnnouncementKind.Success);
         }
         catch (Exception ex) { WinFormsUi.Error(this, ex, "导入歌单"); }
+        finally { EndBusy(); }
+    }
+
+    private async Task ImportAllAsync()
+    {
+        if (_busy || _platform is null || _remotePlaylists is null || _remotePlaylists.Count == 0) return;
+        TryBeginBusy();
+        try
+        {
+            _status.Text = $"正在导入 {_remotePlaylists.Count} 个歌单，请稍候。";
+            Announce(_status.Text, "playlist-import", AnnouncementKind.Busy);
+            var results = await _service.ImportPlaylistsAsync(_platform, _remotePlaylists, message => { _status.Text = message; Announce(message, "playlist-import", AnnouncementKind.Busy); });
+            var imported = results.Sum(result => result.ImportedCount);
+            var skipped = results.Sum(result => result.SkippedCount);
+            _status.Text = $"批量导入完成：{results.Count} 个歌单，新增 {imported}，跳过 {skipped}。";
+            Announce(_status.Text, "playlist-import", AnnouncementKind.Success);
+        }
+        catch (Exception ex) { WinFormsUi.Error(this, ex, "导入全部歌单"); }
+        finally { EndBusy(); }
     }
 
     private void ShowPlaylists()
     {
+        _previewingSongs = false;
         _playlists.Focus();
         // Moving the focus to the playlist list is the whole result of this command, and the reader names
         // the newly focused list by itself. The text still reaches the live region to be re-read.
@@ -650,6 +720,16 @@ public class PlaylistImportForm : Form
         AnnouncementKind kind = AnnouncementKind.Status,
         AnnouncementSpeech speech = AnnouncementSpeech.FollowPreference) =>
         _announcer.Announce(new AccessibleAnnouncement(message, kind, activity, speech));
+
+
+    private bool TryBeginBusy()
+    {
+        if (_busy) return false;
+        _busy = true;
+        return true;
+    }
+
+    private void EndBusy() => _busy = false;
 
     private static Button CreateButton(string text, int tabIndex, EventHandler onClick)
     {
@@ -879,6 +959,7 @@ public class ManualSourceSwitchForm : Form
 
     private void Announce(string message, string activity, AnnouncementKind kind = AnnouncementKind.Status) =>
         _announcer.Announce(new AccessibleAnnouncement(message, kind, activity));
+
 
     private static Button CreateButton(string text, int tabIndex, EventHandler onClick)
     {

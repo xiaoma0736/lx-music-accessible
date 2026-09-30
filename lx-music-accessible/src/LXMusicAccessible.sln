@@ -19,8 +19,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LXMusicAccessible.Tests", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LXMusicAccessible.App", "LXMusicAccessible.App\LXMusicAccessible.App.csproj", "{EC9CF085-9394-4FD3-BC1A-489EE0CBFBBB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LXMusicAccessible.Setup", "LXMusicAccessible.Setup\LXMusicAccessible.Setup.csproj", "{5E170BD8-1297-4825-817E-6B9C51260BEF}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -127,18 +125,6 @@ Global
 		{EC9CF085-9394-4FD3-BC1A-489EE0CBFBBB}.Release|x64.Build.0 = Release|Any CPU
 		{EC9CF085-9394-4FD3-BC1A-489EE0CBFBBB}.Release|x86.ActiveCfg = Release|Any CPU
 		{EC9CF085-9394-4FD3-BC1A-489EE0CBFBBB}.Release|x86.Build.0 = Release|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Debug|x64.Build.0 = Debug|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Debug|x86.Build.0 = Debug|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Release|Any CPU.Build.0 = Release|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Release|x64.ActiveCfg = Release|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Release|x64.Build.0 = Release|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Release|x86.ActiveCfg = Release|Any CPU
-		{5E170BD8-1297-4825-817E-6B9C51260BEF}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

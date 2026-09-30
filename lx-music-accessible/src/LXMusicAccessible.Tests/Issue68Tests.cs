@@ -171,6 +171,7 @@ public sealed class Issue68Tests
         var sources = (MusicSourceService)app.Services.GetRequiredService<IMusicSourceService>();
         await sources.InitializeScriptSourcesAsync();
         var imported = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
+        Assert.True(await sources.SetDefaultSourceAsync("netease"));
         var priorDefaultId = sources.GetDefaultSource()!.Id;
         var priorLastUpdate = imported.LastUpdateDate;
 
@@ -214,7 +215,7 @@ public sealed class Issue68Tests
         var persistedImported = Assert.Single(persisted, source => source.Id == imported.Id);
         Assert.True(persistedImported.IsEnabled);
         Assert.False(persistedImported.IsDefault);
-        Assert.DoesNotContain(persisted, source => source.IsDefault);
+        Assert.Equal("netease", Assert.Single(persisted, source => source.IsDefault).Id);
     }
 
     // ================================================================

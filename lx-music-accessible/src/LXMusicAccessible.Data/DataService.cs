@@ -20,7 +20,7 @@ public sealed record DatabaseMigrationResult(
 /// </summary>
 public class DatabaseInitializer
 {
-    private const int CurrentSchemaVersion = 1;
+    private const int CurrentSchemaVersion = 2;
     private readonly ILogger<DatabaseInitializer> _logger;
     private readonly string _dataDir;
     private const string DbFileName = "lxmusic.db";
@@ -58,6 +58,7 @@ public class DatabaseInitializer
                 using var migrationConnection = await OpenMigrationConnectionAsync(dbFilePath);
                 await InitializeSchemaAsync(migrationConnection);
                 orphansRemoved = await NormalizePlaylistItemsAsync(migrationConnection);
+                await NormalizePlaylistRemoteKeysAsync(migrationConnection);
                 await migrationConnection.ExecuteAsync($"PRAGMA user_version = {CurrentSchemaVersion}");
                 await EnableAndVerifyForeignKeysAsync(migrationConnection);
                 await VerifyIntegrityAsync(migrationConnection);
@@ -214,6 +215,48 @@ public class DatabaseInitializer
         return orphansRemoved;
     }
 
+    private static async Task NormalizePlaylistRemoteKeysAsync(SqliteConnection connection)
+    {
+        // Older versions could store a remote playlist more than once. Prefer the earliest row; snapshots
+        // and remote favourites are separate identities even when they refer to the same remote playlist.
+        await connection.ExecuteAsync(@"
+            DELETE FROM Playlists
+            WHERE IsSnapshot = 1
+              AND Source IS NOT NULL AND Source <> ''
+              AND RemoteId IS NOT NULL AND RemoteId <> ''
+              AND rowid NOT IN (
+                  SELECT MIN(rowid)
+                  FROM Playlists
+                  WHERE IsSnapshot = 1
+                    AND Source IS NOT NULL AND Source <> ''
+                    AND RemoteId IS NOT NULL AND RemoteId <> ''
+                  GROUP BY Source, RemoteId)");
+        await connection.ExecuteAsync(@"
+            DELETE FROM Playlists
+            WHERE IsSnapshot = 0 AND IsLocal = 0
+              AND Source IS NOT NULL AND Source <> ''
+              AND RemoteId IS NOT NULL AND RemoteId <> ''
+              AND rowid NOT IN (
+                  SELECT MIN(rowid)
+                  FROM Playlists
+                  WHERE IsSnapshot = 0 AND IsLocal = 0
+                    AND Source IS NOT NULL AND Source <> ''
+                    AND RemoteId IS NOT NULL AND RemoteId <> ''
+                  GROUP BY Source, RemoteId)");
+        await connection.ExecuteAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_Playlists_UniqueSnapshot
+            ON Playlists(Source, RemoteId)
+            WHERE IsSnapshot = 1
+              AND Source IS NOT NULL AND Source <> ''
+              AND RemoteId IS NOT NULL AND RemoteId <> ''");
+        await connection.ExecuteAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_Playlists_UniqueRemoteFavorite
+            ON Playlists(Source, RemoteId)
+            WHERE IsSnapshot = 0 AND IsLocal = 0
+              AND Source IS NOT NULL AND Source <> ''
+              AND RemoteId IS NOT NULL AND RemoteId <> ''");
+    }
+
     private static async Task<int> ReadSchemaVersionAsync(string dbFilePath)
     {
         using var connection = await SqliteDatabaseConnection.OpenAsync(dbFilePath);
@@ -249,10 +292,17 @@ public class DatabaseInitializer
 
     private static async Task VerifyIntegrityAsync(SqliteConnection connection)
     {
-        var violations = (await connection.QueryAsync<string>("PRAGMA foreign_key_check")).ToList();
+        var violationRows = (await connection.QueryAsync<dynamic>("SELECT * FROM pragma_foreign_key_check")).ToList();
+        var violations = violationRows.Select(row =>
+        {
+            var values = (IDictionary<string, object?>)row;
+            return string.Join(
+                ", ",
+                values.Select(pair => $"{pair.Key}={pair.Value ?? "<null>"}"));
+        }).ToList();
         if (violations.Count != 0)
             throw new InvalidOperationException(
-                $"Database foreign key validation found {violations.Count} violation(s).");
+                $"Database foreign key validation found {violations.Count} violation(s): {string.Join(", ", violations)}.");
     }
 
     private static void RestoreBackup(string backupPath, string dbFilePath)

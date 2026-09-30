@@ -630,9 +630,7 @@ public sealed class MusicBrowseWorkflow
         return RunLatestAsync(
             revision,
             $"正在加载远程歌单：{playlist.Name}",
-            cancellationToken => playlist.Type == PlaylistType.Recommend
-                ? _source.GetRankingDetailAsync(playlist.RemoteId, requestedPage, BrowsePageSize, cancellationToken)
-                : _source.GetPlaylistDetailAsync(playlist.RemoteId, requestedPage, BrowsePageSize, cancellationToken),
+            cancellationToken => LoadSavedPlaylistDetailAsync(playlist, requestedPage, cancellationToken),
             result => result.Items.Count == 0 ? "该歌单暂无歌曲" : "加载完成",
             BrowseFocusTarget.SavedPlaylistSongs,
             result =>
@@ -640,6 +638,37 @@ public sealed class MusicBrowseWorkflow
                 var items = previous is null ? result.Items.ToArray() : previous.Items.Concat(result.Items).ToArray();
                 _savedPlaylistSnapshot = new(playlist, items, requestedPage, result.TotalItems);
             });
+    }
+
+    /// <summary>Loads a saved network playlist, tolerating legacy favorites saved as Recommend.</summary>
+    private async Task<PagedResult<MusicInfo>> LoadSavedPlaylistDetailAsync(
+        Playlist playlist,
+        int requestedPage,
+        CancellationToken cancellationToken)
+    {
+        if (playlist.Type != PlaylistType.Recommend)
+            return await _source.GetPlaylistDetailAsync(playlist.RemoteId, requestedPage, BrowsePageSize, cancellationToken);
+
+        try
+        {
+            var ranking = await _source.GetRankingDetailAsync(
+                playlist.RemoteId, requestedPage, BrowsePageSize, cancellationToken);
+            if (ranking.Items.Count > 0 || ranking.TotalItems > 0)
+                return ranking;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Saved playlist ranking lookup returned no detail: {PlaylistId}", playlist.RemoteId);
+        }
+
+        // Favorites created before remote kinds were distinguished used Recommend for category
+        // playlists. Ranking lookups return an empty page for those IDs, so retry the playlist API.
+        return await _source.GetPlaylistDetailAsync(
+            playlist.RemoteId, requestedPage, BrowsePageSize, cancellationToken);
     }
 
     public Task<BrowseResult<IReadOnlyList<Ranking>>> ActivateRankingSourceAsync()

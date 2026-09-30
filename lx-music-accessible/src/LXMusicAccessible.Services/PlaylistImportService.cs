@@ -63,7 +63,7 @@ public class PlaylistImportService : IPlaylistImportService
     private readonly ILogger<PlaylistImportService> _logger;
     private readonly Dictionary<string, AccountInfo> _accounts = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _restoreLock = new();
-    private bool _accountsRestored;
+    private Task? _restoreTask;
 
     public PlaylistImportService(
         IEnumerable<IPlaylistImportProvider> providers,
@@ -83,14 +83,17 @@ public class PlaylistImportService : IPlaylistImportService
     public AccountInfo? GetAccount(string platformId) =>
         _accounts.TryGetValue(platformId ?? string.Empty, out var a) ? a : null;
 
-    public async Task EnsureAccountsLoadedAsync()
+    public Task EnsureAccountsLoadedAsync()
     {
-        if (_accountsRestored) return;
         lock (_restoreLock)
         {
-            if (_accountsRestored) return;
-            _accountsRestored = true;
+            _restoreTask ??= RestoreAccountsCoreAsync();
+            return _restoreTask;
         }
+    }
+
+    private async Task RestoreAccountsCoreAsync()
+    {
         foreach (var p in _providers)
         {
             try
@@ -176,6 +179,18 @@ public class PlaylistImportService : IPlaylistImportService
         var songs = await p.GetPlaylistSongsAsync(remote);
         cancellationToken.ThrowIfCancellationRequested();
 
+        // A song without a stable remote identity or title cannot be found, played or understood later.
+        var validSongs = songs
+            .Where(song => song is not null
+                && !string.IsNullOrWhiteSpace(song.Id)
+                && !string.IsNullOrWhiteSpace(song.Title))
+            .ToArray();
+        var invalidCount = songs.Count - validSongs.Length;
+        if (invalidCount > 0)
+            announce?.Invoke($"已跳过 {invalidCount} 首无效歌曲。");
+        if (validSongs.Length == 0)
+            throw new InvalidOperationException("歌单中没有可导入的有效歌曲。");
+
         // 已存在同名同源同远端 id 的快照歌单则覆盖更新，否则新建
         var remoteKey = $"{platformId}_{remote.RemoteId}";
         var existing = (await _dataService.GetPlaylistsAsync())
@@ -209,7 +224,7 @@ public class PlaylistImportService : IPlaylistImportService
 
         var replacement = await _dataService.ReplacePlaylistSnapshotAsync(
             playlist,
-            songs,
+            validSongs,
             cancellationToken);
 
         return new PlaylistImportResult

@@ -57,9 +57,7 @@ $artifacts = Join-Path $root "artifacts"
 $releaseRoot = Join-Path $artifacts "release"
 $staging = Join-Path $artifacts "release-staging"
 $application = Join-Path $staging "app-framework-dependent"
-$setupOutput = Join-Path $staging "setup"
-$payloadArchive = Join-Path $staging "payload.zip"
-$setupProject = Join-Path $src "LXMusicAccessible.Setup\LXMusicAccessible.Setup.csproj"
+$installerScript = Join-Path $root "packaging\inno\LXMusicAccessible.iss"
 $appProject = Join-Path $src "LXMusicAccessible.App\LXMusicAccessible.App.csproj"
 
 function Invoke-DotNet([string[]]$Arguments, [string]$FailureMessage) {
@@ -154,8 +152,8 @@ function Assert-SystemTextJsonRuntime([string]$Application) {
     }
 }
 function Invoke-Installer([string]$Installer, [string[]]$Arguments, [string]$FailureMessage) {
-    & $Installer @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "$FailureMessage ExitCode=$LASTEXITCODE" }
+    $process = Start-Process -FilePath $Installer -ArgumentList $Arguments -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "$FailureMessage ExitCode=$($process.ExitCode)" }
 }
 
 $releaseRoot = [System.IO.Path]::GetFullPath($releaseRoot)
@@ -186,12 +184,26 @@ if (Test-Path -LiteralPath $staging) {
 }
 New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
-# Build-time source checks keep the installer runtime gate pinned to the .NET 4.8 Release value 528040.
-$setupSource = [System.IO.File]::ReadAllText((Join-Path $src "LXMusicAccessible.Setup\Program.cs"))
-$runtimeSource = [System.IO.File]::ReadAllText((Join-Path $src "LXMusicAccessible.Core\DotNetFrameworkRequirement.cs"))
-if (-not $setupSource.Contains("DotNetFrameworkRequirement.Evaluate()") -or
-    -not $runtimeSource.Contains("RequiredRelease = 528040")) {
+# Build-time script checks keep the Inno Setup runtime gate pinned to .NET Framework 4.8.
+$installerSource = [System.IO.File]::ReadAllText($installerScript)
+if (-not $installerSource.Contains("Release >= 528040")) {
     throw "Installer .NET Framework 4.8 runtime gate is missing."
+}
+if (-not $installerSource.Contains('MessagesFile: "Languages\ChineseSimplified.isl"')) {
+    throw "Installer Simplified Chinese language gate is missing."
+}
+
+$innoCandidates = @(
+    (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
+    (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+    (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
+)
+if ($env:INNO_SETUP6) {
+    $innoCandidates = @($env:INNO_SETUP6) + $innoCandidates
+}
+$innoCompiler = @($innoCandidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1)
+if (-not $innoCompiler) {
+    throw "Inno Setup 6 compiler (ISCC.exe) was not found. Install JRSoftware.InnoSetup or set INNO_SETUP6."
 }
 
 [xml]$appProjectXml = [System.IO.File]::ReadAllText($appProject)
@@ -232,41 +244,37 @@ $frameworkZip = Join-Path $releaseRoot "LXMusicAccessible-$version-win-x64-frame
 $setupArtifact = Join-Path $releaseRoot "LXMusicAccessible-Setup-$version-win-x64.exe"
 $manifestPath = Join-Path $releaseRoot "release-manifest.json"
 
-Write-Host "== 1/5 Build framework-dependent payload and x64 installer =="
+Write-Host "== 1/5 Build framework-dependent payload and Inno Setup installer =="
 Invoke-DotNet @(
-    "publish", $setupProject,
+    "publish", $appProject,
     "--configuration", "Release",
     "--runtime", "win-x64",
     "--self-contained", "false",
-    "-p:InstallerPayloadDirectory=$application",
-    "-p:InstallerPayloadArchive=$payloadArchive",
-    "--output", $setupOutput
-) "Installer publish failed."
+    "-p:PublishSingleFile=false",
+    "--output", $application
+) "Application publish failed."
 
-$setupExecutable = Join-Path $setupOutput "LXMusicAccessible.Setup.exe"
-if (-not (Test-Path -LiteralPath $setupExecutable -PathType Leaf)) {
-    throw "Installer executable was not produced: $setupExecutable"
-}
 Assert-Payload $application $requiredPayload
 Assert-SystemTextJsonRuntime $application
 Assert-NativeArchitecture $application $nativeFiles
-Assert-NativeArchitecture $setupOutput @("LXMusicAccessible.Setup.exe")
 $sqliteVersion = Assert-SqliteVersion $application $minimumSqliteVersion
 
 $appVersion = (Get-Item -LiteralPath (Join-Path $application $applicationExecutable)).VersionInfo.ProductVersion
-$setupVersion = (Get-Item -LiteralPath $setupExecutable).VersionInfo.ProductVersion
-if (-not $appVersion.StartsWith($version, [System.StringComparison]::Ordinal) -or
-    -not $setupVersion.StartsWith($version, [System.StringComparison]::Ordinal)) {
-    throw "Artifact version mismatch. Expected $version; app=$appVersion; setup=$setupVersion"
+if (-not $appVersion.StartsWith($version, [System.StringComparison]::Ordinal)) {
+    throw "Application artifact version mismatch. Expected $version; app=$appVersion"
+}
+Write-Host "== 2/5 Create release artifacts =="
+& $innoCompiler "/DAppSource=$application" "/DAppVersion=$version" "/DOutputDir=$releaseRoot" $installerScript
+if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed. ExitCode=$LASTEXITCODE" }
+if (-not (Test-Path -LiteralPath $setupArtifact -PathType Leaf)) {
+    throw "Inno Setup installer was not produced: $setupArtifact"
 }
 
-Write-Host "== 2/5 Create release artifacts =="
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
     $application,
     $frameworkZip,
     [System.IO.Compression.CompressionLevel]::Optimal,
     $false)
-Copy-Item -LiteralPath $setupExecutable -Destination $setupArtifact -Force
 
 Write-Host "== 3/5 Validate artifact contents and versions =="
 Assert-ZipPayload $frameworkZip $requiredPayload
@@ -334,6 +342,8 @@ $smokeTarget = Join-Path $smokeParent "LXMusicAccessible"
 $parentSentinel = Join-Path $smokeParent "parent-sentinel.txt"
 $dataSentinel = Join-Path $smokeParent "retained-user-data.txt"
 $unknownInstallFile = Join-Path $smokeTarget "unknown-user-file.txt"
+$installLog = Join-Path $smokeParent "install.log"
+$uninstallLog = Join-Path $smokeParent "uninstall.log"
 $smokeParent = [System.IO.Path]::GetFullPath($smokeParent)
 $stagingPrefix = $staging.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
 if (-not $smokeParent.StartsWith($stagingPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
@@ -346,33 +356,47 @@ try {
     [System.IO.File]::WriteAllText($parentSentinel, "keep")
     [System.IO.File]::WriteAllText($dataSentinel, "keep")
 
-    Invoke-Installer $setupArtifact @("--install-parent", $smokeParent) "First install smoke test failed."
-    $markerPath = Join-Path $smokeTarget ".lxmusic-install-owner.json"
-    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) { throw "Install ownership marker is missing." }
-    $firstMarker = [System.IO.File]::ReadAllText($markerPath) | ConvertFrom-Json
+    $installArgs = @(
+        "/VERYSILENT",
+        "/SUPPRESSMSGBOXES",
+        "/NORESTART",
+        "/LOG=$installLog",
+        "/DIR=$smokeTarget"
+    )
+    Invoke-Installer $setupArtifact $installArgs "First install smoke test failed."
+    $installedExecutable = Join-Path $smokeTarget $applicationExecutable
+    if (-not (Test-Path -LiteralPath $installedExecutable -PathType Leaf)) { throw "Installed application executable is missing." }
+    if (-not (Test-Path -LiteralPath (Join-Path $smokeTarget $userDocuments[0]) -PathType Leaf)) { throw "Installed user document is missing." }
 
-    Invoke-Installer $setupArtifact @("--install-parent", $smokeParent) "Upgrade smoke test failed."
-    $upgradedMarker = [System.IO.File]::ReadAllText($markerPath) | ConvertFrom-Json
-    if ($upgradedMarker.OwnershipId -ne $firstMarker.OwnershipId) {
-        throw "Upgrade changed the install ownership identity."
-    }
+    Invoke-Installer $setupArtifact $installArgs "Upgrade smoke test failed."
 
     [System.IO.File]::WriteAllText($unknownInstallFile, "keep")
-    Invoke-Installer $setupArtifact @("--uninstall-target", $smokeTarget, $firstMarker.OwnershipId) "Preserving uninstall smoke test failed."
+    $uninstallArgs = @(
+        "/VERYSILENT",
+        "/SUPPRESSMSGBOXES",
+        "/NORESTART",
+        "/LOG=$uninstallLog"
+    )
+    Invoke-Installer (Join-Path $smokeTarget "unins000.exe") $uninstallArgs "Preserving uninstall smoke test failed."
     if (-not (Test-Path -LiteralPath $unknownInstallFile -PathType Leaf) -or
         -not (Test-Path -LiteralPath $parentSentinel -PathType Leaf) -or
         -not (Test-Path -LiteralPath $dataSentinel -PathType Leaf)) {
         throw "Uninstall removed unknown, parent, or retained user data."
     }
 
-    Remove-Item -LiteralPath $unknownInstallFile -Force
-    Invoke-Installer $setupArtifact @("--uninstall-target", $smokeTarget, $firstMarker.OwnershipId) "Complete uninstall smoke test failed."
-    Invoke-Installer $setupArtifact @("--uninstall-target", $smokeTarget, $firstMarker.OwnershipId) "Repeated uninstall smoke test failed."
-    if (Test-Path -LiteralPath $smokeTarget) { throw "Complete uninstall left the application directory behind." }
-    if (-not (Test-Path -LiteralPath $parentSentinel -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $dataSentinel -PathType Leaf)) {
-        throw "Complete uninstall removed parent or retained user data."
-    }
+    $completeParent = Join-Path $smokeParent "complete-install"
+    $completeTarget = Join-Path $completeParent "LXMusicAccessible"
+    $completeLog = Join-Path $smokeParent "complete-uninstall.log"
+    $completeArgs = @(
+        "/VERYSILENT",
+        "/SUPPRESSMSGBOXES",
+        "/NORESTART",
+        "/LOG=$installLog",
+        "/DIR=$completeTarget"
+    )
+    Invoke-Installer $setupArtifact $completeArgs "Complete install smoke test failed."
+    Invoke-Installer (Join-Path $completeTarget "unins000.exe") $uninstallArgs "Complete uninstall smoke test failed."
+    if (Test-Path -LiteralPath $completeTarget) { throw "Complete uninstall left the application directory behind." }
 }
 finally {
     if (Test-Path -LiteralPath $smokeParent) {

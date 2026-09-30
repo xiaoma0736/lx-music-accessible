@@ -35,6 +35,53 @@ public sealed class SavedPlaylistWorkflow(
     private IReadOnlyList<MusicInfo> _songs = [];
     private long _revision;
 
+    public static string Describe(Playlist? playlist)
+    {
+        if (playlist is null) return "未选择歌单";
+        return $"{playlist.Name}（{PlaylistKind(playlist)}）";
+    }
+
+    public static string PlaylistKind(Playlist playlist)
+    {
+        if (playlist.IsSnapshot) return "本地快照";
+        if (playlist.IsLocal) return "本地歌曲";
+        if (!string.IsNullOrWhiteSpace(playlist.RemoteId)) return "远程收藏";
+        return "在线歌单";
+    }
+
+    public static bool CanDelete(Playlist? playlist) =>
+        playlist is not null && playlist.Type != PlaylistType.System;
+
+    public static string RenamePrompt(Playlist playlist)
+    {
+        if (playlist.IsLocal) return "重命名本地歌曲歌单";
+        if (playlist.IsSnapshot) return "重命名本地快照歌单（重新导入时可能被远程名称覆盖）";
+        if (!string.IsNullOrWhiteSpace(playlist.RemoteId)) return "重命名远程收藏（只修改本地显示名称）";
+        return "重命名歌单";
+    }
+
+    public static string DeleteConfirmation(Playlist playlist)
+    {
+        if (playlist.IsSnapshot)
+            return $"确定要删除本地快照歌单“{playlist.Name}”吗？将删除本地快照和歌曲列表，不影响远程原歌单。";
+        if (!playlist.IsLocal && !string.IsNullOrWhiteSpace(playlist.RemoteId))
+            return $"确定要删除远程收藏歌单“{playlist.Name}”吗？只删除本地收藏，不删除远程歌单。";
+        if (playlist.IsLocal)
+            return $"确定要删除本地歌曲歌单“{playlist.Name}”吗？歌曲将从本地歌单移除，不会删除磁盘上的音频文件。";
+        return $"确定要删除在线歌单“{playlist.Name}”吗？";
+    }
+
+    public static string ClearConfirmation(Playlist playlist)
+    {
+        if (playlist.IsSnapshot)
+            return $"确定要清空本地快照歌单“{playlist.Name}”吗？歌曲将从本地快照中永久移除。";
+        if (!playlist.IsLocal && !string.IsNullOrWhiteSpace(playlist.RemoteId))
+            return $"确定要清空远程收藏歌单“{playlist.Name}”吗？仅清空本地列表；下次进入可能从远程重新加载。";
+        if (playlist.IsLocal)
+            return $"确定要清空本地歌曲歌单“{playlist.Name}”吗？歌曲将从本地歌单移除，不会删除磁盘上的音频文件。";
+        return $"确定要清空在线歌单“{playlist.Name}”吗？";
+    }
+
     public SavedPlaylistSnapshot Current
     {
         get
@@ -45,13 +92,16 @@ public sealed class SavedPlaylistWorkflow(
 
     public async Task<SavedPlaylistResult> LoadAsync()
     {
-        var playlists = await data.GetFavoritePlaylistsAsync(local: false);
+        var online = await data.GetFavoritePlaylistsAsync(local: false);
+        var local = await data.GetFavoritePlaylistsAsync(local: true);
+        var playlists = online.Concat(local).ToList();
         lock (_gate)
         {
             var selectedId = _selected?.Id;
             _playlists = playlists;
             _selected = playlists.FirstOrDefault(item => item.Id == selectedId)
-                ?? playlists.FirstOrDefault(item => item.Type == PlaylistType.System)
+                ?? playlists.FirstOrDefault(item => item.Type == PlaylistType.System && !item.IsLocal)
+                ?? playlists.FirstOrDefault(item => item.Type == PlaylistType.System && item.IsLocal)
                 ?? playlists.FirstOrDefault();
             _songs = [];
             _revision++;
@@ -103,9 +153,25 @@ public sealed class SavedPlaylistWorkflow(
             if (revision != _revision || _selected?.Id != selected.Id)
                 return Failure(string.Empty);
             _songs = songs.ToArray();
+            var source = selected.IsSnapshot
+                ? "本地快照"
+                : selected.IsLocal
+                    ? "本地歌曲列表"
+                    : remote
+                        ? songs.Count == 0 ? "远程" : "本地缓存"
+                        : "本地歌单";
+            string message;
+            if (_songs.Count == 0 && source == "远程")
+                message = $"已从远程加载：{Describe(selected)}；远程歌单暂无歌曲";
+            else if (_songs.Count == 0)
+                message = $"{selected.Name}暂无歌曲（{PlaylistKind(selected)}）";
+            else if (source == "远程")
+                message = $"已从远程加载：{Describe(selected)}";
+            else
+                message = $"已从{source}读取：{Describe(selected)}";
             return new(
                 Snapshot() with { HasMore = hasMore },
-                _songs.Count == 0 ? "该歌单暂无歌曲" : "加载完成",
+                message,
                 focus);
         }
     }
@@ -134,18 +200,25 @@ public sealed class SavedPlaylistWorkflow(
         if (string.IsNullOrWhiteSpace(name)) return Failure("名称不能为空");
         await data.RenamePlaylistAsync(selected.Id, name.Trim());
         var loaded = await LoadAsync();
-        return loaded with { Message = $"在线歌单已重命名为：{name.Trim()}" };
+        var kind = selected.IsSnapshot ? "本地快照歌单" : PlaylistKind(selected);
+        var scope = selected.IsSnapshot
+            ? "；重新导入时可能被远程名称覆盖"
+            : !selected.IsLocal && !string.IsNullOrWhiteSpace(selected.RemoteId)
+                ? "；只修改本地显示名称"
+                : string.Empty;
+        return loaded with { Message = $"{kind}已重命名为：{name.Trim()}{scope}" };
     }
 
     public async Task<SavedPlaylistResult> DeleteSelectedAsync()
     {
         var selected = SelectedOrNull();
         if (selected is null) return Failure("请先选择要删除的在线歌单");
-        if (selected.Type == PlaylistType.System) return Failure("默认收藏歌单不能删除");
+        if (!CanDelete(selected))
+            return Failure(selected.IsLocal ? "默认本地歌曲歌单不能删除" : "默认在线歌单不能删除");
         await data.DeletePlaylistAsync(selected.Id);
         lock (_gate) _selected = null;
         var loaded = await LoadAsync();
-        return loaded with { Message = $"已删除在线歌单：{selected.Name}" };
+        return loaded with { Message = $"已删除{PlaylistKind(selected)}：{Describe(selected)}" };
     }
 
     public async Task<SavedPlaylistResult> AddSongsAsync(IEnumerable<MusicInfo> songs)
@@ -177,6 +250,7 @@ public sealed class SavedPlaylistWorkflow(
             var localPlaylist = await data.GetOrCreateDefaultPlaylistAsync(local: true);
             if (localPlaylist is null) return Failure("无法创建本地歌曲歌单");
             var addition = await data.AddSongsToPlaylistAsync(localPlaylist.Id, local);
+            if (remote.Length == 0) lock (_gate) _selected = localPlaylist;
             messages.Add(addition.AddedCount == 0
                 ? $"所选歌曲已在本地歌曲中：{localPlaylist.Name}"
                 : $"已添加 {addition.AddedCount} 首歌曲到本地歌曲：{localPlaylist.Name}"
@@ -184,7 +258,9 @@ public sealed class SavedPlaylistWorkflow(
         }
 
         await LoadAsync();
-        return new(Current, string.Join("；", messages));
+        var activated = await ActivateAsync();
+        var snapshot = activated.Succeeded ? activated.Snapshot : Current;
+        return new(snapshot, string.Join("；", messages));
     }
 
     private static bool IsLocalSong(MusicInfo song) =>
@@ -197,7 +273,7 @@ public sealed class SavedPlaylistWorkflow(
         if (selected is null) return Failure("请先选择在线歌单");
         await data.RemoveSongFromPlaylistAsync(selected.Id, music);
         var activated = await ActivateAsync();
-        return activated with { Message = $"已从{selected.Name}移除：{music.Title}" };
+        return activated with { Message = $"已从{Describe(selected)}移除：{music.Title}" };
     }
 
     public async Task<SavedPlaylistResult> ClearAsync()
@@ -206,7 +282,11 @@ public sealed class SavedPlaylistWorkflow(
         if (selected is null) return Failure("请先选择在线歌单");
         await data.ClearPlaylistItemsAsync(selected.Id);
         var activated = await ActivateAsync();
-        return activated with { Message = $"在线歌单已清空：{selected.Name}" };
+        var scope = !selected.IsSnapshot && !selected.IsLocal && !string.IsNullOrWhiteSpace(selected.RemoteId)
+            ? "；重新进入时可能从远程重新加载"
+            : string.Empty;
+        var clearKind = selected.IsSnapshot ? "本地快照歌单" : PlaylistKind(selected);
+        return activated with { Message = $"{clearKind}已清空：{Describe(selected)}{scope}" };
     }
 
     public async Task<SavedPlaylistResult> CollectRemoteAsync(RemotePlaylistFavorite request)

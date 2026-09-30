@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using Jint;
 using Microsoft.ClearScript.V8;
 using Microsoft.Extensions.Logging;
@@ -18,7 +19,7 @@ namespace LXMusicAccessible.Services;
 /// </summary>
 public class LxScriptEngine
 {
-    private static readonly TimeSpan ExecutionTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ExecutionTimeout = TimeSpan.FromSeconds(30);
     // Supported obfuscated sources expand lookup tables during initialization; keep this bounded compatibility budget.
     private const int MaxStatements = 1_000_000;
     private const long MaxHeapBytes = MaxHeapMiB * 1024 * 1024;
@@ -235,24 +236,39 @@ public class LxScriptEngine
     }
 
     /// <summary>每次动作使用独立 V8 引擎，避免脚本间全局状态污染。</summary>
-    private string? ExecuteV8Core(LxScriptInfo script, string? action, MusicInfo music, string source, string? quality, CancellationToken cancellationToken)
+    private string? ExecuteV8Core(
+        LxScriptInfo script,
+        string? action,
+        MusicInfo music,
+        string source,
+        string? quality,
+        CancellationToken cancellationToken)
     {
         var rawScript = script.RawScript;
+        if (string.IsNullOrEmpty(rawScript))
+            throw new LxScriptActionException("脚本内容为空");
+
         using var engine = CreateV8Engine(cancellationToken);
         using var watchdog = cancellationToken.Register(engine.Interrupt);
         var lxSource = action == null ? string.Empty : ToLxSource(source);
         ConfigureV8Inputs(engine, script, action, music, lxSource, quality);
         engine.Execute(ShimJs);
         engine.Execute(rawScript);
+
         if (action == null)
         {
             if (!(bool)engine.Evaluate("globalThis.lx.__probe()"))
                 throw new LxScriptActionException("脚本未注册 request 处理器");
-            ApplyInitedSources(script, engine.Evaluate("String(globalThis.__lxInitedJson || '')") as string);
+
+            ApplyInitedSources(
+                script,
+                engine.Evaluate("String(globalThis.__lxInitedJson || '')") as string);
             return null;
         }
 
-        engine.Execute(InvokeSnippet);
+        // lx.request is asynchronous. Wait for the promise before reading __r.
+        var invocation = (Task<object?>)engine.Evaluate(InvokeSnippet);
+        invocation.GetAwaiter().GetResult();
         return (string)engine.Evaluate("JSON.stringify(globalThis.__r)");
     }
 
@@ -266,7 +282,9 @@ public class LxScriptEngine
                     MaxOldSpaceSize = MaxHeapMiB,
                     MaxNewSpaceSize = 16,
                 },
-                V8ScriptEngineFlags.EnableDateTimeConversion | V8ScriptEngineFlags.UseCaseInsensitiveMemberBinding);
+                V8ScriptEngineFlags.EnableDateTimeConversion
+                | V8ScriptEngineFlags.EnableTaskPromiseConversion
+                | V8ScriptEngineFlags.UseCaseInsensitiveMemberBinding);
             engine.EnableRuntimeInterruptPropagation = true;
             engine.MaxRuntimeHeapSize = (nuint)(MaxHeapBytes - (16L * 1024 * 1024));
             engine.RuntimeHeapSizeViolationPolicy = V8RuntimeViolationPolicy.Interrupt;
@@ -296,16 +314,21 @@ public class LxScriptEngine
     private bool ExecuteJintLoad(LxScriptInfo script, CancellationToken cancellationToken)
     {
         var rawScript = script.RawScript;
-        if (string.IsNullOrEmpty(rawScript)) throw new LxScriptActionException("脚本内容为空");
+        if (string.IsNullOrEmpty(rawScript))
+            throw new LxScriptActionException("脚本内容为空");
+
         using var engine = CreateEngine(cancellationToken);
         engine.Execute(ShimJs);
         engine.Execute(rawScript);
+
         if (!engine.Evaluate("globalThis.lx.__probe()").AsBoolean())
             throw new LxScriptActionException("脚本未注册 request 处理器");
-        ApplyInitedSources(script, engine.Evaluate("String(globalThis.__lxInitedJson || '')").AsString());
+
+        ApplyInitedSources(
+            script,
+            engine.Evaluate("String(globalThis.__lxInitedJson || '')").AsString());
         return true;
     }
-
     private string ExecuteJintAction(LxScriptInfo script, string action, MusicInfo music, string source, string? quality, CancellationToken cancellationToken)
     {
         var lxSource = ToLxSource(source);

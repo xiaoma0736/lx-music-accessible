@@ -682,9 +682,9 @@ public sealed class WinFormsAccessibilityAuditTests
     }
 
     /// <summary>
-    /// The import service can only import a whole remote playlist and the preview list is single-selection,
-    /// so a "select all songs" plus "import selected songs" pair would promise something nothing behind it
-    /// can do. A command that a screen reader user cannot verify by eye has to match the real capability.
+    /// The service can import one whole remote playlist, or all listed remote playlists as one explicit
+    /// batch action. The preview list remains single-selection, so selected-song commands would still
+    /// promise something nothing behind them can do.
     /// </summary>
     [Fact]
     public void Playlist_import_exposes_only_the_import_command_that_the_service_can_perform()
@@ -694,7 +694,7 @@ public sealed class WinFormsAccessibilityAuditTests
             using var form = CreatePlaylistImport();
             var commands = Descendants(form).OfType<Button>().Select(button => button.AccessibleName).ToArray();
 
-            Assert.Equal(new[] { "导入当前歌单" }, commands
+            Assert.Equal(new[] { "导入当前歌单", "导入全部歌单" }, commands
                 .Where(name => name is not null && name.StartsWith("导入", StringComparison.Ordinal))
                 .ToArray());
             Assert.DoesNotContain("全选歌曲", commands);
