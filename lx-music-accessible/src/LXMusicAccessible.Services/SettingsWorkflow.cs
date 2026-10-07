@@ -442,6 +442,19 @@ public sealed class SettingsWorkflow : IDisposable
         settings.DefaultPlayMode = mode;
         settings.ShuffleMode = mode == PlayMode.Shuffle;
         settings.LoopMode = mode is PlayMode.Loop or PlayMode.SingleLoop;
+        settings.BatchDownloadDelaySeconds = settings.BatchDownloadDelaySeconds switch
+        {
+            < 0 => 0,
+            > 60 => 60,
+            _ => settings.BatchDownloadDelaySeconds
+        };
+        settings.DownloadSpeedLimitKbps = settings.DownloadSpeedLimitKbps switch
+        {
+            <= 0 => 0,
+            < 32 => 32,
+            > 100000 => 100000,
+            _ => settings.DownloadSpeedLimitKbps
+        };
         if (!Qualities.Contains(settings.DefaultPlayQuality)) settings.DefaultPlayQuality = "128k";
         if (!Qualities.Contains(settings.DefaultDownloadQuality)) settings.DefaultDownloadQuality = "128k";
         if (string.IsNullOrWhiteSpace(settings.DefaultSearchSource)) settings.DefaultSearchSource = "all";

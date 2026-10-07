@@ -700,7 +700,12 @@ public partial class WinFormsShell : Form
                 tts.SetVoice(voiceId);
             }
         }
-        _services.Downloads?.ApplyPreferences(new(settings.DownloadLyric, settings.DownloadNameOrder, settings.DownloadNameIncludeQuality));
+        _services.Downloads?.ApplyPreferences(new(
+            settings.DownloadLyric,
+            settings.DownloadNameOrder,
+            settings.DownloadNameIncludeQuality,
+            settings.BatchDownloadDelaySeconds,
+            settings.DownloadSpeedLimitKbps));
         RefreshAnnouncementMenuChecks();
     }
 

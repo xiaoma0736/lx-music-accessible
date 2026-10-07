@@ -10,7 +10,9 @@ namespace LXMusicAccessible.Services;
 public sealed record DownloadPreferences(
     bool DownloadLyric,
     DownloadNameOrder NameOrder,
-    bool IncludeQualityTag);
+    bool IncludeQualityTag,
+    int BatchDownloadDelaySeconds = 2,
+    int DownloadSpeedLimitKbps = 0);
 
 public sealed record DownloadRequest(
     MusicInfo Music,
@@ -184,6 +186,19 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     public void ApplyPreferences(DownloadPreferences preferences)
     {
         FrameworkCompatibility.ThrowIfNull(preferences);
+        preferences = preferences with
+        {
+            BatchDownloadDelaySeconds = preferences.BatchDownloadDelaySeconds < 0
+                ? 0
+                : preferences.BatchDownloadDelaySeconds > 60 ? 60 : preferences.BatchDownloadDelaySeconds,
+            DownloadSpeedLimitKbps = preferences.DownloadSpeedLimitKbps switch
+            {
+                <= 0 => 0,
+                < 32 => 32,
+                > 100000 => 100000,
+                _ => preferences.DownloadSpeedLimitKbps
+            }
+        };
         lock (_gate) _preferences = preferences;
     }
 

@@ -270,6 +270,12 @@ public class UserSettings
     /// </summary>
     public bool DownloadLyric { get; set; } = true;
 
+    /// <summary>批量下载相邻歌曲之间的等待秒数。</summary>
+    public int BatchDownloadDelaySeconds { get; set; } = 2;
+
+    /// <summary>音频下载速度限制；0 表示不限速，非零有效范围为 32 到 100000。</summary>
+    public int DownloadSpeedLimitKbps { get; set; } = 0;
+
     /// <summary>
     /// 下载文件命名顺序（ArtistTitle=艺术家-歌名，TitleArtist=歌名-艺术家）
     /// </summary>
