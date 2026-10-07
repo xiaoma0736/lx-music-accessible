@@ -278,6 +278,8 @@ public sealed class MusicBrowseWorkflow
         }
     }
 
+    public const string ClearSearchHistoryText = "删除全部记录";
+
     public SearchHistoryNavigation NavigateSearchHistory(string currentText, int step)
     {
         lock (_gate)
@@ -293,6 +295,14 @@ public sealed class MusicBrowseWorkflow
                 else if (_historyIndex < _history.Count - 1)
                 {
                     _historyIndex++;
+                }
+                else
+                {
+                    // The clear command is a virtual entry after the newest record. Keeping the index at
+                    // that position lets Up return directly to the newest record instead of moving to the
+                    // second-newest one.
+                    _historyIndex = _history.Count;
+                    return new(true, ClearSearchHistoryText);
                 }
                 return new(true, _history[_historyIndex].Keyword);
             }

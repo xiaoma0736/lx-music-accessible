@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Threading;
 using LXMusicAccessible.Data;
 using LXMusicAccessible.Models;
 using Microsoft.Extensions.Logging;
@@ -97,7 +98,7 @@ public sealed record DataDirectoryChangeResult(bool Succeeded, string Path, stri
 /// Deep settings module: defaults, immutable editing, validation, versioned persistence,
 /// hotkey conflicts and compensated native registration all live behind this interface.
 /// </summary>
-public sealed class SettingsWorkflow
+public sealed class SettingsWorkflow : IDisposable
 {
     private static readonly HashSet<string> Qualities = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -113,6 +114,7 @@ public sealed class SettingsWorkflow
     private SettingsEditState _current;
     private long _version;
     private long _persistedVersion = -1;
+    private int _disposed;
 
     public SettingsWorkflow(IDataService data, ILoggerFactory loggerFactory)
         : this(
@@ -310,6 +312,14 @@ public sealed class SettingsWorkflow
     public void RaiseGlobalHotkey(int id) => _hotkeys.RaiseGlobal(id);
 
     public void UnregisterAllGlobal() => _hotkeys.UnregisterAllGlobal();
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        UnregisterAllGlobal();
+        _saveGate.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     public async Task<SettingsSaveResult> SaveAsync(
         SettingsEditState state,

@@ -34,6 +34,7 @@ public sealed class WinFormsShellServices
 /// <summary>The native WinForms main shell: MainMenu, four fixed tabs, playback panel, status and tray-owned workflows.</summary>
 public partial class WinFormsShell : Form
 {
+    private readonly System.ComponentModel.Container _ownedTimers = new();
     private readonly WinFormsShellServices _services;
     private readonly IAccessibleAnnouncer _announcer;
     private readonly MusicBrowseWorkflow _browse;
@@ -84,6 +85,11 @@ public partial class WinFormsShell : Form
     protected Button SavedPlaylistLoadMore;
     protected Button RankingSongsLoadMore;
 
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _ownedTimers.Dispose();
+        base.Dispose(disposing);
+    }
     public WinFormsShell(WinFormsShellServices services)
     {
         _services = services;
@@ -117,6 +123,7 @@ public partial class WinFormsShell : Form
         status.Controls.Add(timeLabel);
         var statusTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         statusTimer.Tick += (_, _) => timeLabel.Text = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        _ownedTimers.Add(statusTimer);
         statusTimer.Start();
 
         MainTabs = new TabControl { Name = "MainTabs", Dock = DockStyle.Fill, TabIndex = 1, AccessibleName = "导航" };
@@ -268,6 +275,13 @@ public partial class WinFormsShell : Form
         {
             if (e.KeyCode == Keys.Up) ApplyHistory(_browse.NavigateSearchHistory(SearchText.Text, -1));
             else if (e.KeyCode == Keys.Down) ApplyHistory(_browse.NavigateSearchHistory(SearchText.Text, 1));
+            else if (e.KeyCode == Keys.Enter && e.Modifiers == Keys.None
+                && SearchText.Text == MusicBrowseWorkflow.ClearSearchHistoryText)
+            {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                _ = DeleteHistory(true);
+            }
             else if (e.Control && e.KeyCode == Keys.Delete) _ = DeleteHistory(false);
             else if (e.Alt && e.KeyCode == Keys.Delete) _ = DeleteHistory(true);
         };
@@ -275,6 +289,7 @@ public partial class WinFormsShell : Form
         {
             if (e.KeyCode == Keys.Enter && e.Modifiers == Keys.None)
             {
+                if (SearchText.Text == MusicBrowseWorkflow.ClearSearchHistoryText) return;
                 e.Handled = true;
                 e.SuppressKeyPress = true;
                 await SearchAsync(true);
@@ -514,6 +529,7 @@ public partial class WinFormsShell : Form
     {
         var positionTimer = new System.Windows.Forms.Timer { Interval = 500 };
         positionTimer.Tick += (_, _) => RefreshPlaybackStatus();
+        _ownedTimers.Add(positionTimer);
         positionTimer.Start();
     }
     protected static Button CreateButton(string text, int tabIndex, EventHandler onClick, Func<bool, bool>? state = null)
@@ -648,6 +664,7 @@ public partial class WinFormsShell : Form
         if (_services.Settings is null) return;
         var settings = _services.Settings.Current.Settings;
         _playMode = settings.DefaultPlayMode ?? PlayMode.Sequential;
+        if (_services.Playback is not null) _services.Playback.Mode = _playMode;
         if (_services.Lyrics is not null)
             _services.Lyrics.ApplySettings(settings.LyricAutoAnnounce, settings.LyricAutoScroll, _services.Lyrics.GetOffsetsSnapshot());
         _announcer.SpeechEnabled = settings.EnableVoiceAnnouncement;

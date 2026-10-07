@@ -207,6 +207,13 @@ public class WebLoginForm : Form
         base.OnKeyDown(e);
         if (e.KeyCode == Keys.Escape) Close();
     }
+
+    protected override void Dispose(bool disposing)
+    {
+        // This timer is not a child control, so Form disposal does not own it automatically.
+        if (disposing) _loginCheck.Dispose();
+        base.Dispose(disposing);
+    }
     /// <summary>
     /// Hands the browser session to the import service, which is the only thing that can confirm a login:
     /// it calls the platform and gets the account back. Runs from the automatic watch and from 完成登录.
@@ -392,6 +399,13 @@ public class KugouQrLoginForm : Form
     {
         base.OnKeyDown(e);
         if (e.KeyCode == Keys.Escape) Close();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        // Polling continues after startup, so this owner must release the timer with the form.
+        if (disposing) _timer.Dispose();
+        base.Dispose(disposing);
     }
     private async Task LoadAsync()
     {

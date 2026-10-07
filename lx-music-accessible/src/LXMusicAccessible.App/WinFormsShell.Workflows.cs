@@ -133,14 +133,19 @@ public partial class WinFormsShell
     {
         if (clearAll)
         {
-            if (!WinFormsUi.Confirm(this, "确定要清空全部搜索历史吗？", "清空搜索历史")) return;
+            if (!ConfirmClearSearchHistory()) return;
             var cleared = await _browse.ClearSearchHistoryAsync();
+            if (cleared) SearchText.Clear();
             Announce(cleared ? "搜索历史已清空" : "没有可清空的搜索历史", "search-history-clear");
             return;
         }
         var deleted = await _browse.DeleteSearchHistoryAsync(SearchText.Text);
+        if (deleted is not null) SearchText.Clear();
         Announce(deleted is null ? "没有可删除的当前搜索记录" : "当前搜索记录已删除", "search-history-delete");
     }
+
+    protected virtual bool ConfirmClearSearchHistory() =>
+        WinFormsUi.Confirm(this, "确定要清空全部搜索历史吗？", "清空搜索历史");
 
     private async Task SearchAsync(bool reset)
     {
@@ -813,6 +818,7 @@ public partial class WinFormsShell
     private void TogglePlayMode()
     {
         _playMode = (PlayMode)(((int)_playMode + 1) % 4);
+        if (_services.Playback is not null) _services.Playback.Mode = _playMode;
         var edit = _services.Settings?.Edit(settings => settings.DefaultPlayMode = _playMode);
         // 语音播报 is the master switch for routine announcements, so a mode change obeys it: the sentence
         // still reaches the visible announcement line when speech is off. Only the lyric reader bypasses

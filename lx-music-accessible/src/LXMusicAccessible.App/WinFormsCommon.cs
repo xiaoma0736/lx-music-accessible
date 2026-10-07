@@ -111,7 +111,7 @@ internal static class WinFormsUi
 }
 
 /// <summary>Native TTS announcements with a visual live-region mirror.</summary>
-public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer
+public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer, IDisposable
 {
     private readonly ITtsService? _speech;
     private readonly ILogger<WinFormsAccessibleAnnouncer> _logger;
@@ -191,6 +191,12 @@ public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer
         {
             _logger.LogWarning(ex, "Optional TTS announcement failed");
         }
+    }
+
+    public void Dispose()
+    {
+        _progressTimer.Dispose();
+        GC.SuppressFinalize(this);
     }
 }
 
