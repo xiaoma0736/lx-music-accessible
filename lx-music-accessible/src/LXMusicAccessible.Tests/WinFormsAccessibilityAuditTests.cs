@@ -920,12 +920,16 @@ public sealed class WinFormsAccessibilityAuditTests
     private static bool IsChinese(char character) => character >= '\u4e00' && character <= '\u9fff';
 
     private static bool IsInteractive(Control control) =>
-        control is Button or TextBox or ComboBox or ListBox or ListView or CheckBox or RadioButton or LinkLabel
-        or TabControl or RichTextBox or DomainUpDown or NumericUpDown
-        || control.GetType().Name is "WebView2";
+        !IsNativeCompositeChild(control)
+        && (control is Button or TextBox or ComboBox or ListBox or ListView or CheckBox or RadioButton or LinkLabel
+            or TabControl or RichTextBox or DomainUpDown or NumericUpDown
+            || control.GetType().Name is "WebView2");
+
+    private static bool IsNativeCompositeChild(Control control) => control.Parent is DomainUpDown or NumericUpDown;
 
     private static bool IsContainer(Control control) =>
-        control is ContainerControl or Panel or TableLayoutPanel or SplitContainer or FlowLayoutPanel;
+        (control is ContainerControl && control is not (TabControl or DomainUpDown or NumericUpDown))
+        || control is Panel or TableLayoutPanel or SplitContainer or FlowLayoutPanel;
 
     private static string EffectiveName(Control control)
     {

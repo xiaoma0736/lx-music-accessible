@@ -35,6 +35,20 @@ public class SettingsForm : Form
     private readonly CheckBox _downloadLyric = new() { Text = "同时下载歌词" };
     private readonly CheckBox _nameQuality = new() { Text = "文件名包含音质" };
     private readonly ComboBox _nameOrder = WinFormsUi.Combo("文件名顺序", 10, "歌手 - 标题", "标题 - 歌手");
+    private readonly NumericUpDown _batchDelay = new()
+    {
+        Minimum = 0,
+        Maximum = 60,
+        Value = 2,
+        DecimalPlaces = 0
+    };
+    private readonly NumericUpDown _downloadSpeed = new()
+    {
+        Minimum = 0,
+        Maximum = 100000,
+        Value = 0,
+        DecimalPlaces = 0
+    };
     private readonly TextBox _dataDir = new() { ReadOnly = true };
     private readonly CheckBox _voiceEnabled = new() { Text = "启用语音朗读提示" };
     private readonly Label _backend = new() { AutoSize = true, Name = "SpeechBackend", TabStop = false };
@@ -209,7 +223,17 @@ public class SettingsForm : Form
         var orderCaption = WinFormsUi.Caption("文件名顺序：", 9);
         orderCaption.SetBounds(12, 174, 0, 0);
         _nameOrder.SetBounds(105, 170, 180, 24);
-        page.Controls.AddRange(new Control[] { pathCaption, _downloadPath, browse, qualityCaption, _downloadQuality, _downloadLyric, _nameQuality, orderCaption, _nameOrder });
+        var delayCaption = WinFormsUi.Caption("批量下载间隔：", 11);
+        var speedCaption = WinFormsUi.Caption("下载限速：", 13);
+        WinFormsUi.Name(_batchDelay, "批量下载间隔", 12);
+        WinFormsUi.Name(_downloadSpeed, "下载限速", 14);
+        _batchDelay.AccessibleName = "批量下载间隔（秒）";
+        _downloadSpeed.AccessibleName = "下载限速（KB/s，0 表示不限速）";
+        delayCaption.SetBounds(12, 206, 0, 0);
+        _batchDelay.SetBounds(12, 226, 180, 24);
+        speedCaption.SetBounds(12, 262, 0, 0);
+        _downloadSpeed.SetBounds(12, 282, 180, 24);
+        page.Controls.AddRange(new Control[] { pathCaption, _downloadPath, browse, qualityCaption, _downloadQuality, _downloadLyric, _nameQuality, orderCaption, _nameOrder, delayCaption, _batchDelay, speedCaption, _downloadSpeed });
         browse.Click += (_, _) =>
         {
             using var dialog = new FolderBrowserDialog { Description = "选择歌曲下载目录", SelectedPath = _downloads.ResolveDownloadDirectory(_downloadPath.Text) };
@@ -228,6 +252,20 @@ public class SettingsForm : Form
         _downloadLyric.CheckedChanged += (_, _) => Apply(settings => settings.DownloadLyric = _downloadLyric.Checked);
         _nameQuality.CheckedChanged += (_, _) => Apply(settings => settings.DownloadNameIncludeQuality = _nameQuality.Checked);
         _nameOrder.SelectedIndexChanged += (_, _) => Apply(settings => settings.DownloadNameOrder = _nameOrder.SelectedIndex == 1 ? DownloadNameOrder.TitleArtist : DownloadNameOrder.ArtistTitle);
+        _batchDelay.ValueChanged += (_, _) =>
+        {
+            if (Apply(settings => settings.BatchDownloadDelaySeconds = (int)_batchDelay.Value))
+                Announce($"批量下载间隔已设置为 {_batchDelay.Value} 秒", "settings", AnnouncementKind.Status);
+        };
+        _downloadSpeed.ValueChanged += (_, _) =>
+        {
+            var requestedKbps = (int)_downloadSpeed.Value;
+            if (Apply(settings => settings.DownloadSpeedLimitKbps = requestedKbps))
+            {
+                var acceptedKbps = _settings.Current.Settings.DownloadSpeedLimitKbps;
+                Announce(acceptedKbps == 0 ? "下载限速已关闭" : $"下载限速已设置为 {acceptedKbps} KB/s", "settings", AnnouncementKind.Status);
+            }
+        };
         return page;
     }
 
@@ -356,6 +394,8 @@ public class SettingsForm : Form
         _downloadLyric.Checked = settings.DownloadLyric;
         _nameQuality.Checked = settings.DownloadNameIncludeQuality;
         _nameOrder.SelectedIndex = settings.DownloadNameOrder == DownloadNameOrder.TitleArtist ? 1 : 0;
+        _batchDelay.Value = Clamp(settings.BatchDownloadDelaySeconds, 0, 60);
+        _downloadSpeed.Value = Clamp(settings.DownloadSpeedLimitKbps, 0, 100000);
         _dataDir.Text = _settings.DataDirectory;
         _voiceEnabled.Checked = settings.EnableVoiceAnnouncement;
         _rate.Text = settings.AccessibilitySettings.AnnouncementRate.ToString("0.##", CultureInfo.InvariantCulture);
@@ -368,6 +408,8 @@ public class SettingsForm : Form
         _announcePlaybackMode.Checked = settings.AccessibilitySettings.AnnouncePlaybackMode;
         _announceAudioDevice.Checked = settings.AccessibilitySettings.AnnounceAudioDevice;
     }
+
+    private static int Clamp(int value, int minimum, int maximum) => value < minimum ? minimum : value > maximum ? maximum : value;
 
     private static int PlayModeIndex(PlayMode? mode) => mode switch
     {

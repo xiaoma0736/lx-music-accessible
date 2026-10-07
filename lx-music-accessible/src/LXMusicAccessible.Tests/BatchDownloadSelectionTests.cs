@@ -100,7 +100,7 @@ public sealed class BatchDownloadSelectionTests
     }
 
     [Fact]
-    public async Task Plain_space_toggles_playback_and_preserves_selection()
+    public void Plain_space_toggles_playback_and_preserves_selection()
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
@@ -122,7 +122,7 @@ public sealed class BatchDownloadSelectionTests
     }
 
     [Fact]
-    public async Task Enter_plays_the_focused_song_and_shift_enter_does_not_play()
+    public void Enter_plays_the_focused_song_and_shift_enter_does_not_play()
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
@@ -191,7 +191,7 @@ public sealed class BatchDownloadSelectionTests
 
     [Theory]
     [MemberData(nameof(SongLists))]
-    public async Task Batch_command_passes_only_explicit_selections(string listName, string expectedLabel)
+    public void Batch_command_passes_only_explicit_selections(string listName, string expectedLabel)
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
@@ -227,7 +227,7 @@ public sealed class BatchDownloadSelectionTests
     }
 
     [Fact]
-    public async Task Fewer_than_two_explicit_songs_never_start_a_batch()
+    public void Fewer_than_two_explicit_songs_never_start_a_batch()
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
