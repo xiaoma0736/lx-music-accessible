@@ -16,7 +16,7 @@ namespace LXMusicAccessible.Tests;
 /// <summary>Regression coverage for playback mode routing and keyboard-only search history ownership.</summary>
 public sealed class RuntimePlaybackSearchHistoryTests
 {
-    private const string ClearAllText = "删除全部记录";
+    private const string ClearAllText = "按回车删除全部记录";
 
     [Theory]
     [InlineData(PlayMode.Sequential)]
@@ -76,8 +76,93 @@ public sealed class RuntimePlaybackSearchHistoryTests
             Assert.True(clearAll.Handled);
             Assert.Equal(ClearAllText, clearAll.Text);
             Assert.Equal("keyword-20", workflow.NavigateSearchHistory(ClearAllText, -1).Text);
+
+            // Browsing the virtual clear command is not an explicit destructive action and must not
+            // turn the command label into a persisted keyword.
+            Assert.Equal(20, (await store.LoadAsync()).Count);
+
+            await workflow.RecordSearchAsync("KEYWORD-01");
+            var deduplicated = await store.LoadAsync();
+            Assert.Equal(20, deduplicated.Count);
+            Assert.Equal("KEYWORD-01", deduplicated[0].Keyword);
+            Assert.Equal(1, deduplicated.Count(item => item.Keyword.Equals("keyword-01", StringComparison.OrdinalIgnoreCase)));
+
+            await workflow.RecordSearchAsync("newest");
+            var bounded = await store.LoadAsync();
+            Assert.Equal(20, bounded.Count);
+            Assert.Equal("newest", bounded[0].Keyword);
+            Assert.DoesNotContain(bounded, item => item.Keyword == "keyword-20");
         }
         finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Empty_history_has_no_navigation_item_and_browsing_preserves_the_draft()
+    {
+        var announcer = new Infrastructure.RecordingAnnouncer();
+        var workflow = CreateBrowseWorkflow(new LocalSearchHistoryStore(CreateDirectory()), announcer);
+        await workflow.LoadSearchHistoryAsync();
+
+        Assert.False(workflow.NavigateSearchHistory("draft", 1).Handled);
+        Assert.False(workflow.NavigateSearchHistory("draft", -1).Handled);
+        Assert.Empty(announcer.Announcements);
+
+        var directory = CreateDirectory();
+        var store = new LocalSearchHistoryStore(directory);
+        try
+        {
+            await store.SaveAsync([
+                new() { Keyword = "newest", SearchTime = DateTime.Now.AddSeconds(1) },
+                new() { Keyword = "older", SearchTime = DateTime.Now }
+            ]);
+            var loaded = CreateBrowseWorkflow(store, announcer);
+            await loaded.LoadSearchHistoryAsync();
+
+            var first = loaded.NavigateSearchHistory("typed draft", 1);
+            Assert.Equal("newest", first.Text);
+            var oldest = loaded.NavigateSearchHistory(first.Text, 1);
+            Assert.Equal("older", oldest.Text);
+            Assert.Equal("newest", loaded.NavigateSearchHistory(oldest.Text, -1).Text);
+
+            var draft = loaded.NavigateSearchHistory("newest", -1);
+            Assert.True(draft.Handled);
+            Assert.Equal("typed draft", draft.Text);
+            Assert.Equal("typed draft", loaded.NavigateSearchHistory(draft.Text, -1).Text);
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public void History_navigation_leaves_standard_text_editing_keys_to_the_text_box()
+    {
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            var directory = CreateDirectory();
+            try
+            {
+                var store = new LocalSearchHistoryStore(directory);
+                await store.SaveAsync([new() { Keyword = "current", SearchTime = DateTime.Now }]);
+                var workflow = CreateBrowseWorkflow(store);
+                await workflow.LoadSearchHistoryAsync();
+                using var shell = CreateShell(workflow);
+                shell.Show();
+                await WaitForHistoryLoaded(workflow, 1);
+                var searchBox = Assert.IsType<TextBox>(shell.Controls.Find("\u641c\u7d22\u5173\u952e\u8bcd", true).Single());
+
+                Navigate(searchBox, 1);
+                searchBox.Text = "editing";
+                searchBox.SelectionStart = 4;
+                foreach (var key in new[] { Keys.Left, Keys.Right, Keys.Home, Keys.End, Keys.Back, Keys.Delete, Keys.ProcessKey })
+                {
+                    var args = new KeyEventArgs(key);
+                    RaiseKeyDown(searchBox, args);
+                    Assert.False(args.Handled);
+                    Assert.False(args.SuppressKeyPress);
+                    Assert.Equal("editing", searchBox.Text);
+                }
+            }
+            finally { Directory.Delete(directory, recursive: true); }
+        });
     }
 
     [Fact]
@@ -96,7 +181,8 @@ public sealed class RuntimePlaybackSearchHistoryTests
                 var workflow = CreateBrowseWorkflow(store);
                 await workflow.LoadSearchHistoryAsync();
                 var source = new InteractionBrowseSource();
-                using var shell = CreateShell(workflow, source);
+                var announcer = new Infrastructure.RecordingAnnouncer();
+                using var shell = CreateShell(workflow, source, announcer);
                 shell.Show();
                 await WaitForHistoryLoaded(workflow, 2);
                 var searchBox = Assert.IsType<TextBox>(shell.Controls.Find("搜索关键词", true).Single());
@@ -107,6 +193,11 @@ public sealed class RuntimePlaybackSearchHistoryTests
                 Assert.Equal(ClearAllText, searchBox.Text);
                 RaiseKeyDown(searchBox, Keys.Enter);
                 await WaitFor(async () => (await store.LoadAsync()).Count == 0);
+                Assert.Equal(
+                    new[] { "first", "second", ClearAllText, "搜索历史已清空" },
+                    announcer.Messages.Skip(1).ToArray());
+                Application.DoEvents();
+                Assert.Same(searchBox, shell.ActiveControl);
                 Assert.Equal(0, source.SearchCalls);
                 Assert.Empty(searchBox.Text);
             }
@@ -123,17 +214,29 @@ public sealed class RuntimePlaybackSearchHistoryTests
             try
             {
                 var store = new LocalSearchHistoryStore(directory);
-                await store.SaveAsync([new() { Keyword = "current", SearchTime = DateTime.Now }]);
+                await store.SaveAsync([
+                    new() { Keyword = "current", SearchTime = DateTime.Now.AddSeconds(1) },
+                    new() { Keyword = "older", SearchTime = DateTime.Now }
+                ]);
                 var workflow = CreateBrowseWorkflow(store);
                 await workflow.LoadSearchHistoryAsync();
-                using var shell = CreateShell(workflow);
+                var announcer = new Infrastructure.RecordingAnnouncer();
+                using var shell = CreateShell(workflow, announcer: announcer);
                 shell.Show();
-                await WaitForHistoryLoaded(workflow, 1);
+                await WaitForHistoryLoaded(workflow, 2);
                 var searchBox = Assert.IsType<TextBox>(shell.Controls.Find("搜索关键词", true).Single());
 
                 Navigate(searchBox, 1);
                 RaiseKeyDown(searchBox, Keys.Control | Keys.Delete);
-                await WaitFor(async () => (await store.LoadAsync()).Count == 0);
+                await WaitFor(async () => (await store.LoadAsync()).Count == 1);
+                Assert.Contains("当前搜索记录已删除", announcer.Messages);
+                Application.DoEvents();
+                Assert.Same(searchBox, shell.ActiveControl);
+
+                // Deletion must discard the hidden navigation cursor, so the next Up starts safely
+                // from the draft and selects the newest surviving record.
+                Navigate(searchBox, 1);
+                Assert.Equal("older", searchBox.Text);
 
                 searchBox.Text = "draft text";
                 RaiseKeyDown(searchBox, Keys.Left);
@@ -224,10 +327,12 @@ public sealed class RuntimePlaybackSearchHistoryTests
         new HotkeyManagerService(NullLogger<HotkeyManagerService>.Instance, new RecordingHotkeyAdapter()),
         NullLogger<SettingsWorkflow>.Instance);
 
-    private static MusicBrowseWorkflow CreateBrowseWorkflow(LocalSearchHistoryStore store) => new(
+    private static MusicBrowseWorkflow CreateBrowseWorkflow(
+        LocalSearchHistoryStore store,
+        Infrastructure.RecordingAnnouncer? announcer = null) => new(
         new InteractionBrowseSource(),
         new BackgroundWorkHost(NullLogger<BackgroundWorkHost>.Instance),
-        new RecordingAnnouncer(),
+        announcer ?? new Infrastructure.RecordingAnnouncer(),
         new ModeRecordingPlayback(),
         store,
         NullLogger<MusicBrowseWorkflow>.Instance);
@@ -254,10 +359,13 @@ public sealed class RuntimePlaybackSearchHistoryTests
             TemporaryDirectory = CreateDirectory()
         });
 
-    private static TestShell CreateShell(MusicBrowseWorkflow browse, InteractionBrowseSource? source = null) => new(
+    private static TestShell CreateShell(
+        MusicBrowseWorkflow browse,
+        InteractionBrowseSource? source = null,
+        Infrastructure.RecordingAnnouncer? announcer = null) => new(
         new WinFormsShellServices
         {
-            Announcer = new RecordingAnnouncer(),
+            Announcer = announcer ?? new Infrastructure.RecordingAnnouncer(),
             BrowseSource = source ?? new InteractionBrowseSource(),
             Playback = new ModeRecordingPlayback(),
             BrowseWorkflow = browse,
@@ -320,7 +428,10 @@ public sealed class RuntimePlaybackSearchHistoryTests
 
     private static void Navigate(Control control, int step) => RaiseKeyDown(control, step > 0 ? Keys.Down : Keys.Up);
 
-    private static void RaiseKeyDown(Control control, Keys key)
+    private static void RaiseKeyDown(Control control, Keys key) =>
+        RaiseKeyDown(control, new KeyEventArgs(key));
+
+    private static void RaiseKeyDown(Control control, KeyEventArgs args)
     {
         control.Focus();
         Application.DoEvents();
@@ -330,7 +441,7 @@ public sealed class RuntimePlaybackSearchHistoryTests
         var eventsProperty = typeof(Control).GetProperty("Events", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         var events = (System.ComponentModel.EventHandlerList?)eventsProperty?.GetValue(control);
         var handler = events?[keyObject] as KeyEventHandler;
-        handler?.Invoke(control, new KeyEventArgs(key));
+        handler?.Invoke(control, args);
     }
 
     private static async Task WaitForHistoryLoaded(MusicBrowseWorkflow workflow, int count)

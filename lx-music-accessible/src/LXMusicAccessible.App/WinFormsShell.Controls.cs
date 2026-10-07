@@ -271,29 +271,39 @@ public partial class WinFormsShell : Form
         page.Controls.AddRange(new Control[] { sourceLabel, SearchSource, typeLabel, SearchType, SearchText, SearchButton, SearchClearButton, SearchResults, SearchLoadMore });
         SearchButton.Click += (_, _) => _ = SearchAsync(true);
         SearchClearButton.Click += (_, _) => ClearSearch();
-        SearchText.KeyDown += (_, e) =>
+        // One owner routes search-box keys so asynchronous clear-all work cannot race the normal
+        // Enter/search handler and emit a second, misleading result after history has been cleared.
+        SearchText.KeyDown += async (_, e) =>
         {
-            if (e.KeyCode == Keys.Up) ApplyHistory(_browse.NavigateSearchHistory(SearchText.Text, -1));
-            else if (e.KeyCode == Keys.Down) ApplyHistory(_browse.NavigateSearchHistory(SearchText.Text, 1));
+            if (e.KeyCode == Keys.Up)
+            {
+                ApplyHistory(_browse.NavigateSearchHistory(SearchText.Text, -1));
+            }
+            else if (e.KeyCode == Keys.Down)
+            {
+                ApplyHistory(_browse.NavigateSearchHistory(SearchText.Text, 1));
+            }
             else if (e.KeyCode == Keys.Enter && e.Modifiers == Keys.None
                 && SearchText.Text == MusicBrowseWorkflow.ClearSearchHistoryText)
             {
                 e.Handled = true;
                 e.SuppressKeyPress = true;
-                _ = DeleteHistory(true);
+                await DeleteHistory(true);
             }
-            else if (e.Control && e.KeyCode == Keys.Delete) _ = DeleteHistory(false);
-            else if (e.Alt && e.KeyCode == Keys.Delete) _ = DeleteHistory(true);
-        };
-        SearchText.KeyDown += async (_, e) =>
-        {
-            if (e.KeyCode == Keys.Enter && e.Modifiers == Keys.None)
+            else if (e.KeyCode == Keys.Enter && e.Modifiers == Keys.None)
             {
-                if (SearchText.Text == MusicBrowseWorkflow.ClearSearchHistoryText) return;
                 e.Handled = true;
                 e.SuppressKeyPress = true;
                 await SearchAsync(true);
                 ActiveControl = SearchResults;
+            }
+            else if (e.Control && e.KeyCode == Keys.Delete)
+            {
+                await DeleteHistory(false);
+            }
+            else if (e.Alt && e.KeyCode == Keys.Delete)
+            {
+                await DeleteHistory(true);
             }
         };
         SearchResults.PreviewKeyDown += (_, e) =>

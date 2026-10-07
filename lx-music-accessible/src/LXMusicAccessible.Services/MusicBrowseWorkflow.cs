@@ -278,7 +278,7 @@ public sealed class MusicBrowseWorkflow
         }
     }
 
-    public const string ClearSearchHistoryText = "删除全部记录";
+    public const string ClearSearchHistoryText = "按回车删除全部记录";
 
     public SearchHistoryNavigation NavigateSearchHistory(string currentText, int step)
     {
