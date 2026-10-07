@@ -14,6 +14,42 @@ public sealed record DownloadPreferences(
     int BatchDownloadDelaySeconds = 2,
     int DownloadSpeedLimitKbps = 0);
 
+internal class DownloadThrottle
+{
+    public virtual Task DelayBetweenSongsAsync(
+        DownloadPreferences preferences,
+        bool hasMoreSongs,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!hasMoreSongs)
+            return Task.CompletedTask;
+        var seconds = Math.Max(0, preferences.BatchDownloadDelaySeconds);
+        return seconds == 0
+            ? Task.CompletedTask
+            : Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken);
+    }
+
+    public virtual async Task PaceTransferAsync(
+        DownloadPreferences preferences,
+        TimeSpan elapsed,
+        long totalBytes,
+        CancellationToken cancellationToken)
+    {
+        var delay = TransferDelay(preferences.DownloadSpeedLimitKbps, elapsed, totalBytes);
+        if (delay > TimeSpan.Zero)
+            await Task.Delay(delay, cancellationToken);
+    }
+
+    internal static TimeSpan TransferDelay(int limitKbps, TimeSpan elapsed, long totalBytes)
+    {
+        if (limitKbps <= 0 || totalBytes <= 0)
+            return TimeSpan.Zero;
+        var target = TimeSpan.FromSeconds(totalBytes / (limitKbps * 1024d));
+        return target > elapsed ? target - elapsed : TimeSpan.Zero;
+    }
+}
+
 public sealed record DownloadRequest(
     MusicInfo Music,
     string Quality = "128k",
@@ -141,6 +177,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     private readonly object _gate = new();
     private readonly ObservableCollection<DownloadTask> _tasks = [];
     private DownloadPreferences _preferences = new(true, DownloadNameOrder.ArtistTitle, true);
+    private readonly DownloadThrottle _throttle = new();
     private bool _disposed;
 
     public DownloadWorkflow(
@@ -160,6 +197,20 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             temporaryRoot: null,
             processLauncher)
     {
+    }
+
+    internal DownloadWorkflow(
+        ILogger<DownloadWorkflow> logger,
+        IDownloadSource source,
+        HttpClient httpClient,
+        BackgroundWorkHost backgroundWork,
+        IAccessibleAnnouncer announcer,
+        string? temporaryRoot,
+        IProcessLauncher processLauncher,
+        DownloadThrottle throttle)
+        : this(logger, source, httpClient, backgroundWork, announcer, temporaryRoot, processLauncher)
+    {
+        _throttle = throttle;
     }
 
     public DownloadWorkflow(
@@ -322,6 +373,14 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                     skipped = songs.Length - index - 1;
                     break;
                 }
+
+                if (index < songs.Length - 1)
+                {
+                    await _throttle.DelayBetweenSongsAsync(
+                        preferences,
+                        hasMoreSongs: true,
+                        context.CancellationToken);
+                }
             }
 
             var message = $"批量下载{label}结束：成功 {completed} 首，失败 {failed} 首，取消 {cancelled} 首，跳过 {skipped} 首";
@@ -455,6 +514,9 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             var url = await _source.GetUrlAsync(music, quality, context.CancellationToken);
             if (string.IsNullOrWhiteSpace(url)) return;
 
+            DownloadPreferences preferences;
+            lock (_gate) preferences = _preferences;
+
             try
             {
                 var directory = EnsureSafeDirectory(Path.Combine(
@@ -466,6 +528,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                     var download = await DownloadHttpToTemporaryFileAsync(
                         url,
                         directory,
+                        preferences,
                         context.CancellationToken,
                         progress: null);
                     temporary = download.Path;
@@ -627,6 +690,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                 var download = await DownloadRemoteAsync(
                     task,
                     directory,
+                    preferences,
                     announce ? progress =>
                     {
                         var bucket = FrameworkCompatibility.Clamp(progress / 25 * 25, 0, 75);
@@ -735,6 +799,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     private async Task<RemoteDownload> DownloadRemoteAsync(
         DownloadTask task,
         string directory,
+        DownloadPreferences preferences,
         Action<int>? progress,
         CancellationToken cancellationToken)
     {
@@ -750,6 +815,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                 var download = await DownloadHttpToTemporaryFileAsync(
                     url,
                     directory,
+                    preferences,
                     cancellationToken,
                     (read, total) =>
                     {
@@ -784,6 +850,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     private async Task<HttpDownload> DownloadHttpToTemporaryFileAsync(
         string url,
         string directory,
+        DownloadPreferences preferences,
         CancellationToken cancellationToken,
         Action<long, long>? progress)
     {
@@ -808,12 +875,14 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                 81920,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
             var buffer = new byte[81920];
+            var clock = Stopwatch.StartNew();
             long read = 0;
             int count;
             while ((count = await input.ReadAsync(buffer, 0, buffer.Length, timeout.Token)) > 0)
             {
                 await output.WriteAsync(buffer, 0, count, timeout.Token);
                 read += count;
+                await _throttle.PaceTransferAsync(preferences, clock.Elapsed, read, timeout.Token);
                 progress?.Invoke(read, total);
             }
             await output.FlushAsync(timeout.Token);
