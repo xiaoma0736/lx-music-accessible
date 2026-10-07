@@ -263,6 +263,12 @@ public class SettingsForm : Form
             if (Apply(settings => settings.DownloadSpeedLimitKbps = requestedKbps))
             {
                 var acceptedKbps = _settings.Current.Settings.DownloadSpeedLimitKbps;
+                if (_downloadSpeed.Value != acceptedKbps)
+                {
+                    _loading = true;
+                    _downloadSpeed.Value = acceptedKbps;
+                    _loading = false;
+                }
                 Announce(acceptedKbps == 0 ? "下载限速已关闭" : $"下载限速已设置为 {acceptedKbps} KB/s", "settings", AnnouncementKind.Status);
             }
         };

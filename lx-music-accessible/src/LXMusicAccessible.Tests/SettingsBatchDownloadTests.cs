@@ -108,6 +108,7 @@ public sealed class SettingsBatchDownloadTests
         Assert.Equal(5, workflow.Current.Settings.BatchDownloadDelaySeconds);
         speed.Value = 1;
         Assert.Equal(32, workflow.Current.Settings.DownloadSpeedLimitKbps);
+        Assert.Equal(32, speed.Value);
         speed.Value = 128;
         Assert.Equal(128, workflow.Current.Settings.DownloadSpeedLimitKbps);
 
