@@ -58,6 +58,60 @@ public sealed class SettingsSpeechPreferenceTests
         });
     }
 
+    [Theory]
+    [InlineData(PlayMode.Sequential, 0, "\u987a\u5e8f\u64ad\u653e")]
+    [InlineData(PlayMode.Loop, 1, "\u5217\u8868\u5faa\u73af")]
+    [InlineData(PlayMode.SingleLoop, 2, "\u5355\u66f2\u5faa\u73af")]
+    [InlineData(PlayMode.Shuffle, 3, "\u968f\u673a\u64ad\u653e")]
+    public void Playback_mode_rows_map_the_stored_mode_to_the_documented_label(
+        PlayMode savedMode,
+        int expectedIndex,
+        string expectedLabel)
+    {
+        WinFormsTestRunner.Run(() =>
+        {
+            var settings = LoadSettings(new UserSettings { DefaultPlayMode = savedMode });
+            using var form = new SettingsForm(new RecordingAnnouncer(), settings, new ListVoicesTts(), new IdleDownloads(), _ => false);
+            form.Show();
+            Application.DoEvents();
+
+            var playMode = Assert.IsType<ComboBox>(form.Controls.Find("\u9ed8\u8ba4\u64ad\u653e\u6a21\u5f0f", true).Single());
+            Assert.Equal(new[]
+            {
+                "\u987a\u5e8f\u64ad\u653e",
+                "\u5217\u8868\u5faa\u73af",
+                "\u5355\u66f2\u5faa\u73af",
+                "\u968f\u673a\u64ad\u653e"
+            }, playMode.Items.Cast<string>().ToArray());
+            Assert.Equal(expectedIndex, playMode.SelectedIndex);
+            Assert.Equal(expectedLabel, playMode.Text);
+        });
+    }
+
+    [Theory]
+    [InlineData(0, PlayMode.Sequential)]
+    [InlineData(1, PlayMode.Loop)]
+    [InlineData(2, PlayMode.SingleLoop)]
+    [InlineData(3, PlayMode.Shuffle)]
+    public void Playback_mode_selections_store_the_label_documented_to_the_user(
+        int selectedIndex,
+        PlayMode expectedMode)
+    {
+        WinFormsTestRunner.Run(() =>
+        {
+            var settings = LoadSettings(new UserSettings());
+            using var form = new SettingsForm(new RecordingAnnouncer(), settings, new ListVoicesTts(), new IdleDownloads(), _ => false);
+            form.Show();
+            Application.DoEvents();
+
+            var playMode = Assert.IsType<ComboBox>(form.Controls.Find("\u9ed8\u8ba4\u64ad\u653e\u6a21\u5f0f", true).Single());
+            playMode.SelectedIndex = selectedIndex;
+            Application.DoEvents();
+
+            Assert.Equal(expectedMode, settings.Current.Settings.DefaultPlayMode);
+        });
+    }
+
     [Fact]
     public void Changing_the_voice_stores_the_identifier_the_backend_can_resolve()
     {

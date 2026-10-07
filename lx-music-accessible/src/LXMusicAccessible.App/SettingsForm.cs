@@ -172,7 +172,7 @@ public class SettingsForm : Form
         _playMode.SetBounds(120, 51, 180, 24);
         page.Controls.AddRange(new Control[] { qualityCaption, _quality, modeCaption, _playMode });
         _quality.SelectedIndexChanged += (_, _) => Apply(settings => settings.DefaultPlayQuality = QualityId(_quality.Text, "128k"));
-        _playMode.SelectedIndexChanged += (_, _) => Apply(settings => settings.DefaultPlayMode = (PlayMode)_playMode.SelectedIndex);
+        _playMode.SelectedIndexChanged += (_, _) => Apply(settings => settings.DefaultPlayMode = PlayModeFromIndex(_playMode.SelectedIndex));
         return page;
     }
 
@@ -347,7 +347,7 @@ public class SettingsForm : Form
     {
         _closeBehavior.SelectedIndex = settings.HideToTrayOnAltF4 ? 1 : 0;
         _quality.SelectedIndex = Math.Min(QualityIndex(settings.DefaultPlayQuality), _quality.Items.Count - 1);
-        _playMode.SelectedIndex = (int)(settings.DefaultPlayMode ?? PlayMode.Sequential);
+        _playMode.SelectedIndex = PlayModeIndex(settings.DefaultPlayMode);
         _playerPath.Text = settings.ThirdPartyPlayerPath ?? string.Empty;
         _lyricAnnounce.Checked = settings.LyricAutoAnnounce;
         _lyricScroll.Checked = settings.LyricAutoScroll;
@@ -368,6 +368,22 @@ public class SettingsForm : Form
         _announcePlaybackMode.Checked = settings.AccessibilitySettings.AnnouncePlaybackMode;
         _announceAudioDevice.Checked = settings.AccessibilitySettings.AnnounceAudioDevice;
     }
+
+    private static int PlayModeIndex(PlayMode? mode) => mode switch
+    {
+        PlayMode.Loop => 1,
+        PlayMode.SingleLoop => 2,
+        PlayMode.Shuffle => 3,
+        _ => 0
+    };
+
+    private static PlayMode PlayModeFromIndex(int index) => index switch
+    {
+        1 => PlayMode.Loop,
+        2 => PlayMode.SingleLoop,
+        3 => PlayMode.Shuffle,
+        _ => PlayMode.Sequential
+    };
 
     private static int QualityIndex(string? quality) => quality switch
     {

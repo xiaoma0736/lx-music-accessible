@@ -336,7 +336,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         long revision;
         string quality;
         PlaybackQueueOrigin origin;
-        bool completed = false;
+        PlayerStateChangedEventArgs? completedStateChange = null;
         var trigger = naturalEnd
             ? PlaybackTrigger.AutoContinuation
             : PlaybackTrigger.UserInitiated;
@@ -344,6 +344,11 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         lock (_gate)
         {
             origin = _queueOrigin;
+            if (naturalEnd && _state != PlayerState.Playing)
+            {
+                return Task.FromResult(NoChange(origin, "\u5f53\u524d\u6ca1\u6709\u53ef\u81ea\u52a8\u5207\u6362\u7684\u6b4c\u66f2"));
+            }
+
             quality = _defaultQuality;
             revision = ++_queueRevision;
             if (_queue.Count > 0)
@@ -351,7 +356,12 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                 targetIndex = ComputeTargetIndex(direction, naturalEnd);
                 if (targetIndex < 0)
                 {
-                    completed = direction > 0;
+                    if (direction > 0)
+                    {
+                        completedStateChange = StateChange(_state, PlayerState.Stopped, _currentMusic);
+                        _state = PlayerState.Stopped;
+                        _resumePosition = TimeSpan.Zero;
+                    }
                 }
                 else
                 {
@@ -362,8 +372,12 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         }
 
         CancelGenerationWork();
-        if (completed)
+        if (completedStateChange is not null)
         {
+            _audioPlayer.Stop();
+            if (completedStateChange.OldState != PlayerState.Stopped)
+                RaiseStateChanged(completedStateChange);
+
             var result = new PlaybackResult(
                 PlaybackResultStatus.QueueCompleted,
                 CurrentMusic,

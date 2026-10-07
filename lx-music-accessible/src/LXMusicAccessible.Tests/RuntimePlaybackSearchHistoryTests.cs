@@ -18,17 +18,21 @@ public sealed class RuntimePlaybackSearchHistoryTests
 {
     private const string ClearAllText = "删除全部记录";
 
-    [Fact]
-    public void Startup_applies_saved_play_mode_to_the_playback_coordinator()
+    [Theory]
+    [InlineData(PlayMode.Sequential)]
+    [InlineData(PlayMode.Loop)]
+    [InlineData(PlayMode.Shuffle)]
+    [InlineData(PlayMode.SingleLoop)]
+    public void Startup_applies_saved_play_mode_to_the_playback_coordinator(PlayMode savedMode)
     {
         WinFormsTestRunner.Run(() =>
         {
             var playback = new ModeRecordingPlayback();
-            var settings = CreateSettings(new UserSettings { DefaultPlayMode = PlayMode.Shuffle });
+            var settings = CreateSettings(new UserSettings { DefaultPlayMode = savedMode });
             settings.LoadAsync(IntPtr.Zero).GetAwaiter().GetResult();
             using var shell = CreateShell(playback, settings);
 
-            Assert.Equal(PlayMode.Shuffle, playback.Mode);
+            Assert.Equal(savedMode, playback.Mode);
         });
     }
 
@@ -140,6 +144,78 @@ public sealed class RuntimePlaybackSearchHistoryTests
         });
     }
 
+    [Fact]
+    public void Playback_mode_entry_points_apply_every_mode_and_announce_it()
+    {
+        WinFormsTestRunner.Run(() =>
+        {
+            var cases = new[]
+            {
+                (Start: PlayMode.Sequential, Applied: PlayMode.Loop, Name: "\u5217\u8868\u5faa\u73af"),
+                (Start: PlayMode.Loop, Applied: PlayMode.Shuffle, Name: "\u968f\u673a\u64ad\u653e"),
+                (Start: PlayMode.Shuffle, Applied: PlayMode.SingleLoop, Name: "\u5355\u66f2\u5faa\u73af"),
+                (Start: PlayMode.SingleLoop, Applied: PlayMode.Sequential, Name: "\u987a\u5e8f\u64ad\u653e")
+            };
+            var processKey = typeof(Form).GetMethod(
+                "ProcessCmdKey",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var modeField = typeof(WinFormsShell).GetField(
+                "_playMode",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+            for (var route = 0; route < 3; route++)
+            {
+                foreach (var (start, applied, name) in cases)
+                {
+                    var announcer = new Infrastructure.RecordingAnnouncer();
+                    var playback = new ModeRecordingPlayback();
+                    var settings = CreateSettings(new UserSettings { DefaultPlayMode = start });
+                    settings.LoadAsync(IntPtr.Zero).GetAwaiter().GetResult();
+                    using var shell = CreateShell(playback, settings, announcer);
+                    modeField!.SetValue(shell, start);
+                    playback.Mode = start;
+
+                    if (route == 0)
+                    {
+                        InvokePlayModeMenuCommand(shell);
+                    }
+                    else if (route == 1)
+                    {
+                        var arguments = new object?[] { new Message(), Keys.F1 };
+                        Assert.True((bool)processKey!.Invoke(shell, arguments)!);
+                    }
+                    else
+                    {
+                        InvokeExecuteHotkey(shell);
+                    }
+
+                    Assert.Equal(applied, playback.Mode);
+                    Assert.Equal(2, announcer.Messages.Count);
+                    Assert.Equal("\u6b22\u8fce\u4f7f\u7528\u843d\u96ea\u97f3\u4e50\u65e0\u969c\u788d\u7248", announcer.Messages[0]);
+                    Assert.Equal(name, announcer.Messages[1]);
+                }
+            }
+        });
+    }
+
+    [Fact]
+    public void Runtime_settings_changes_apply_every_mode_immediately()
+    {
+        WinFormsTestRunner.Run(() =>
+        {
+            var playback = new ModeRecordingPlayback();
+            var settings = CreateSettings(new UserSettings { DefaultPlayMode = PlayMode.Sequential });
+            settings.LoadAsync(IntPtr.Zero).GetAwaiter().GetResult();
+            using var shell = CreateShell(playback, settings);
+
+            foreach (var mode in new[] { PlayMode.Sequential, PlayMode.Loop, PlayMode.SingleLoop, PlayMode.Shuffle })
+            {
+                settings.Edit(candidate => candidate.DefaultPlayMode = mode);
+                Assert.Equal(mode, playback.Mode);
+            }
+        });
+    }
+
     private static string CreateDirectory() => Path.Combine(
         Path.GetTempPath(), "lx-playback-history-" + Guid.NewGuid().ToString("N"));
 
@@ -165,10 +241,13 @@ public sealed class RuntimePlaybackSearchHistoryTests
             TemporaryDirectory = Path.Combine(Path.GetTempPath(), "lx-lifecycle-shell-" + Guid.NewGuid().ToString("N"))
         });
 
-    private static WinFormsShell CreateShell(ModeRecordingPlayback playback, SettingsWorkflow? settings = null) => new(
+    private static WinFormsShell CreateShell(
+        ModeRecordingPlayback playback,
+        SettingsWorkflow? settings = null,
+        Infrastructure.RecordingAnnouncer? announcer = null) => new(
         new WinFormsShellServices
         {
-            Announcer = new RecordingAnnouncer(),
+            Announcer = announcer ?? new Infrastructure.RecordingAnnouncer(),
             BrowseSource = new InteractionBrowseSource(),
             Playback = playback,
             Settings = settings,
@@ -190,6 +269,15 @@ public sealed class RuntimePlaybackSearchHistoryTests
         protected override bool ConfirmClearSearchHistory() => true;
     }
 
+    private static void InvokeExecuteHotkey(Form shell)
+    {
+        var method = shell.GetType().GetMethod(
+            "ExecuteHotkey",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(method);
+        method!.Invoke(shell, [HotkeyActions.TogglePlayMode]);
+    }
+
     private static void InvokeTogglePlayMode(Form shell)
     {
         var method = shell.GetType().GetMethod(
@@ -197,6 +285,37 @@ public sealed class RuntimePlaybackSearchHistoryTests
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         Assert.NotNull(method);
         method!.Invoke(shell, Array.Empty<object?>());
+    }
+
+    private static MenuItem FindPlayModeMenuItem(Menu menu)
+    {
+        var wanted = "\u5207\u6362\u64ad\u653e\u6a21\u5f0f";
+        foreach (MenuItem item in menu.MenuItems)
+        {
+            if (item.Text.StartsWith(wanted, StringComparison.Ordinal)) return item;
+            var descendant = FindPlayModeMenuItem(item);
+            if (descendant is not null) return descendant;
+        }
+
+        return null!;
+    }
+
+    private static void InvokePlayModeMenuCommand(Form shell)
+    {
+        var item = FindPlayModeMenuItem(shell.Menu!);
+        Assert.Equal(Shortcut.F1, item.Shortcut);
+
+        // WinForms MenuItem.OnClick dispatches both the stored click delegate and its Command. For a
+        // delegate-constructed menu item they target the same application callback; invoke the stored
+        // delegate directly so the test sends exactly one menu activation.
+        var bindingFlags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var dataField = typeof(MenuItem).GetField("data", bindingFlags);
+        var onClickField = dataField!.FieldType.GetField("onClick", bindingFlags);
+        Assert.NotNull(dataField);
+        Assert.NotNull(onClickField);
+        var data = dataField.GetValue(item);
+        var handler = Assert.IsType<EventHandler>(onClickField!.GetValue(data));
+        handler(item, EventArgs.Empty);
     }
 
     private static void Navigate(Control control, int step) => RaiseKeyDown(control, step > 0 ? Keys.Down : Keys.Up);
