@@ -132,12 +132,14 @@ public sealed class BatchDownloadSelectionTests
             Application.DoEvents();
             var list = RequiredListBox(shell, "SearchResults");
             FillSongs(list, 3);
-            list.SetSelected(1, true);
+            list.SetSelected(0, true);
+            list.SetSelected(2, true);
+            SendMessage(list.Handle, 0x019E, (IntPtr)2, IntPtr.Zero);
             list.Focus();
 
             RaiseKeyDown(list, Keys.Enter);
             await WaitFor(() => playback.ReplayRequests.Count == 1);
-            Assert.Equal("song-1", playback.ReplayRequests.Single().Selection?.Id);
+            Assert.Equal("song-2", playback.ReplayRequests.Single().Selection?.Id);
 
             RaiseKeyDown(list, Keys.Shift | Keys.Enter);
             await Task.Delay(50);

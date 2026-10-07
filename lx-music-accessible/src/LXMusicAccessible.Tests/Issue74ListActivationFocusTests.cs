@@ -63,6 +63,46 @@ public sealed class Issue74ListActivationFocusTests
     }
 
     [Fact]
+    public void Search_load_more_uses_focused_marker_when_multiple_items_selected()
+    {
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            var source = new Issue72BrowseNavigationTests.PagedBrowseSource { SearchTotal = 3 };
+            using var shell = CreateShell(source);
+            shell.Show();
+            Application.DoEvents();
+
+            var search = RequiredTextBox(shell);
+            search.Text = "query";
+            RaiseKeyDown(search, Keys.Enter);
+            await WaitFor(() => source.SearchCalls == 1);
+            var results = RequiredListBox(shell, "SearchResults");
+            await WaitForList(results, 2);
+
+            results.SetSelected(0, true);
+            var markerIndex = results.Items.Count - 1;
+            results.SetSelected(markerIndex, true);
+            var caret = typeof(WinFormsShell).GetMethod(
+                "SetListCaretIndex",
+                BindingFlags.NonPublic | BindingFlags.Static,
+                null,
+                [typeof(ListBox), typeof(int)],
+                null);
+            Assert.NotNull(caret);
+            caret!.Invoke(null, [results, markerIndex]);
+            results.Focus();
+            Application.DoEvents();
+            RaiseKeyDown(results, Keys.Enter);
+            await WaitFor(() => source.SearchCalls == 2);
+
+            Assert.True(results.GetSelected(0));
+            var refreshedMarker = results.Items.Count - 1;
+            Assert.True(results.GetSelected(refreshedMarker));
+            Assert.Contains("加载更多", results.Items[refreshedMarker]!.ToString()!, StringComparison.Ordinal);
+            Assert.Same(results, shell.ActiveControl);
+        });
+    }
+    [Fact]
     public void Category_list_enter_moves_to_playlist_list_and_playlist_enter_moves_to_songs()
     {
         WinFormsTestRunner.RunStaAsync(async () =>

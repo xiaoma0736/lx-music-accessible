@@ -331,7 +331,7 @@ public partial class WinFormsShell : Form
             if (e.Shift && e.KeyCode == Keys.Enter)
             {
                 e.Handled = true;
-                OpenLyrics(WinFormsUi.Selected<MusicInfo>(SearchResults));
+                OpenLyrics(FocusedItem<MusicInfo>(SearchResults));
                 return;
             }
             if (e.KeyCode == Keys.Back && HandleBrowseBack(SearchResults)) return;
@@ -395,7 +395,7 @@ public partial class WinFormsShell : Form
         FavoriteSongs.DoubleClick += (_, _) => _ = ActivateSong(FavoriteSongs);
         SavedPlaylistLoadMore.Click += (_, _) => _ = LoadMoreSavedSongsAsync();
         FavoriteSongs.KeyDown += async (_, e) => { if (HandleSongListSelection(FavoriteSongs, e)) return;
-            if (await TryActivateLoadMore(FavoriteSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(WinFormsUi.Selected<MusicInfo>(FavoriteSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(FavoriteSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(FavoriteSongs); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
+            if (await TryActivateLoadMore(FavoriteSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(FocusedItem<MusicInfo>(FavoriteSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(FavoriteSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(FavoriteSongs); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         return page;
     }
 
@@ -462,7 +462,7 @@ public partial class WinFormsShell : Form
         };
         CategorySongs.DoubleClick += (_, _) => _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category);
         CategorySongs.KeyDown += async (_, e) => { if (HandleSongListSelection(CategorySongs, e)) return;
-            if (await TryActivateLoadMore(CategorySongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(WinFormsUi.Selected<MusicInfo>(CategorySongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(CategorySongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
+            if (await TryActivateLoadMore(CategorySongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(FocusedItem<MusicInfo>(CategorySongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(CategorySongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         var playlistMenu = new ContextMenu();
         var favorite = new MenuItem("收藏整个歌单到在线收藏", (_, _) => FavoriteCategoryPlaylist());
         playlistMenu.MenuItems.Add(favorite);
@@ -531,7 +531,7 @@ public partial class WinFormsShell : Form
         };
         RankingSongs.DoubleClick += (_, _) => _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking);
         RankingSongs.KeyDown += async (_, e) => { if (HandleSongListSelection(RankingSongs, e)) return;
-            if (await TryActivateLoadMore(RankingSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(WinFormsUi.Selected<MusicInfo>(RankingSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(RankingSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
+            if (await TryActivateLoadMore(RankingSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(FocusedItem<MusicInfo>(RankingSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(RankingSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         var rankingMenu = new ContextMenu();
         rankingMenu.MenuItems.Add(new MenuItem("收藏整个榜单到在线收藏", (_, _) => FavoriteRanking()));
         RankingList.ContextMenu = rankingMenu;

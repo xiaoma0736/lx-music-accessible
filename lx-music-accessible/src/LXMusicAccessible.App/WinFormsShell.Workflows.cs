@@ -20,7 +20,7 @@ public partial class WinFormsShell
 
     private bool TryStartSearchLoadMore()
     {
-        if (SearchResults.SelectedItem is not ObjectBox<LoadMoreAction>
+        if (FocusedItem<LoadMoreAction>(SearchResults) is null
             || !SearchLoadMore.Enabled)
             return false;
 
@@ -34,7 +34,7 @@ public partial class WinFormsShell
     {
         await Task.CompletedTask;
         if (args.KeyCode != Keys.Enter
-            || list.SelectedItem is not ObjectBox<LoadMoreAction>)
+            || FocusedItem<LoadMoreAction>(list) is null)
             return false;
 
         if (list == SearchResults && TryStartSearchLoadMore())
@@ -161,6 +161,7 @@ public partial class WinFormsShell
         }
         if (_searchLoading || (!reset && !SearchLoadMore.Enabled)) return;
         _searchLoading = true;
+        var loadMoreSelected = !reset && FocusedItem<LoadMoreAction>(SearchResults) is not null;
         try
         {
             if (reset)
@@ -173,13 +174,25 @@ public partial class WinFormsShell
             if (result.Succeeded && result.Value is not null)
             {
                 _searchSongs = result.Value.Items.ToList();
+                IReadOnlyList<string>? preservedSongIds = reset ? null : SelectedSongIds(SearchResults);
                 var selected = WinFormsUi.Selected<MusicInfo>(SearchResults)?.Id;
-                var loadMoreSelected = SearchResults.SelectedItem is ObjectBox<LoadMoreAction>;
                 WinFormsUi.FillSongs(SearchResults, _searchSongs);
-                RestoreSelection(SearchResults, _searchSongs, selected);
                 UpdateLoadMore(SearchLoadMore, SearchResults, result.Value.HasMore, () => SearchAsync(false));
-                if (loadMoreSelected && result.Value.HasMore)
-                    WinFormsUi.SelectOnly(SearchResults, SearchResults.Items.Count - 1);
+                if (preservedSongIds is not null)
+                {
+                    RestoreSelectedSongs(SearchResults, _searchSongs, preservedSongIds);
+                    if (loadMoreSelected && result.Value.HasMore)
+                        if (preservedSongIds.Count == 0)
+                            WinFormsUi.SelectOnly(SearchResults, SearchResults.Items.Count - 1);
+                        else
+                            SearchResults.SetSelected(SearchResults.Items.Count - 1, true);
+                }
+                else
+                {
+                    RestoreSelection(SearchResults, _searchSongs, selected);
+                    if (loadMoreSelected && result.Value.HasMore)
+                        WinFormsUi.SelectOnly(SearchResults, SearchResults.Items.Count - 1);
+                }
                 Announce(result.Message, "search-results");
             }
             else if (!string.IsNullOrWhiteSpace(result.Message))
@@ -233,7 +246,7 @@ public partial class WinFormsShell
 
     private async Task ActivateSong(ListBox list, PlaybackQueueOrigin origin = PlaybackQueueOrigin.Search)
     {
-        var song = WinFormsUi.Selected<MusicInfo>(list);
+        var song = FocusedItem<MusicInfo>(list);
         if (song is null) return;
         if (song.IsAlbum)
         {
@@ -646,6 +659,33 @@ public partial class WinFormsShell
         return Task.CompletedTask;
     }
 
+    private static void RestoreSelections(ListBox list, IReadOnlyList<int> indices)
+    {
+        foreach (var index in indices)
+            if (index >= 0 && index < list.Items.Count)
+                list.SetSelected(index, true);
+    }
+    private static IReadOnlyList<string> SelectedSongIds(ListBox list) =>
+        list.SelectedItems.Cast<object>()
+            .OfType<ObjectBox<MusicInfo>>()
+            .Select(item => item.Value.Id)
+            .ToArray();
+
+    private static void RestoreSelectedSongs(ListBox list, IReadOnlyList<MusicInfo> items, IReadOnlyList<string>? ids)
+    {
+        if (ids is null) return;
+        foreach (var id in ids)
+        {
+            var index = -1;
+            for (var candidate = 0; candidate < items.Count; candidate++)
+            {
+                if (!string.Equals(items[candidate].Id, id, StringComparison.Ordinal)) continue;
+                index = candidate;
+                break;
+            }
+            if (index >= 0) list.SetSelected(index, true);
+        }
+    }
     private static void RestoreSelection<T>(ListBox list, IReadOnlyList<T> items, string? id)
     {
         if (string.IsNullOrWhiteSpace(id)) return;
@@ -879,6 +919,12 @@ public partial class WinFormsShell
             .OfType<ObjectBox<MusicInfo>>()
             .Select(item => item.Value)
             .ToArray();
+
+    private T? FocusedItem<T>(ListBox list)
+    {
+        var index = ListCaretIndex(list);
+        return index >= 0 && index < list.Items.Count && list.Items[index] is ObjectBox<T> box ? box.Value : default;
+    }
 
     private string BatchDownloadLabel(ListBox list)
     {
