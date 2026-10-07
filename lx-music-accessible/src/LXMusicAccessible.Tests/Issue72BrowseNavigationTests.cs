@@ -30,7 +30,7 @@ public sealed class Issue72BrowseNavigationTests
             await InvokeAsync(shell, "SearchAsync", true);
             await WaitForList(search, 2);
 
-            search.SelectedIndex = search.Items.Count - 1;
+            WinFormsUi.SelectOnly(search, search.Items.Count - 1);
             search.Focus();
             Assert.Equal(1, source.SearchCalls);
             Assert.Contains("加载更多", search.SelectedItem!.ToString(), StringComparison.Ordinal);
@@ -43,7 +43,7 @@ public sealed class Issue72BrowseNavigationTests
 
             // A refreshed marker must remain the reading position so the next explicit activation
             // loads the following page without requiring the user to rediscover the list end.
-            search.SelectedIndex = search.Items.Count - 1;
+            WinFormsUi.SelectOnly(search, search.Items.Count - 1);
             RaiseKeyDown(search, Keys.Enter);
             await WaitFor(() => source.SearchCalls == 3);
             await WaitForList(search, 4);
@@ -69,7 +69,7 @@ public sealed class Issue72BrowseNavigationTests
 
             var album = new MusicInfo { Id = "album-1", Title = "Album", Source = "netease", IsAlbum = true };
             search.Items.Add(new ObjectBox<MusicInfo>(album.AccessibleName, album));
-            search.SelectedIndex = 1;
+            WinFormsUi.SelectOnly(search, 1);
             await InvokeAsync(shell, "ActivateSong", search, PlaybackQueueOrigin.Search);
             await WaitForList(search, 2);
 

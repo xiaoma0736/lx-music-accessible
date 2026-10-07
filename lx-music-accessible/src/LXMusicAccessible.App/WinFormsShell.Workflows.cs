@@ -179,7 +179,7 @@ public partial class WinFormsShell
                 RestoreSelection(SearchResults, _searchSongs, selected);
                 UpdateLoadMore(SearchLoadMore, SearchResults, result.Value.HasMore, () => SearchAsync(false));
                 if (loadMoreSelected && result.Value.HasMore)
-                    SearchResults.SelectedIndex = SearchResults.Items.Count - 1;
+                    WinFormsUi.SelectOnly(SearchResults, SearchResults.Items.Count - 1);
                 Announce(result.Message, "search-results");
             }
             else if (!string.IsNullOrWhiteSpace(result.Message))
@@ -874,6 +874,85 @@ public partial class WinFormsShell
         };
     }
 
+    private static IReadOnlyList<MusicInfo> SelectedSongs(ListBox list) =>
+        list.SelectedItems.Cast<object>()
+            .OfType<ObjectBox<MusicInfo>>()
+            .Select(item => item.Value)
+            .ToArray();
+
+    private string BatchDownloadLabel(ListBox list)
+    {
+        if (ReferenceEquals(list, SearchResults)) return "搜索结果选中歌曲";
+        if (ReferenceEquals(list, FavoriteSongs)) return "收藏歌曲选中歌曲";
+        if (ReferenceEquals(list, CategorySongs)) return "分类歌曲选中歌曲";
+        if (ReferenceEquals(list, RankingSongs)) return "排行榜歌曲选中歌曲";
+        return "选中歌曲";
+    }
+
+    /// <summary>
+    /// Handles selection-only keys before playback and navigation handlers run. Native multi-simple
+    /// lists otherwise reuse Space and arrows to change selection, which would make listening and
+    /// marking items mutually destructive.
+    /// </summary>
+    private bool HandleSongListSelection(ListBox list, KeyEventArgs e)
+    {
+        if (e.Control && e.KeyCode == Keys.Space)
+        {
+            var focused = ListCaretIndex(list);
+            if (focused >= 0 && focused < list.Items.Count)
+            {
+                list.SetSelected(focused, !list.GetSelected(focused));
+                e.Handled = true;
+            }
+            return true;
+        }
+        if (e.Control && e.KeyCode == Keys.A)
+        {
+            for (var index = 0; index < list.Items.Count; index++) list.SetSelected(index, true);
+            e.Handled = true;
+            return true;
+        }
+        if (!e.Control && !e.Shift && !e.Alt && e.KeyCode is Keys.Up or Keys.Down)
+        {
+            var next = ListCaretIndex(list) + (e.KeyCode == Keys.Down ? 1 : -1);
+            if (list.Items.Count > 0 && next >= 0 && next < list.Items.Count)
+            {
+                SetListCaretIndex(list, next);
+            }
+            e.Handled = true;
+            return true;
+        }
+        return false;
+    }
+
+    private async void DownloadBatch(ListBox list)
+    {
+        var songs = SelectedSongs(list);
+        if (_services.Downloads is null || songs.Count < 2) return;
+        var quality = _services.Settings?.Current.Settings.DefaultDownloadQuality ?? "128k";
+        var sourceListFocused = list.Focused;
+        try
+        {
+            await _services.Downloads.DownloadListAsync(
+                new DownloadListRequest(songs, BatchDownloadLabel(list), quality));
+            if (sourceListFocused && !list.IsDisposed && list.CanFocus) list.Focus();
+        }
+        catch (Exception exception)
+        {
+            Announce("批量下载任务创建失败", "download-batch", AnnouncementKind.Error);
+            WinFormsUi.Error(this, exception, "批量下载");
+        }
+    }
+
+    private const int LB_GETCARETINDEX = 0x019F;
+    private const int LB_SETCARETINDEX = 0x019E;
+
+    private static int ListCaretIndex(ListBox list) =>
+        SendMessage(list.Handle, LB_GETCARETINDEX, IntPtr.Zero, IntPtr.Zero).ToInt32();
+
+    private static void SetListCaretIndex(ListBox list, int index) =>
+        SendMessage(list.Handle, LB_SETCARETINDEX, (IntPtr)index, IntPtr.Zero);
+
     private void AssignSongContextMenu(ListBox list)
     {
         var menu = new ContextMenu();
@@ -881,7 +960,15 @@ public partial class WinFormsShell
         menu.MenuItems.Add(new MenuItem("查看歌词", (_, _) => OpenLyrics(WinFormsUi.Selected<MusicInfo>(list))));
         menu.MenuItems.Add(new MenuItem("查看详情", (_, _) => ShowSongDetails(list)));
         menu.MenuItems.Add(new MenuItem("收藏歌曲", (_, _) => _ = AddFavorites(WinFormsUi.Songs(list))));
-        menu.MenuItems.Add(new MenuItem("下载", (_, _) => DownloadList(WinFormsUi.Songs(list))));
+        menu.MenuItems.Add(new MenuItem("下载当前歌曲", (_, _) => DownloadList(WinFormsUi.Songs(list))));
+        var batchDownload = new MenuItem("批量下载选中歌曲(0)", (_, _) => DownloadBatch(list));
+        menu.Popup += (_, _) =>
+        {
+            var count = SelectedSongs(list).Count;
+            batchDownload.Text = $"批量下载选中歌曲({count})";
+            batchDownload.Enabled = count >= 2;
+        };
+        menu.MenuItems.Add(batchDownload);
         menu.MenuItems.Add(new MenuItem("切换音源播放", (_, _) => OpenManualSource(WinFormsUi.Selected<MusicInfo>(list))));
         var localMenu = new MenuItem("用第三方播放器播放", (_, _) => PlayExternally(WinFormsUi.Selected<MusicInfo>(list)));
         menu.MenuItems.Add(localMenu);
@@ -1192,6 +1279,9 @@ public partial class WinFormsShell
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern IntPtr GetFocus();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int message, IntPtr wParam, IntPtr lParam);
 
     private void AttachSongList(ListBox list)
     {

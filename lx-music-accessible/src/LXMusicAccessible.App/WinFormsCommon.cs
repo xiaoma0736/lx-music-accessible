@@ -65,6 +65,18 @@ internal static class WinFormsUi
 
     public static T? Selected<T>(ListBox list) => list.SelectedItem is ObjectBox<T> box ? box.Value : default;
 
+    /// <summary>Moves a multi-simple list to exactly one item; SelectedIndex would otherwise add to the set.</summary>
+    public static void SelectOnly(ListBox list, int index)
+    {
+        if (index < 0 || index >= list.Items.Count)
+        {
+            list.ClearSelected();
+            return;
+        }
+        list.ClearSelected();
+        list.SetSelected(index, true);
+    }
+
     public static IReadOnlyList<MusicInfo> Songs(ListBox list)
     {
         var selected = list.SelectedItems.Cast<object>().OfType<ObjectBox<MusicInfo>>().Select(item => item.Value).ToArray();
@@ -84,7 +96,8 @@ internal static class WinFormsUi
             var identityMatches = Enumerable.Range(0, list.Items.Count)
                 .Where(i => list.Items[i] is ObjectBox<MusicInfo> box && box.Value.Id == selected).ToArray();
             var index = identityMatches.Length > 0 ? identityMatches[0] : Math.Max(0, Math.Min(selectedIndex, list.Items.Count - 1));
-            list.SelectedIndex = index;
+            if (list.SelectionMode == SelectionMode.MultiSimple) SelectOnly(list, index);
+            else list.SelectedIndex = index;
         }
     }
 

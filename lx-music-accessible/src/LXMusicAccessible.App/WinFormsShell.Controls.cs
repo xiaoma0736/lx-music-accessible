@@ -257,6 +257,7 @@ public partial class WinFormsShell : Form
         SearchClearButton = new Button { Text = "清空", Width = 80 };
         WinFormsUi.Name(SearchClearButton, "清空搜索", 7);
         SearchResults = WinFormsUi.ListBox("SearchResults", "搜索结果", 8);
+        SearchResults.SelectionMode = SelectionMode.MultiSimple;
         SearchResults.Size = new Size(830, 450);
         SearchLoadMore = new Button { Text = "加载更多歌曲", Width = 150, TabStop = false, TabIndex = 10, Name = "SearchLoadMore", AccessibleName = "加载更多搜索歌曲", Enabled = false };
         sourceLabel.SetBounds(10, 14, 0, 0);
@@ -325,6 +326,7 @@ public partial class WinFormsShell : Form
         };
         SearchResults.KeyDown += async (_, e) =>
         {
+            if (HandleSongListSelection(SearchResults, e)) return;
             if (await TryActivateLoadMore(SearchResults, e)) return;
             if (e.Shift && e.KeyCode == Keys.Enter)
             {
@@ -353,6 +355,7 @@ public partial class WinFormsShell : Form
         var page = new TabPage("播放列表") { AccessibleName = "播放列表", Padding = new Padding(10) };
         OnlinePlaylists = WinFormsUi.ListBox("OnlinePlaylists", "我的歌单", 2);
         FavoriteSongs = WinFormsUi.ListBox("FavoriteSongs", "收藏歌曲", 3);
+        FavoriteSongs.SelectionMode = SelectionMode.MultiSimple;
         var newButton = CreateButton("新建歌单", 4, (_, _) => _ = ManagePlaylistAsync("新建歌单名称", name => _services.SavedPlaylists!.CreateAsync(name!)));
         var renameButton = CreateButton("重命名歌单", 5, (_, _) => _ = ManagePlaylistAsync("重命名歌单", name => _services.SavedPlaylists!.RenameSelectedAsync(name!)));
         var deleteButton = CreateButton("删除歌单", 6, (_, _) => _ = DeleteSavedPlaylistAsync());
@@ -391,7 +394,8 @@ public partial class WinFormsShell : Form
         OnlinePlaylists.DoubleClick += (_, _) => _ = LoadSelectedSavedAsync();
         FavoriteSongs.DoubleClick += (_, _) => _ = ActivateSong(FavoriteSongs);
         SavedPlaylistLoadMore.Click += (_, _) => _ = LoadMoreSavedSongsAsync();
-        FavoriteSongs.KeyDown += async (_, e) => { if (await TryActivateLoadMore(FavoriteSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(WinFormsUi.Selected<MusicInfo>(FavoriteSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(FavoriteSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(FavoriteSongs); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
+        FavoriteSongs.KeyDown += async (_, e) => { if (HandleSongListSelection(FavoriteSongs, e)) return;
+            if (await TryActivateLoadMore(FavoriteSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(WinFormsUi.Selected<MusicInfo>(FavoriteSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(FavoriteSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(FavoriteSongs); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         return page;
     }
 
@@ -404,6 +408,7 @@ public partial class WinFormsShell : Form
         CategoryList = WinFormsUi.ListBox("CategoryList", "分类", 4);
         CategoryPlaylists = WinFormsUi.ListBox("CategoryPlaylists", "歌单", 5);
         CategorySongs = WinFormsUi.ListBox("CategorySongs", "分类歌曲", 6);
+        CategorySongs.SelectionMode = SelectionMode.MultiSimple;
 
         // Category playlists are paged by appending through the load-more command below. The earlier
         // first/previous/next page buttons and the page indicator were permanently hidden, so a screen
@@ -456,7 +461,8 @@ public partial class WinFormsShell : Form
             }
         };
         CategorySongs.DoubleClick += (_, _) => _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category);
-        CategorySongs.KeyDown += async (_, e) => { if (await TryActivateLoadMore(CategorySongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(WinFormsUi.Selected<MusicInfo>(CategorySongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(CategorySongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
+        CategorySongs.KeyDown += async (_, e) => { if (HandleSongListSelection(CategorySongs, e)) return;
+            if (await TryActivateLoadMore(CategorySongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(WinFormsUi.Selected<MusicInfo>(CategorySongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(CategorySongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         var playlistMenu = new ContextMenu();
         var favorite = new MenuItem("收藏整个歌单到在线收藏", (_, _) => FavoriteCategoryPlaylist());
         playlistMenu.MenuItems.Add(favorite);
@@ -501,6 +507,7 @@ public partial class WinFormsShell : Form
         var refresh = CreateButton("刷新", 3, (_, _) => LoadRankings());
         RankingList = WinFormsUi.ListBox("RankingList", "排行榜", 4);
         RankingSongs = WinFormsUi.ListBox("RankingSongs", "排行榜歌曲", 5);
+        RankingSongs.SelectionMode = SelectionMode.MultiSimple;
         RankingSongsLoadMore = CreateButton("加载更多歌曲", 6, (_, _) => _ = LoadMoreRankingSongsAsync());
         RankingSongsLoadMore.Name = "RankingSongsLoadMore";
         RankingSongsLoadMore.AccessibleName = "加载更多榜单歌曲";
@@ -523,7 +530,8 @@ public partial class WinFormsShell : Form
             }
         };
         RankingSongs.DoubleClick += (_, _) => _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking);
-        RankingSongs.KeyDown += async (_, e) => { if (await TryActivateLoadMore(RankingSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(WinFormsUi.Selected<MusicInfo>(RankingSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(RankingSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
+        RankingSongs.KeyDown += async (_, e) => { if (HandleSongListSelection(RankingSongs, e)) return;
+            if (await TryActivateLoadMore(RankingSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(WinFormsUi.Selected<MusicInfo>(RankingSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(RankingSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
         var rankingMenu = new ContextMenu();
         rankingMenu.MenuItems.Add(new MenuItem("收藏整个榜单到在线收藏", (_, _) => FavoriteRanking()));
         RankingList.ContextMenu = rankingMenu;
