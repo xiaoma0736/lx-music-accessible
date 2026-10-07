@@ -54,7 +54,7 @@ public sealed class Issue74ListActivationFocusTests
             var results = RequiredListBox(shell, "SearchResults");
             await WaitForList(results, 2);
 
-            results.SelectedIndex = results.Items.Count - 1;
+            WinFormsUi.SelectOnly(results, results.Items.Count - 1);
             InvokeDoubleClick(results);
 
             await WaitFor(() => source.SearchCalls == 2);
