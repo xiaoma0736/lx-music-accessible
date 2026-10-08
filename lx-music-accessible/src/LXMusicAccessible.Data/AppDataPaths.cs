@@ -9,15 +9,15 @@ namespace LXMusicAccessible.Data;
 public static class AppDataPaths
 {
     public const string DefaultDirName = "lxmusic";
-    private const string PointerFileName = "data_dir.json";
-    private const string LegacyPointerFileName = "data_dir.txt";
+    public const string PointerFileName = "data_dir.json";
+    public const string LegacyPointerFileName = "data_dir.txt";
     private const string DefaultOwnershipFileName = ".lxmusic-default-owner.json";
     private const int PointerSchemaVersion = 1;
     private const string DatabaseFileName = "lxmusic.db";
     private static readonly string[] DatabaseFileSuffixes = { string.Empty, "-wal", "-shm", "-journal" };
 
     /// <summary>The %LocalAppData% root that holds the default data directory and its ownership record.</summary>
-    private static string LocalAppDataRoot =>
+    public static string LocalAppDataRoot =>
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
     /// <summary>Default data directory under %LocalAppData%.</summary>
@@ -171,13 +171,18 @@ public static class AppDataPaths
         return directory;
     }
     /// <summary>Creates a dedicated owned child beneath a user-selected parent directory.</summary>
-    public static OwnedAppDataDirectory CreateOwnedDataDirectory(string selectedParent)
+    public static OwnedAppDataDirectory CreateOwnedDataDirectory(string selectedParent) =>
+        CreateOwnedDataDirectory(selectedParent, LocalAppDataRoot);
+
+    public static OwnedAppDataDirectory CreateOwnedDataDirectory(
+        string selectedParent,
+        string localApplicationDataDirectory)
     {
         FrameworkCompatibility.ThrowIfNullOrWhiteSpace(selectedParent);
         var target = Path.GetFullPath(Path.Combine(selectedParent, DefaultDirName));
-        var current = ResolveDataDir();
-
-        foreach (var existing in new[] { current, DefaultDataDir }.Distinct(StringComparer.OrdinalIgnoreCase))
+        var current = ResolveDataDir(localApplicationDataDirectory);
+        var defaultDataDirectory = Path.Combine(localApplicationDataDirectory, DefaultDirName);
+        foreach (var existing in new[] { current, defaultDataDirectory }.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (!string.Equals(Path.GetFullPath(existing), target, PathComparison)
                 && AppDataOwnership.PathsOverlap(existing, target))
@@ -192,13 +197,17 @@ public static class AppDataPaths
     }
 
     /// <summary>Activates an already-owned data directory.</summary>
-    public static void WriteDataDirPointer(string directory)
+    public static void WriteDataDirPointer(string directory) =>
+        WriteDataDirPointer(directory, LocalAppDataRoot);
+
+    public static void WriteDataDirPointer(string directory, string localApplicationDataDirectory)
     {
         if (!AppDataOwnership.TryRead(directory, out var owned))
             throw new InvalidOperationException("The selected data directory is not owned by this application.");
 
-        Directory.CreateDirectory(DefaultDataDir);
-        var pointerPath = Path.Combine(DefaultDataDir, PointerFileName);
+        var defaultDataDirectory = Path.Combine(localApplicationDataDirectory, DefaultDirName);
+        Directory.CreateDirectory(defaultDataDirectory);
+        var pointerPath = Path.Combine(defaultDataDirectory, PointerFileName);
         var temporaryPath = pointerPath + ".tmp";
         var pointer = new DataDirectoryPointer(PointerSchemaVersion, owned.Path, owned.OwnershipId);
         File.WriteAllText(temporaryPath, JsonSerializer.Serialize(pointer));

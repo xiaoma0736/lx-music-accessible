@@ -12,7 +12,8 @@ public sealed record DownloadPreferences(
     DownloadNameOrder NameOrder,
     bool IncludeQualityTag,
     int BatchDownloadDelaySeconds = 2,
-    int DownloadSpeedLimitKbps = 0);
+    int DownloadSpeedLimitKbps = 0,
+    string? TargetDirectory = null);
 
 internal class DownloadThrottle
 {
@@ -81,7 +82,7 @@ public sealed record ExternalPlaybackRequest(string PlayerPath, MusicInfo Music,
 
 public sealed record ExternalPlaybackResult(bool Succeeded, string Message);
 
-public sealed record DownloadCacheCleanupResult(int DeletedFiles, long FreedBytes);
+public sealed record DownloadCacheCleanupResult(int DeletedFiles, long FreedBytes, int SkippedFiles = 0);
 
 /// <summary>
 /// Deep download module. Its interface accepts complete single/list intents and owns
@@ -267,16 +268,18 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             Quality = string.IsNullOrWhiteSpace(request.Quality) ? "128k" : request.Quality
         };
         DownloadPreferences preferences;
+        DownloadPlan plan;
         lock (_gate)
         {
             preferences = _preferences;
-            _plans[task.Id] = new DownloadPlan(
-                request.TargetDirectory,
+            plan = new DownloadPlan(
+                request.TargetDirectory ?? preferences.TargetDirectory,
                 preferences,
                 task.Quality);
+            _plans[task.Id] = plan;
         }
         _tasks.Add(task);
-        await ExecuteManagedAsync(task, request.TargetDirectory, preferences, announce: true, cancellationToken);
+        await ExecuteManagedAsync(task, plan.TargetDirectory, preferences, announce: true, cancellationToken);
         return task;
     }
 
@@ -305,9 +308,11 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             using var registration = cancellationToken.Register(() =>
                 _backgroundWork.Cancel("download.list"));
             string targetDirectory;
+            string? requestedTargetDirectory;
+            lock (_gate) requestedTargetDirectory = request.TargetDirectory ?? _preferences.TargetDirectory;
             try
             {
-                targetDirectory = ResolveTargetDirectory(request.TargetDirectory);
+                targetDirectory = ResolveTargetDirectory(requestedTargetDirectory);
                 if (!string.IsNullOrWhiteSpace(request.Subdirectory))
                 {
                     targetDirectory = EnsureSafeDirectory(
@@ -456,8 +461,14 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
 
     public string ResolveDownloadDirectory(string? requested = null)
     {
-        try { return ResolveTargetDirectory(requested); }
-        catch (DownloadSafetyException) when (!string.IsNullOrWhiteSpace(requested))
+        string? preferredDirectory;
+        lock (_gate) preferredDirectory = _preferences.TargetDirectory;
+        var effectiveDirectory = string.IsNullOrWhiteSpace(requested) ? preferredDirectory : requested;
+        try
+        {
+            return ResolveTargetDirectory(effectiveDirectory);
+        }
+        catch (DownloadSafetyException) when (!string.IsNullOrWhiteSpace(effectiveDirectory))
         {
             return ResolveTargetDirectory(null);
         }
@@ -613,28 +624,39 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         try { directory = EnsureSafeDirectory(Path.Combine(_temporaryRoot, "LXMusicAccessible.External")); }
         catch (DownloadSafetyException) { return new(0, 0); }
         var deleted = 0;
+        var skipped = 0;
         long bytes = 0;
-        foreach (var file in Directory.EnumerateFiles(directory)
-            .Where(path => Path.GetFileName(path).StartsWith("lxmusic_ext_", StringComparison.OrdinalIgnoreCase)
-                || Path.GetFileName(path).EndsWith(".download", StringComparison.OrdinalIgnoreCase)))
+        try
         {
-            try
+            foreach (var file in Directory.EnumerateFiles(directory)
+                .Where(path => Path.GetFileName(path).StartsWith("lxmusic_ext_", StringComparison.OrdinalIgnoreCase)
+                    || Path.GetFileName(path).EndsWith(".download", StringComparison.OrdinalIgnoreCase)))
             {
-                EnsureContained(directory, file);
-                var length = new FileInfo(file).Length;
-                File.Delete(file);
-                lock (_gate) _externalTemporaryFiles.Remove(file);
-                deleted++;
-                bytes += length;
-            }
-            catch (Exception exception)
-            {
-                _logger.LogDebug(
-                    "Temporary download cleanup skipped {ErrorType}",
-                    exception.GetType().Name);
+                try
+                {
+                    EnsureContained(directory, file);
+                    var length = new FileInfo(file).Length;
+                    File.Delete(file);
+                    lock (_gate) _externalTemporaryFiles.Remove(file);
+                    deleted++;
+                    bytes += length;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    skipped++;
+                    _logger.LogDebug(
+                        "Temporary download cleanup skipped {ErrorType}",
+                        exception.GetType().Name);
+                }
             }
         }
-        return new(deleted, bytes);
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(
+                "Temporary download cleanup enumeration failed {ErrorType}",
+                exception.GetType().Name);
+        }
+        return new(deleted, bytes, skipped);
     }
 
     private async Task ExecuteManagedAsync(
@@ -930,6 +952,19 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
 
     private static string EnsureSafeDirectory(string path)
     {
+        bool fullyQualified;
+        try
+        {
+            fullyQualified = FrameworkCompatibility.IsPathFullyQualified(path);
+        }
+        catch (ArgumentException)
+        {
+            throw new DownloadSafetyException("下载目录无效");
+        }
+
+        if (!fullyQualified)
+            throw new DownloadSafetyException("下载目录必须是绝对路径");
+
         string full;
         try { full = FrameworkCompatibility.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)

@@ -713,7 +713,8 @@ public partial class WinFormsShell : Form
             settings.DownloadNameOrder,
             settings.DownloadNameIncludeQuality,
             settings.BatchDownloadDelaySeconds,
-            settings.DownloadSpeedLimitKbps));
+            settings.DownloadSpeedLimitKbps,
+            settings.DownloadPath));
         RefreshAnnouncementMenuChecks();
     }
 

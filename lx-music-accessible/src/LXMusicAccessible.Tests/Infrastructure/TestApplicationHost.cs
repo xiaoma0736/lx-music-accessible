@@ -86,6 +86,7 @@ internal sealed class TestApplicationHost : IAsyncDisposable, IDisposable
                     services.AddSingleton<BackgroundWorkHost>();
                     services.AddSingleton<IPlaybackSourceAdapter, MusicPlaybackSourceAdapter>();
                     services.AddSingleton(sp => new MusicPlayerService(sp.GetRequiredService<ILogger<MusicPlayerService>>(), sp.GetRequiredService<IAudioPlayer>(), sp.GetRequiredService<IPlaybackSourceAdapter>(), sp.GetRequiredService<IAccessibleAnnouncer>(), sp.GetRequiredService<BackgroundWorkHost>(), sp.GetRequiredService<HttpClient>(), Path.Combine(dataDirectory, "cache")));
+                    services.AddSingleton<IPlaybackCacheCleanup>(sp => sp.GetRequiredService<MusicPlayerService>());
                     services.AddSingleton<IPlaybackCoordinator>(sp => sp.GetRequiredService<MusicPlayerService>());
                     services.AddSingleton<IAudioPlaybackControl>(sp => sp.GetRequiredService<MusicPlayerService>());
                     services.AddSingleton<IExactPlaybackCoordinator>(sp => sp.GetRequiredService<MusicPlayerService>());

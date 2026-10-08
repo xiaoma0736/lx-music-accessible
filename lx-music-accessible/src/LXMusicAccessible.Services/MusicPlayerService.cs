@@ -9,7 +9,7 @@ namespace LXMusicAccessible.Services;
 /// 播放协调深模块：唯一拥有队列、索引、播放模式、来源重试、代际和预缓存。
 /// 调用者只提交播放意图并观察结果或状态事件。
 /// </summary>
-public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoordinator, IAudioPlaybackControl, IAsyncDisposable, IDisposable
+public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoordinator, IAudioPlaybackControl, IPlaybackCacheCleanup, IAsyncDisposable, IDisposable
 {
     private const string PlaySlot = "music-player.play";
     private const string PrecacheSlot = "music-player.precache";
@@ -33,6 +33,8 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
     private readonly string _precacheDirectory;
     private readonly Dictionary<string, string> _precachedPaths =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _activePrecacheFiles = new(StringComparer.OrdinalIgnoreCase);
+    private bool _playbackCacheCleanupInProgress;
 
     private PlayerState _state = PlayerState.Stopped;
     private MusicInfo? _currentMusic;
@@ -1112,10 +1114,20 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
             if (string.IsNullOrWhiteSpace(url)) return;
             token.ThrowIfCancellationRequested();
 
+            // Register the candidate atomically with the cleanup-in-progress check. Otherwise
+            // cleanup could take its active-file snapshot between registration and enumeration
+            // and delete a file that playback is about to use.
+            lock (_gate)
+            {
+                if (_playbackCacheCleanupInProgress || revision != _queueRevision)
+                    return;
+                temporaryPath = Path.Combine(
+                    _precacheDirectory,
+                    $"lxmusic_pre_{Guid.NewGuid():N}.tmp");
+                _activePrecacheFiles.Add(temporaryPath);
+            }
+
             Directory.CreateDirectory(_precacheDirectory);
-            temporaryPath = Path.Combine(
-                _precacheDirectory,
-                $"lxmusic_pre_{Guid.NewGuid():N}.tmp");
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
             timeout.CancelAfter(TimeSpan.FromSeconds(60));
             using (var response = await _httpClient.GetAsync(
@@ -1144,6 +1156,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                         DeletePrecacheFile(cached.Value);
                     }
                     _precachedPaths[key] = temporaryPath;
+                    _activePrecacheFiles.Remove(temporaryPath);
                     published = true;
                 }
             });
@@ -1162,7 +1175,11 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         }
         finally
         {
-            if (temporaryPath is not null) DeletePrecacheFile(temporaryPath);
+            if (temporaryPath is not null)
+            {
+                lock (_gate) _activePrecacheFiles.Remove(temporaryPath);
+                DeletePrecacheFile(temporaryPath);
+            }
         }
     }
 
@@ -1252,6 +1269,60 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                 exception.GetType().Name);
             return null;
         }
+    }
+
+    public DownloadCacheCleanupResult ClearPlaybackCache()
+    {
+        lock (_gate)
+        {
+            if (_playbackCacheCleanupInProgress) return new(0, 0, 0);
+            _playbackCacheCleanupInProgress = true;
+        }
+
+        var deleted = 0;
+        var skipped = 0;
+        long freedBytes = 0;
+        try
+        {
+            Directory.CreateDirectory(_precacheDirectory);
+            var cacheDirectory = new DirectoryInfo(_precacheDirectory);
+            if (cacheDirectory.Attributes.HasFlag(FileAttributes.ReparsePoint)) return new(0, 0, 0);
+
+            string[] activeFiles;
+            lock (_gate)
+                activeFiles = _precachedPaths.Values.Concat(_activePrecacheFiles).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+            foreach (var file in Directory.EnumerateFiles(_precacheDirectory, "lxmusic_pre_*.tmp"))
+            {
+                if (activeFiles.Contains(Path.GetFullPath(file), StringComparer.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    var length = new FileInfo(file).Length;
+                    File.Delete(file);
+                    deleted++;
+                    freedBytes += length;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    skipped++;
+                    _logger.LogDebug(
+                        "Playback precache cleanup skipped {ErrorType}",
+                        exception.GetType().Name);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(
+                "Playback precache cleanup failed {ErrorType}",
+                exception.GetType().Name);
+        }
+        finally
+        {
+            lock (_gate) _playbackCacheCleanupInProgress = false;
+        }
+
+        return new(deleted, freedBytes, skipped);
     }
 
     public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();

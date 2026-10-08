@@ -290,6 +290,7 @@ public sealed class ApplicationWindowFactory(
     SettingsWorkflow settings,
     ITtsService tts,
     IDownloadWorkflow downloads,
+    IPlaybackCacheCleanup playbackCache,
     IPlaylistImportService playlistImport,
     IPlaylistLoginWindowFactory playlistLoginWindows,
     IManualSourceDiscoveryWorkflow manualSources)
@@ -317,7 +318,7 @@ public sealed class ApplicationWindowFactory(
     public SettingsForm CreateSettings(
         Form owner,
         Func<KeyEventArgs, bool> handleHotkey,
-        Hotkey? reconfigure = null) => new(announcer, settings, tts, downloads, handleHotkey, reconfigure) { Owner = owner };
+        Hotkey? reconfigure = null) => new(announcer, settings, tts, downloads, handleHotkey, reconfigure, playbackCache) { Owner = owner };
 
     public PlaylistImportForm CreatePlaylistImport(
         Form owner,
@@ -378,6 +379,7 @@ public static class ApplicationHost
                     sp.GetRequiredService<BackgroundWorkHost>(),
                     sp.GetRequiredService<HttpClient>(),
                     Path.Combine(dataDirectory, "cache")));
+                services.AddSingleton<IPlaybackCacheCleanup>(sp => sp.GetRequiredService<MusicPlayerService>());
                 services.AddSingleton<IPlaybackCoordinator>(sp => sp.GetRequiredService<MusicPlayerService>());
                 services.AddSingleton<IAudioPlaybackControl>(sp => sp.GetRequiredService<MusicPlayerService>());
                 services.AddSingleton<IExactPlaybackCoordinator>(sp => sp.GetRequiredService<MusicPlayerService>());

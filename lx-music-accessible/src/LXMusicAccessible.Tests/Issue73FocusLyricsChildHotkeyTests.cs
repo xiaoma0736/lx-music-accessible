@@ -288,6 +288,7 @@ public sealed class Issue73FocusLyricsChildHotkeyTests
             host.Services.GetRequiredService<SettingsWorkflow>(),
             host.Services.GetRequiredService<ITtsService>(),
             host.Services.GetRequiredService<IDownloadWorkflow>(),
+            host.Services.GetRequiredService<IPlaybackCacheCleanup>(),
             host.Services.GetRequiredService<IPlaylistImportService>(),
             new NoPlaylistLoginFactory(),
             host.Services.GetRequiredService<IManualSourceDiscoveryWorkflow>());

@@ -22,7 +22,9 @@ public class SettingsForm : Form
     private readonly SettingsWorkflow _settings;
     private readonly ITtsService _tts;
     private readonly IDownloadWorkflow _downloads;
+    private readonly IPlaybackCacheCleanup? _playbackCache;
     private readonly Func<KeyEventArgs, bool> _handleHotkey;
+
     private readonly ListBox _hotkeys = WinFormsUi.ListBox("快捷键", 2);
     private readonly ComboBox _closeBehavior = WinFormsUi.Combo("关闭行为", 1, "关闭应用", "隐藏到托盘");
     private readonly ComboBox _quality = WinFormsUi.Combo("默认播放音质", 2, "标准", "较高", "极高", "无损", "Hi-Res");
@@ -77,12 +79,14 @@ public class SettingsForm : Form
         ITtsService tts,
         IDownloadWorkflow downloads,
         Func<KeyEventArgs, bool> handleHotkey,
-        Hotkey? reconfigure = null)
+        Hotkey? reconfigure = null,
+        IPlaybackCacheCleanup? playbackCache = null)
     {
         _announcer = announcer;
         _settings = settings;
         _tts = tts;
         _downloads = downloads;
+        _playbackCache = playbackCache;
         _handleHotkey = handleHotkey;
         Text = "设置";
         Font = new Font("Microsoft YaHei UI", 9F);
@@ -299,8 +303,21 @@ public class SettingsForm : Form
         };
         clear.Click += (_, _) =>
         {
-            var result = _downloads.ClearTemporaryFiles();
-            Announce(result.DeletedFiles == 0 ? "没有可清理的缓存文件。" : $"已清理缓存 {result.DeletedFiles} 个文件。", "settings", AnnouncementKind.Success);
+            var external = _downloads.ClearTemporaryFiles();
+            var playback = _playbackCache?.ClearPlaybackCache() ?? new(0, 0, 0);
+            var deleted = external.DeletedFiles + playback.DeletedFiles;
+            var skipped = external.SkippedFiles + playback.SkippedFiles;
+            var freedBytes = external.FreedBytes + playback.FreedBytes;
+            string message;
+            if (deleted == 0 && skipped == 0)
+                message = "没有可清理的缓存文件。";
+            else
+            {
+                message = $"已清理缓存 {deleted} 个文件，释放 {FormatBytes(freedBytes)}。";
+                if (skipped > 0)
+                    message += $"{skipped} 个文件被占用，已保留。";
+            }
+            Announce(message, "settings", AnnouncementKind.Success);
         };
         return page;
     }
@@ -458,6 +475,13 @@ public class SettingsForm : Form
         if (result.Accepted) return true;
         Announce(string.Join(" ", result.Errors), "settings", AnnouncementKind.Error);
         return false;
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024d:0.#} KB";
+        return $"{bytes / 1024d / 1024d:0.#} MB";
     }
 
     private void CommitPath(Action<UserSettings> edit, bool returnFocusOnError = true)

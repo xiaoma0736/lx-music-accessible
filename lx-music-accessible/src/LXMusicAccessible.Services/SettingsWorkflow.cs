@@ -168,12 +168,17 @@ public sealed class SettingsWorkflow : IDisposable
 
     public string DataDirectory => AppDataPaths.ResolveDataDir();
 
-    public DataDirectoryChangeResult ChangeDataDirectory(string selectedParent)
+    public DataDirectoryChangeResult ChangeDataDirectory(string selectedParent) =>
+        ChangeDataDirectoryInRoot(selectedParent, AppDataPaths.LocalAppDataRoot);
+
+    internal DataDirectoryChangeResult ChangeDataDirectoryInRoot(
+        string selectedParent,
+        string localApplicationDataDirectory)
     {
         try
         {
             FrameworkCompatibility.ThrowIfNullOrWhiteSpace(selectedParent);
-            var current = Path.GetFullPath(AppDataPaths.ResolveDataDir());
+            var current = Path.GetFullPath(AppDataPaths.ResolveDataDir(localApplicationDataDirectory));
             var parent = Path.GetFullPath(selectedParent.Trim());
             var candidate = Path.GetFullPath(Path.Combine(parent, AppDataPaths.DefaultDirName));
             if (string.Equals(parent, current, StringComparison.OrdinalIgnoreCase)
@@ -182,17 +187,9 @@ public sealed class SettingsWorkflow : IDisposable
                 return new(true, current, "已选择当前数据目录");
             }
 
-            var target = AppDataPaths.CreateOwnedDataDirectory(parent).Path;
-            CopyIfPresent(Path.Combine(current, "lxmusic.db"), Path.Combine(target, "lxmusic.db"));
-            var sourceLogs = Path.Combine(current, "logs");
-            if (Directory.Exists(sourceLogs))
-            {
-                var targetLogs = Path.Combine(target, "logs");
-                Directory.CreateDirectory(targetLogs);
-                foreach (var source in Directory.EnumerateFiles(sourceLogs))
-                    CopyIfPresent(source, Path.Combine(targetLogs, Path.GetFileName(source)));
-            }
-            AppDataPaths.WriteDataDirPointer(target);
+            var target = AppDataPaths.CreateOwnedDataDirectory(parent, localApplicationDataDirectory).Path;
+            CopyDataDirectoryContents(current, target);
+            AppDataPaths.WriteDataDirPointer(target, localApplicationDataDirectory);
             return new(true, target, "数据目录已设置，请重启应用后完全生效");
         }
         catch (Exception exception) when (exception is IOException
@@ -206,9 +203,30 @@ public sealed class SettingsWorkflow : IDisposable
         }
     }
 
-    private static void CopyIfPresent(string source, string target)
+    private static void CopyDataDirectoryContents(string source, string target)
     {
-        if (File.Exists(source) && !File.Exists(target)) File.Copy(source, target, overwrite: false);
+        foreach (var entry in Directory.EnumerateFileSystemEntries(source))
+        {
+            var name = Path.GetFileName(entry);
+            if (name is AppDataPaths.PointerFileName or AppDataPaths.LegacyPointerFileName
+                or AppDataOwnership.MarkerFileName)
+                continue;
+
+            var destination = Path.Combine(target, name);
+            if (File.Exists(entry))
+            {
+                var info = new FileInfo(entry);
+                if (info.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+                File.Copy(entry, destination, overwrite: false);
+            }
+            else if (Directory.Exists(entry))
+            {
+                var info = new DirectoryInfo(entry);
+                if (info.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+                Directory.CreateDirectory(destination);
+                CopyDataDirectoryContents(entry, destination);
+            }
+        }
     }
 
     public async Task<SettingsEditState> LoadAsync(

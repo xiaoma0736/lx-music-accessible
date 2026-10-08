@@ -1,8 +1,14 @@
-﻿using LXMusicAccessible.Models;
+using LXMusicAccessible.Models;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Audio;
 
 namespace LXMusicAccessible.Services;
+
+/// <summary>通过标准 UI Automation 主通道播报动态状态。</summary>
+public interface IPlaybackCacheCleanup
+{
+    DownloadCacheCleanupResult ClearPlaybackCache();
+}
 
 /// <summary>通过标准 UI Automation 主通道播报动态状态。</summary>
 public interface IAccessibleAnnouncer
