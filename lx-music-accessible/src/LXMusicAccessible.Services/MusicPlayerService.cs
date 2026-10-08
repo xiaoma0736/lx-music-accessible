@@ -1262,8 +1262,16 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         _audioPlayer.PlaybackCompleted -= AudioPlayer_PlaybackCompleted;
         lock (_gate) ++_queueRevision;
         CancelGenerationWork();
-        await _backgroundWork.WaitAsync(PlaySlot);
-        await _backgroundWork.WaitAsync(PrecacheSlot);
+        using var disposalTimeout = new CancellationTokenSource(BackgroundWorkHost.DisposalWait);
+        try
+        {
+            await _backgroundWork.WaitAsync(PlaySlot, disposalTimeout.Token);
+            await _backgroundWork.WaitAsync(PrecacheSlot, disposalTimeout.Token);
+        }
+        catch (OperationCanceledException) when (disposalTimeout.IsCancellationRequested)
+        {
+            _logger.LogWarning("Music player disposal timed out waiting for background work.");
+        }
         if (_ownsBackgroundWork) await _backgroundWork.DisposeAsync();
         if (_ownsHttpClient) _httpClient.Dispose();
         GC.SuppressFinalize(this);

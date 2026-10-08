@@ -163,6 +163,7 @@ public sealed class WinFormsDesktopIntegration : IDisposable
     private NotifyIcon? _tray;
     private WinFormsShell? _shell;
     private List<Form>? _hiddenToolWindows;
+    private SynchronizationContext? _uiContext;
     public event EventHandler<DesktopCommand>? CommandRequested;
 
     public WinFormsDesktopIntegration(IAccessibleAnnouncer announcer) => _announcer = announcer;
@@ -172,6 +173,7 @@ public sealed class WinFormsDesktopIntegration : IDisposable
     public void Attach(WinFormsShell shell)
     {
         _shell = shell ?? throw new ArgumentNullException(nameof(shell));
+        _uiContext = SynchronizationContext.Current;
     }
 
     public bool HideToTray()
@@ -252,13 +254,22 @@ public sealed class WinFormsDesktopIntegration : IDisposable
     public void CompleteExit()
     {
         var shell = _shell;
-        if (shell is { IsDisposed: false })
+
+        void CompleteOnUiThread()
         {
-            // The exit workflow can finish on a background thread. Closing the window from there
-            // disposes it without ending the message loop, so marshal onto the owning UI thread.
-            if (shell.IsHandleCreated && shell.InvokeRequired) shell.BeginInvoke(new Action(shell.Close));
-            else shell.Close();
+            if (shell is { IsDisposed: false }) shell.Close();
+            // Shell handlers can refuse WM_CLOSE, and disposal may already have destroyed its handle.
+            // The desktop seam still owns message-loop completion, so close without relying on Close.
+            Application.ExitThread();
         }
+
+        if (_uiContext is { } uiContext && !Equals(SynchronizationContext.Current, uiContext))
+            uiContext.Post(_ => CompleteOnUiThread(), null);
+        else if (shell is { IsHandleCreated: true } && shell.InvokeRequired)
+            shell.BeginInvoke(new Action(CompleteOnUiThread));
+        else
+            CompleteOnUiThread();
+
         _tray?.Dispose();
         _tray = null;
     }

@@ -9,16 +9,24 @@ namespace LXMusicAccessible.Services;
 /// </summary>
 public sealed class BackgroundWorkHost : IAsyncDisposable, IDisposable
 {
+    internal static readonly TimeSpan DisposalWait = TimeSpan.FromSeconds(5);
     private readonly object _gate = new();
     private readonly Dictionary<string, WorkItem> _current = new(StringComparer.Ordinal);
     private readonly HashSet<WorkItem> _active = [];
     private readonly ILogger<BackgroundWorkHost> _logger;
+    private readonly TimeSpan _disposalWait;
     private Task? _stopTask;
     private bool _stopping;
 
     public BackgroundWorkHost(ILogger<BackgroundWorkHost> logger)
+        : this(logger, DisposalWait)
+    {
+    }
+
+    internal BackgroundWorkHost(ILogger<BackgroundWorkHost> logger, TimeSpan disposalWait)
     {
         _logger = logger;
+        _disposalWait = disposalWait <= TimeSpan.Zero ? DisposalWait : disposalWait;
     }
 
     public int ActiveCount
@@ -73,7 +81,19 @@ public sealed class BackgroundWorkHost : IAsyncDisposable, IDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await StopAsync();
+        // Background operations are expected to observe cancellation. This final bound keeps an
+        // operation that is already stuck in native or synchronous code from blocking disposal forever.
+        using var timeout = new CancellationTokenSource(_disposalWait);
+        try
+        {
+            await StopAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "Background work host disposal timed out with {Count} active operation(s).",
+                ActiveCount);
+        }
         GC.SuppressFinalize(this);
     }
 

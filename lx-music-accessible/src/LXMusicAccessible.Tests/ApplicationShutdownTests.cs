@@ -105,6 +105,48 @@ public sealed class ApplicationShutdownTests
     }
 
     [Fact]
+    public async Task Release_stall_times_out_and_does_not_hang_the_shutdown_request()
+    {
+        var events = new List<string>();
+        var releaseStarted = new TaskCompletionSource<object?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseGate = new TaskCompletionSource<object?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var participant = new RecordingParticipant(
+            events,
+            Task.CompletedTask);
+        var feedback = new RecordingFeedback();
+        var logger = new RecordingLogger<ApplicationShutdownCoordinator>();
+        var coordinator = new ApplicationShutdownCoordinator(
+            () => participant,
+            _ => Task.CompletedTask,
+            _ =>
+            {
+                events.Add("host-stop");
+                releaseStarted.TrySetResult(null);
+                releaseGate.Task.Wait();
+                return Task.CompletedTask;
+            },
+            feedback,
+            logger,
+            TimeSpan.FromMilliseconds(50));
+
+        var request = coordinator.RequestAsync();
+        await releaseStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        // The stalled disposable must not hold the exit request or the UI message loop hostage.
+        var result = await request.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(new ShutdownResult(ShutdownStatus.TimedOut, "release"), result);
+        Assert.Equal(result, Assert.Single(feedback.Results));
+        Assert.Contains("timed out while release", string.Join(Environment.NewLine, logger.Messages));
+        Assert.Contains("host-stop", events);
+        Assert.DoesNotContain("host-dispose", events);
+
+        releaseGate.SetResult(null);
+    }
+
+    [Fact]
     public async Task Persistence_timeout_is_observable_cancels_work_and_does_not_escape()
     {
         var events = new List<string>();

@@ -153,10 +153,22 @@ internal sealed class ApplicationShutdownCoordinator
 
     private async Task<ShutdownResult> ReleaseAsync()
     {
+        // Persistence is protected by its own budget. Release gets the same hard bound because a
+        // single hung native/synchronous Dispose must not prevent the shell or process from closing.
+        using var timeout = new CancellationTokenSource(_timeout);
         try
         {
-            await _releaseHost(CancellationToken.None).ConfigureAwait(false);
+            // Host disposal is synchronous and may block its calling thread. Start that work off the
+            // shutdown continuation first, or a native hang would prevent the timeout waiter from existing.
+            var releaseTask = Task.Run(() => _releaseHost(timeout.Token), timeout.Token);
+            ObserveAbandonedRelease(releaseTask);
+            await WaitAsync(releaseTask, timeout.Token).ConfigureAwait(false);
             return new ShutdownResult(ShutdownStatus.Completed, ReleasePhase);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            _logger.LogError("Application shutdown timed out while {Phase}.", ReleasePhase);
+            return new ShutdownResult(ShutdownStatus.TimedOut, ReleasePhase);
         }
         catch (Exception exception)
         {
@@ -165,6 +177,27 @@ internal sealed class ApplicationShutdownCoordinator
                 ReleasePhase,
                 exception.GetType().Name);
             return new ShutdownResult(ShutdownStatus.Failed, ReleasePhase);
+        }
+    }
+
+    private void ObserveAbandonedRelease(Task releaseTask)
+    {
+        _ = releaseTask.ContinueWith(
+            task => _logger.LogError(
+                "Application shutdown failed while {Phase}: {ErrorType}",
+                ReleasePhase,
+                task.Exception!.GetBaseException().GetType().Name),
+            TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    private static async Task WaitAsync(Task task, CancellationToken cancellationToken)
+    {
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using (cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken)))
+        {
+            var finished = await Task.WhenAny(task, completion.Task).ConfigureAwait(false);
+            await finished.ConfigureAwait(false);
         }
     }
 

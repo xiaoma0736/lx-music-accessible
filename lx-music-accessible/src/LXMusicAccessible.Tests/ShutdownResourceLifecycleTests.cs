@@ -178,6 +178,64 @@ public sealed class ShutdownResourceLifecycleTests
         }
     }
 
+    [Fact]
+    public async Task Complete_exit_ends_the_message_loop_even_when_shell_close_is_refused()
+    {
+        WinFormsShell? shell = null;
+        WinFormsDesktopIntegration? desktop = null;
+        var shellShown = new TaskCompletionSource<object?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var loopExited = new TaskCompletionSource<object?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                shell = RuntimePlaybackSearchHistoryTests.CreateShellForLifecycle();
+                desktop = new WinFormsDesktopIntegration(new RecordingAnnouncer());
+                desktop.Attach(shell);
+
+                // This deliberately models a shell-level close failure. Message-loop completion must
+                // remain owned by the desktop seam, not by whether one WM_CLOSE handler cancels.
+                var closeAttempts = 0;
+                shell.FormClosing += (_, eventArguments) =>
+                {
+                    // Allow cleanup to close the form after CompleteExit has attempted once.
+                    eventArguments.Cancel = Interlocked.Increment(ref closeAttempts) == 1;
+                };
+                shell.Show();
+                shellShown.SetResult(null);
+                Application.Run(shell);
+                loopExited.SetResult(null);
+            }
+            catch (Exception exception)
+            {
+                shellShown.TrySetException(exception);
+                loopExited.TrySetException(exception);
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        try
+        {
+            await shellShown.Task;
+            desktop!.CompleteExit();
+
+            var completed = await Task.WhenAny(loopExited.Task, Task.Delay(500));
+            if (completed != loopExited.Task)
+            {
+                Application.Exit();
+                await loopExited.Task;
+                Assert.Fail("CompleteExit left Application.Run alive when shell.Close was refused.");
+            }
+        }
+        finally
+        {
+            Application.Exit();
+            thread.Join(TimeSpan.FromSeconds(2));
+        }
+    }
     private static System.Windows.Forms.Timer GetOwnedTimer(Form form, string fieldName) =>
         (System.Windows.Forms.Timer)form.GetType()
             .GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance)!
