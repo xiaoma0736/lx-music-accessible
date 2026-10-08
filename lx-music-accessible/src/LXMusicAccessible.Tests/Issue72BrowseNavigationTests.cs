@@ -41,14 +41,14 @@ public sealed class Issue72BrowseNavigationTests
             await WaitFor(() => source.SearchCalls == 2);
             Assert.Same(search, shell.ActiveControl);
 
-            // A refreshed marker must remain the reading position so the next explicit activation
-            // loads the following page without requiring the user to rediscover the list end.
+            // #76 supersedes the former marker-selection behavior: after an explicit load, both
+            // selection and the native reading cursor move to the newest song; reselect the marker
+            // only to prove the next Enter still activates it.
             WinFormsUi.SelectOnly(search, search.Items.Count - 1);
             RaiseKeyDown(search, Keys.Enter);
             await WaitFor(() => source.SearchCalls == 3);
             await WaitForList(search, 4);
-            Assert.True(search.SelectedItem?.ToString()?.Contains("加载更多", StringComparison.Ordinal) == true,
-                $"Expected the refreshed load-more marker to stay selected, got {search.SelectedItem}.");
+            Assert.Equal("song-3", WinFormsUi.Selected<MusicInfo>(search)!.Id);
         });
     }
 

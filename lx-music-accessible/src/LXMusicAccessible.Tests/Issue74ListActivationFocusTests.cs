@@ -96,9 +96,9 @@ public sealed class Issue74ListActivationFocusTests
             await WaitFor(() => source.SearchCalls == 2);
 
             Assert.True(results.GetSelected(0));
-            var refreshedMarker = results.Items.Count - 1;
-            Assert.True(results.GetSelected(refreshedMarker));
-            Assert.Contains("加载更多", results.Items[refreshedMarker]!.ToString()!, StringComparison.Ordinal);
+            var newestSong = results.Items.Count - 2;
+            Assert.True(results.GetSelected(newestSong), "The newest appended song must be selected.");
+            Assert.False(results.GetSelected(results.Items.Count - 1), "The load-more marker must not stay selected.");
             Assert.Same(results, shell.ActiveControl);
         });
     }

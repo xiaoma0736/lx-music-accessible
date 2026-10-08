@@ -181,17 +181,27 @@ public partial class WinFormsShell
                 if (preservedSongIds is not null)
                 {
                     RestoreSelectedSongs(SearchResults, _searchSongs, preservedSongIds);
-                    if (loadMoreSelected && result.Value.HasMore)
-                        if (preservedSongIds.Count == 0)
-                            WinFormsUi.SelectOnly(SearchResults, SearchResults.Items.Count - 1);
-                        else
-                            SearchResults.SetSelected(SearchResults.Items.Count - 1, true);
+                    if (loadMoreSelected)
+                    {
+                        // UpdateLoadMore is already in Items, so choose the final song whether another
+                        // marker remains or this load reaches the end. Selecting an item does not
+                        // reliably move a multi-simple ListBox reading cursor, so align it explicitly.
+                        var songIndex = result.Value.HasMore
+                            ? SearchResults.Items.Count - 2
+                            : SearchResults.Items.Count - 1;
+                        if (songIndex >= 0 && songIndex < SearchResults.Items.Count)
+                        {
+                            if (preservedSongIds.Count == 0)
+                                WinFormsUi.SelectOnly(SearchResults, songIndex);
+                            else
+                                SearchResults.SetSelected(songIndex, true);
+                            SetListCaretIndex(SearchResults, songIndex);
+                        }
+                    }
                 }
                 else
                 {
                     RestoreSelection(SearchResults, _searchSongs, selected);
-                    if (loadMoreSelected && result.Value.HasMore)
-                        WinFormsUi.SelectOnly(SearchResults, SearchResults.Items.Count - 1);
                 }
                 Announce(result.Message, "search-results");
             }
