@@ -162,6 +162,8 @@ public partial class WinFormsShell
         if (_searchLoading || (!reset && !SearchLoadMore.Enabled)) return;
         _searchLoading = true;
         var loadMoreSelected = !reset && FocusedItem<LoadMoreAction>(SearchResults) is not null;
+        // Search browse results are cumulative, so the old song count is the boundary of the next batch.
+        var previousSongCount = reset ? 0 : _searchSongs.Count;
         try
         {
             if (reset)
@@ -174,6 +176,7 @@ public partial class WinFormsShell
             if (result.Succeeded && result.Value is not null)
             {
                 _searchSongs = result.Value.Items.ToList();
+                var firstNewSongIndex = _searchSongs.Count > previousSongCount ? previousSongCount : -1;
                 IReadOnlyList<string>? preservedSongIds = reset ? null : SelectedSongIds(SearchResults);
                 var selected = WinFormsUi.Selected<MusicInfo>(SearchResults)?.Id;
                 WinFormsUi.FillSongs(SearchResults, _searchSongs);
@@ -183,12 +186,10 @@ public partial class WinFormsShell
                     RestoreSelectedSongs(SearchResults, _searchSongs, preservedSongIds);
                     if (loadMoreSelected)
                     {
-                        // UpdateLoadMore is already in Items, so choose the final song whether another
-                        // marker remains or this load reaches the end. Selecting an item does not
-                        // reliably move a multi-simple ListBox reading cursor, so align it explicitly.
-                        var songIndex = result.Value.HasMore
-                            ? SearchResults.Items.Count - 2
-                            : SearchResults.Items.Count - 1;
+                        // Choose the first song of the newly appended batch regardless of whether the
+                        // load-more marker remains. Selecting an item does not reliably move a
+                        // multi-simple ListBox reading cursor, so align it explicitly.
+                        var songIndex = firstNewSongIndex;
                         if (songIndex >= 0 && songIndex < SearchResults.Items.Count)
                         {
                             if (preservedSongIds.Count == 0)

@@ -12,11 +12,11 @@ using Xunit;
 
 namespace LXMusicAccessible.Tests;
 
-/// <summary>Issue #76: loading more search results moves the native reading cursor to the newest song.</summary>
+/// <summary>Issue #78: loading more search results moves the native reading cursor to the first newly appended song.</summary>
 public sealed class Issue76SearchLoadMoreCaretTests
 {
     [Fact]
-    public void LoadMoreWithAnotherPageMovesCaretToLastAppendedSongAndPreservesSelection()
+    public void LoadMoreWithAnotherPageMovesCaretToFirstAppendedSongAndPreservesSelection()
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
@@ -47,19 +47,18 @@ public sealed class Issue76SearchLoadMoreCaretTests
             await InvokeSearchAsync(shell, reset: false);
             await WaitFor(() => results.Items.Count == 6);
             await WaitFor(() => source.Calls == 2);
-
-            var expectedSong = Assert.IsType<ObjectBox<MusicInfo>>(results.Items[^2]).Value;
-            Assert.Equal("song-5", expectedSong.Id);
+            var expectedSong = Assert.IsType<ObjectBox<MusicInfo>>(results.Items[2]).Value;
+            Assert.Equal("song-3", expectedSong.Id);
             Assert.Equal(expectedSong, FocusedSong(results));
             Assert.NotEqual(results.Items.Count - 1, ListCaretIndex(results));
-            Assert.Equal(new[] { "song-1", "song-5" }, SelectedSongIds(results));
+            Assert.Equal(new[] { "song-1", "song-3" }, SelectedSongIds(results));
             Assert.False(results.GetSelected(results.Items.Count - 1), "The load-more marker must not remain selected.");
             Assert.Empty(playback.Requests);
         });
     }
 
     [Fact]
-    public void LoadMoreAtEndMovesCaretToLastSongAndRemovesMarker()
+    public void LoadMoreAtEndMovesCaretToFirstAppendedSongAndRemovesMarker()
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
@@ -87,11 +86,11 @@ public sealed class Issue76SearchLoadMoreCaretTests
             await WaitFor(() => results.Items.Count == 5);
             await WaitFor(() => source.Calls == 2);
 
-            var expectedSong = Assert.IsType<ObjectBox<MusicInfo>>(results.Items[^1]).Value;
-            Assert.Equal("song-5", expectedSong.Id);
+            var expectedSong = Assert.IsType<ObjectBox<MusicInfo>>(results.Items[2]).Value;
+            Assert.Equal("song-3", expectedSong.Id);
             Assert.Equal(expectedSong, FocusedSong(results));
             Assert.All(results.Items.OfType<object>(), item => Assert.DoesNotContain("加载更多", item.ToString()!, StringComparison.Ordinal));
-            Assert.Equal("song-5", WinFormsUi.Selected<MusicInfo>(results)!.Id);
+            Assert.Equal("song-3", WinFormsUi.Selected<MusicInfo>(results)!.Id);
         });
     }
 
