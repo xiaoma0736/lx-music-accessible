@@ -1128,6 +1128,14 @@ public class ManualSourceSwitchForm : Form
     private async Task PlayAsync()
     {
         if (_target is null || _options.SelectedItem is not ObjectBox<ManualSourceOption> box) return;
+        if (!box.Value.IsPlayable)
+        {
+            var unavailable = box.Value.StateMessage ?? "所选音源音质不可用";
+            _status.Text = unavailable;
+            Announce(unavailable, "manual-source-unavailable:" + Guid.NewGuid().ToString("N"), AnnouncementKind.Error);
+            return;
+        }
+
         var result = await _workflow.PlayAsync(new ManualSourcePlaybackRequest(new[] { _target }, _target, box.Value, PlaybackQueueOrigin.Search));
         _status.Text = result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted ? "已用选中音源播放。" : "音源播放失败。";
         Announce(_status.Text, "manual-source-playback:" + Guid.NewGuid().ToString("N"), result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted ? AnnouncementKind.Success : AnnouncementKind.Error);

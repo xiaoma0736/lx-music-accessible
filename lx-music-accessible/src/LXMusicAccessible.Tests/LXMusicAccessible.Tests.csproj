@@ -49,7 +49,6 @@
     <Compile Remove="QualitySelectionRegressionTests.cs" />
     <Compile Remove="JsonMusicSourceTests.cs" />
     <Compile Remove="Issue49HotkeyTests.cs" />
-    <Compile Remove="ManualSourceSwitchWorkflowTests.cs" />
     <Compile Remove="InstallDirectoryOwnershipTests.cs" />
     <Compile Remove="ApplicationHostTests.cs" />
     <Compile Remove="ApplicationRuntimeTests.cs" />
