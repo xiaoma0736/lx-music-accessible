@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -797,6 +797,12 @@ public partial class WinFormsShell
     private bool BeginPlaybackToggle()
     {
         var tick = Environment.TickCount;
+        if (!_playbackToggleTickInitialized)
+        {
+            _playbackToggleTickInitialized = true;
+            _lastPlaybackToggleTick = tick;
+            return true;
+        }
         if (tick - _lastPlaybackToggleTick is > -250 and < 250) return false;
         _lastPlaybackToggleTick = tick;
         return true;
@@ -814,7 +820,22 @@ public partial class WinFormsShell
         }
         else
         {
-            _ = RunAsync(async () => await _services.Playback.ReplayAsync(), _ => Announce("恢复播放", "playback-state", AnnouncementKind.Success), "恢复播放");
+            _ = ResumePlaybackAsync();
+        }
+    }
+
+    private async Task ResumePlaybackAsync()
+    {
+        try
+        {
+            if (_services.Playback is null) return;
+            await _services.Playback.ResumeAsync();
+            Announce("恢复播放", "playback-state", AnnouncementKind.Success);
+        }
+        catch (Exception exception)
+        {
+            Announce("恢复播放失败", "playback-state", AnnouncementKind.Error);
+            if (!IsDisposed) WinFormsUi.Error(this, exception, "恢复播放");
         }
     }
 
@@ -948,93 +969,74 @@ public partial class WinFormsShell
     }
 
     /// <summary>
-    /// Handles selection-only keys before playback and navigation handlers run. Native multi-simple
-    /// lists otherwise reuse Space and arrows to change selection, which would make listening and
-    /// marking items mutually destructive.
+    /// Gives Space a single predictable playback meaning now that browsing lists are single-select.
+    /// Explicit multi-selection belongs to the dedicated batch-selection window, not song lists.
     /// </summary>
-    private bool HandleSongListSelection(ListBox list, KeyEventArgs e)
+    private bool HandleSongListSpace(ListBox list, KeyEventArgs e)
     {
-        if (e.Control && e.KeyCode == Keys.Space)
+        if (e.Control || e.Shift || e.Alt || e.KeyCode != Keys.Space) return false;
+        e.Handled = true;
+        if (_services.Playback?.CurrentMusic is not null)
         {
-            var focused = ListCaretIndex(list);
-            if (IsSongIndex(list, focused))
-            {
-                list.SetSelected(focused, !list.GetSelected(focused));
-                e.Handled = true;
-            }
+            TogglePlayback();
             return true;
         }
-        if (e.Control && e.KeyCode == Keys.A)
-        {
-            for (var index = 0; index < list.Items.Count; index++)
-            {
-                if (IsSongIndex(list, index)) list.SetSelected(index, true);
-            }
-            e.Handled = true;
-            return true;
-        }
-        if (!e.Control && !e.Shift && !e.Alt && e.KeyCode is Keys.Up or Keys.Down)
-        {
-            var next = ListCaretIndex(list) + (e.KeyCode == Keys.Down ? 1 : -1);
-            if (list.Items.Count > 0 && next >= 0 && next < list.Items.Count)
-            {
-                SetListCaretIndex(list, next);
-                _selectionAnchors[list] = next;
-            }
-            e.Handled = true;
-            return true;
-        }
-        if (e.Shift && !e.Control && !e.Alt && e.KeyCode is Keys.Up or Keys.Down)
-        {
-            var current = ListCaretIndex(list);
-            var anchor = _selectionAnchors.TryGetValue(list, out var stored)
-                ? stored
-                : Math.Max(0, current);
-            var next = current + (e.KeyCode == Keys.Down ? 1 : -1);
-            if (next >= 0 && next < list.Items.Count)
-            {
-                SetListCaretIndex(list, next);
-                var first = Math.Min(anchor, next);
-                var last = Math.Max(anchor, next);
-                for (var index = first; index <= last; index++)
-                {
-                    if (IsSongIndex(list, index)) list.SetSelected(index, true);
-                }
-            }
-            e.Handled = true;
-            return true;
-        }
-        if (e.KeyCode == Keys.Space)
-        {
-            // Native MultiSimple ListBox toggles the focused item on Space. The app reserves Space for
-            // explicit Ctrl+Space selection, so the unmodified key must never reach that default path.
-            e.Handled = true;
-            _selectionAnchors.Remove(list);
-            return true;
-        }
-        if (e.KeyCode is Keys.Enter or Keys.Home or Keys.End)
-        {
-            _selectionAnchors.Remove(list);
-        }
-        return false;
-    }
 
+        var song = FocusedItem<MusicInfo>(list);
+        if (song is not null) _ = ActivateSong(list, OriginForList(list));
+        return true;
+    }
     private static bool IsSongIndex(ListBox list, int index) =>
         index >= 0 && index < list.Items.Count && list.Items[index] is ObjectBox<MusicInfo>;
 
-    private readonly Dictionary<ListBox, int> _selectionAnchors = new();
 
-    private async void DownloadBatch(ListBox list)
+    private static IReadOnlyList<MusicInfo> AllSongs(ListBox list) =>
+        list.Items.Cast<object>().OfType<ObjectBox<MusicInfo>>().Select(item => item.Value).ToArray();
+
+    private string BatchSelectionTitle(ListBox list)
     {
-        var songs = SelectedSongs(list);
-        if (_services.Downloads is null || songs.Count < 2) return;
+        if (ReferenceEquals(list, SearchResults)) return "搜索结果";
+        if (ReferenceEquals(list, FavoriteSongs)) return "收藏歌曲";
+        if (ReferenceEquals(list, CategorySongs)) return "分类歌曲";
+        if (ReferenceEquals(list, RankingSongs)) return "排行榜歌曲";
+        return "歌曲";
+    }
+
+    private void OpenBatchSelection(ListBox list)
+    {
+        if (_services.Announcer is null) return;
+        CloseBatchSelectionForms();
+        var requester = list;
+        var batch = new BatchSelectionForm(
+            _services.Announcer,
+            AllSongs(list),
+            BatchSelectionTitle(list),
+            songs => DownloadExplicitSelectionAsync(songs, BatchDownloadLabel(list)));
+        batch.FormClosed += (_, _) =>
+        {
+            _batchSelectionForms.Remove(batch);
+            if (requester is { IsDisposed: false, CanFocus: true } && requester.FindForm() is { Visible: true })
+                requester.Focus();
+        };
+        _batchSelectionForms.Add(batch);
+        batch.Show(this);
+        batch.Focus();
+    }
+
+    private void CloseBatchSelectionForms()
+    {
+        foreach (var batch in _batchSelectionForms.Where(form => !form.IsDisposed).ToArray())
+            batch.Close();
+        _batchSelectionForms.Clear();
+    }
+
+    private async Task DownloadExplicitSelectionAsync(IReadOnlyList<MusicInfo> songs, string label)
+    {
+        if (_services.Downloads is null || songs.Count == 0) return;
         var quality = _services.Settings?.Current.Settings.DefaultDownloadQuality ?? "128k";
-        var sourceListFocused = list.Focused;
         try
         {
-            await _services.Downloads.DownloadListAsync(
-                new DownloadListRequest(songs, BatchDownloadLabel(list), quality));
-            if (sourceListFocused && !list.IsDisposed && list.CanFocus) list.Focus();
+            await _services.Downloads.DownloadListAsync(new DownloadListRequest(songs, label, quality));
         }
         catch (Exception exception)
         {
@@ -1042,6 +1044,7 @@ public partial class WinFormsShell
             WinFormsUi.Error(this, exception, "批量下载");
         }
     }
+    private readonly List<BatchSelectionForm> _batchSelectionForms = new();
 
     private const int LB_GETCARETINDEX = 0x019F;
     private const int LB_SETCARETINDEX = 0x019E;
@@ -1095,14 +1098,11 @@ public partial class WinFormsShell
         };
         albumDownload.Click += async (_, _) => await DownloadAlbumAsync();
         menu.MenuItems.Add(albumDownload);
-        var batchDownload = new MenuItem("批量下载选中歌曲(0)", (_, _) => DownloadBatch(list));
+        var batchDownload = new MenuItem("批量选择下载", (_, _) => OpenBatchSelection(list));
         menu.Popup += (_, _) =>
         {
-            var count = SelectedSongs(list).Count;
-            batchDownload.Text = $"批量下载选中歌曲({count})";
-            batchDownload.Enabled = count >= 2;
+            batchDownload.Enabled = WinFormsUi.Songs(list).Count > 0;
             // Prepare both native submenus while the outer menu is being created. A submenu that waits
-            // for its own Popup cannot reliably become enterable while its first network probe runs.
             focused = FocusedItem<MusicInfo>(list);
             _ = RefreshQualitySubmenuAsync(
                 qualityDownload,
@@ -1653,6 +1653,7 @@ public partial class WinFormsShell
         AssignSongContextMenu(list);
         list.KeyDown += (_, e) =>
         {
+            if (HandleSongListSpace(list, e)) return;
             if (e.Shift && e.KeyCode == Keys.Enter)
             {
                 e.Handled = true;

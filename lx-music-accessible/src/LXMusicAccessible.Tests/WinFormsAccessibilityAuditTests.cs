@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -29,6 +29,7 @@ public sealed class WinFormsAccessibilityAuditTests
 
         Assert.Equal(new[]
         {
+            nameof(BatchSelectionForm),
             nameof(DownloadManagerForm),
             nameof(KugouQrLoginForm),
             nameof(LyricsForm),
@@ -52,7 +53,7 @@ public sealed class WinFormsAccessibilityAuditTests
         WinFormsTestRunner.Run(() =>
         {
             using var scope = new FormScope();
-            Audit(scope.Add(CreateShell()));
+            Audit(scope.Add(new BatchSelectionForm(new RecordingAnnouncer(), new LXMusicAccessible.Models.MusicInfo[] { new() { Id = "song", Source = "test", Title = "Song" } }, "搜索结果", _ => Task.CompletedTask)));            Audit(scope.Add(CreateShell()));
             Audit(scope.Add(CreateSettings()));
             Audit(scope.Add(new SourceManagerForm(new RecordingAnnouncer(), new AuditSourceService(), _ => false)));
             Audit(scope.Add(new DownloadManagerForm(new RecordingAnnouncer(), new MutableDownloadWorkflow())));
@@ -1303,7 +1304,3 @@ public sealed class WinFormsAccessibilityAuditTests
         public string? SwitchOutputDevice(int index) => null;
     }
 }
-
-
-
-

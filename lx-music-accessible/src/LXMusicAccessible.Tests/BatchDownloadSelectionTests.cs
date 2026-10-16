@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -25,101 +25,67 @@ public sealed class BatchDownloadSelectionTests
             new object[] { "CategorySongs", "分类歌曲选中歌曲" },
             new object[] { "RankingSongs", "排行榜歌曲选中歌曲" }
         };
-    [Fact]
-    public void Four_song_lists_support_explicit_multi_selection()
+    [Theory]
+    [MemberData(nameof(SongLists))]
+    public void Four_song_lists_are_single_select(string listName, string _)
     {
         WinFormsTestRunner.Run(() =>
         {
             using var shell = CreateShell(new RecordingBatchDownloads());
-            foreach (var list in SongLists)
-                Assert.Equal(SelectionMode.MultiSimple, RequiredListBox(shell, (string)list[0]).SelectionMode);
+            Assert.Equal(SelectionMode.One, RequiredListBox(shell, listName).SelectionMode);
         });
     }
 
     [Fact]
-    public void Ctrl_space_toggles_only_the_focused_song()
+    public void Space_with_playing_current_music_pauses_without_playing_focused_song()
     {
-        WinFormsTestRunner.Run(() =>
+        WinFormsTestRunner.RunStaAsync(async () =>
         {
-            using var shell = CreateShell(new RecordingBatchDownloads());
+            var playback = new PlaybackSpy { IsPlaying = true, CurrentMusic = new MusicInfo { Id = "current", Source = "test", Title = "Current" } };
+            using var shell = CreateShell(new RecordingBatchDownloads(), playback);
+            shell.Show();
+            Application.DoEvents();
             var list = RequiredListBox(shell, "SearchResults");
             FillSongs(list, 3);
-            WinFormsUi.SelectOnly(list, 1);
-
-            RaiseKeyDown(list, Keys.Control | Keys.Space);
-            Assert.Empty(list.SelectedIndices);
-
-            RaiseKeyDown(list, Keys.Control | Keys.Space);
-            Assert.Equal(new[] { 1 }, list.SelectedIndices.Cast<int>().ToArray());
-
-            WinFormsUi.SelectOnly(list, 0);
-            SendMessage(list.Handle, 0x019E, (IntPtr)1, IntPtr.Zero);
-            RaiseKeyDown(list, Keys.Control | Keys.Space);
-            Assert.Equal(new[] { 0, 1 }, list.SelectedIndices.Cast<int>().ToArray());
-        });
-    }
-
-    [Fact]
-    public void Ctrl_a_selects_every_song_in_the_focused_list_only()
-    {
-        WinFormsTestRunner.Run(() =>
-        {
-            using var shell = CreateShell(new RecordingBatchDownloads());
-            var search = RequiredListBox(shell, "SearchResults");
-            var ranking = RequiredListBox(shell, "RankingSongs");
-            FillSongs(search, 3);
-            FillSongs(ranking, 2);
-            search.Focus();
-
-            RaiseKeyDown(search, Keys.Control | Keys.A);
-
-            Assert.Equal(new[] { 0, 1, 2 }, search.SelectedIndices.Cast<int>().ToArray());
-            Assert.Empty(ranking.SelectedIndices);
-        });
-    }
-
-    [Fact]
-    public void Ctrl_a_skips_non_song_load_more_rows()
-    {
-        WinFormsTestRunner.Run(() =>
-        {
-            using var shell = CreateShell(new RecordingBatchDownloads());
-            var list = RequiredListBox(shell, "SearchResults");
-            FillSongs(list, 2);
-            list.Items.Add(new ObjectBox<string>("加载更多", "load-more"));
+            list.SelectedIndex = 1;
             list.Focus();
 
-            RaiseKeyDown(list, Keys.Control | Keys.A);
+            var args = RaiseKeyDown(list, Keys.Space);
+            await Task.Delay(25);
 
-            Assert.Equal(new[] { 0, 1 }, list.SelectedIndices.Cast<int>().ToArray());
+            Assert.True(args.Handled);
+            Assert.Equal(1, playback.PauseCount);
+            Assert.Empty(playback.PlayRequests);
+            Assert.Equal(0, playback.ReplayCount);
         });
     }
 
     [Fact]
-    public void Arrow_keys_move_focus_without_changing_explicit_selection()
+    public void Space_with_paused_current_music_resumes_without_playing_focused_song()
     {
-        WinFormsTestRunner.Run(() =>
+        WinFormsTestRunner.RunStaAsync(async () =>
         {
-            using var shell = CreateShell(new RecordingBatchDownloads());
+            var playback = new PlaybackSpy { IsPlaying = false, CurrentMusic = new MusicInfo { Id = "current", Source = "test", Title = "Current" } };
+            using var shell = CreateShell(new RecordingBatchDownloads(), playback);
+            shell.Show();
+            Application.DoEvents();
             var list = RequiredListBox(shell, "SearchResults");
-            FillSongs(list, 4);
-            WinFormsUi.SelectOnly(list, 0);
-            list.SetSelected(2, true);
-            SendMessage(list.Handle, 0x019E, IntPtr.Zero, IntPtr.Zero);
-            var before = list.SelectedIndices.Cast<int>().ToArray();
+            FillSongs(list, 3);
+            list.SelectedIndex = 1;
+            list.Focus();
 
-            RaiseKeyDown(list, Keys.Down);
-            Assert.Equal(1, FocusedIndex(list));
-            Assert.Equal(before, list.SelectedIndices.Cast<int>().ToArray());
+            var args = RaiseKeyDown(list, Keys.Space);
+            await WaitFor(() => playback.ResumeCount == 1);
 
-            RaiseKeyDown(list, Keys.Up);
-            Assert.Equal(0, FocusedIndex(list));
-            Assert.Equal(before, list.SelectedIndices.Cast<int>().ToArray());
+            Assert.True(args.Handled);
+            Assert.Equal(1, playback.ResumeCount);
+            Assert.Empty(playback.PlayRequests);
+            Assert.Equal(0, playback.ReplayCount);
         });
     }
 
     [Fact]
-    public void Plain_space_preserves_selection_and_does_not_toggle_playback()
+    public void Space_without_current_music_plays_the_focused_song_once()
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
@@ -129,38 +95,18 @@ public sealed class BatchDownloadSelectionTests
             Application.DoEvents();
             var list = RequiredListBox(shell, "SearchResults");
             FillSongs(list, 3);
-            list.SetSelected(0, true);
-            list.SetSelected(2, true);
+            WinFormsUi.SelectOnly(list, 1);
             list.Focus();
 
             var args = RaiseKeyDown(list, Keys.Space);
+            await WaitFor(() => playback.PlayRequests.Count == 1);
+
             Assert.True(args.Handled);
-            await Task.Delay(50);
-
+            Assert.Equal("song-1", playback.PlayRequests.Single().Selection?.Id);
             Assert.Equal(0, playback.ReplayCount);
-            Assert.Equal(new[] { 0, 2 }, list.SelectedIndices.Cast<int>().ToArray());
+            Assert.Equal(new[] { 1 }, list.SelectedIndices.Cast<int>().ToArray());
         });
     }
-
-    [Theory]
-    [InlineData(Keys.Down, new[] { 0, 1 })]
-    [InlineData(Keys.Up, new[] { 0 })]
-    public void Shift_arrow_extends_selection_from_the_anchor(Keys key, int[] expected)
-    {
-        WinFormsTestRunner.Run(() =>
-        {
-            using var shell = CreateShell(new RecordingBatchDownloads());
-            var list = RequiredListBox(shell, "SearchResults");
-            FillSongs(list, 4);
-            WinFormsUi.SelectOnly(list, 0);
-
-            RaiseKeyDown(list, Keys.Shift | key);
-
-            Assert.Equal(expected, list.SelectedIndices.Cast<int>().ToArray());
-            Assert.Equal(key == Keys.Down ? expected[^1] : expected[0], FocusedIndex(list));
-        });
-    }
-
     [Fact]
     public void Enter_plays_the_focused_song_and_shift_enter_does_not_play()
     {
@@ -188,110 +134,175 @@ public sealed class BatchDownloadSelectionTests
     }
 
     [Fact]
-    public void Context_popup_renames_single_download_and_reports_explicit_count()
+    public void Context_menu_offers_accessible_batch_selection_without_direct_download()
     {
         WinFormsTestRunner.Run(() =>
         {
-            var downloads = new RecordingBatchDownloads();
-            var source = new FakeBrowseSource();
-            using var shell = CreateShell(downloads, source: source);
+            using var shell = CreateShell(new RecordingBatchDownloads());
             var list = RequiredListBox(shell, "SearchResults");
-            FillSongs(list, 3);
-            list.SetSelected(0, true);
-            list.SetSelected(2, true);
-            var selection = list.SelectedIndices.Cast<int>().ToArray();
+            FillSongs(list, 2);
+            list.SelectedIndex = 1;
 
             InvokePopup(list.ContextMenu);
-
             var items = list.ContextMenu!.MenuItems.Cast<MenuItem>().ToArray();
-            Assert.Equal("下载当前歌曲", Assert.Single(items, item => item.Text == "下载当前歌曲").Text);
-            Assert.Single(items, item => item.Text == "下载单曲音质");
-            Assert.Single(items, item => item.Text == "播放音质");
-            Assert.DoesNotContain(items, item => item.Text == "下载音质");
-            var batch = Assert.Single(items, item => item.Text == "批量下载选中歌曲(2)");
-            Assert.True(batch.Enabled);
-            Assert.Equal(selection, list.SelectedIndices.Cast<int>().ToArray());
-            Assert.Empty(downloads.Requests);
-            Assert.Equal(0, source.SearchCalls);
+
+            Assert.Single(items, item => item.Text == "批量选择下载");
+            Assert.DoesNotContain(items, item => item.Text?.StartsWith("批量下载选中歌曲(", StringComparison.Ordinal) == true);
+            Assert.Empty(shell.OwnedBatchFormsForTests);
         });
     }
 
     [Fact]
-    public void Batch_menu_is_disabled_with_one_focused_song()
+    public void Batch_menu_is_disabled_when_list_has_no_songs()
     {
         WinFormsTestRunner.Run(() =>
         {
             using var shell = CreateShell(new RecordingBatchDownloads());
             var list = RequiredListBox(shell, "FavoriteSongs");
-            FillSongs(list, 2);
-            list.SelectedIndex = 1;
 
             InvokePopup(list.ContextMenu);
+            var batch = RequiredMenuItem(list.ContextMenu!, "批量选择下载");
 
-            var batch = RequiredBatchItem(list.ContextMenu!);
-            Assert.Contains("批量下载选中歌曲(1)", batch.Text, StringComparison.Ordinal);
             Assert.False(batch.Enabled);
-        });
-    }
-
-    [Theory]
-    [MemberData(nameof(SongLists))]
-    public void Batch_command_passes_only_explicit_selections(string listName, string expectedLabel)
-    {
-        WinFormsTestRunner.RunStaAsync(async () =>
-        {
-            var downloads = new RecordingBatchDownloads();
-            using var shell = CreateShell(downloads);
-            shell.Show();
-            Application.DoEvents();
-            shell.SelectTabForTests(listName switch
-            {
-                "FavoriteSongs" => 1,
-                "CategorySongs" => 2,
-                "RankingSongs" => 3,
-                _ => 0
-            });
-            Application.DoEvents();
-            var list = RequiredListBox(shell, listName);
-            FillSongs(list, 4);
-            list.SetSelected(1, true);
-            list.SetSelected(2, true);
-            var selection = list.SelectedIndices.Cast<int>().ToArray();
-            list.Focus();
-
-            var batch = RequiredBatchItem(list.ContextMenu!);
-            batch.PerformClick();
-            await WaitFor(() => downloads.Requests.Count == 1);
-
-            var request = downloads.Requests.Single();
-            Assert.Equal(expectedLabel, request.Label);
-            Assert.Equal(new[] { "song-1", "song-2" }, request.Songs.Select(song => song.Id).ToArray());
-            Assert.Equal(selection, list.SelectedIndices.Cast<int>().ToArray());
-            Assert.Same(list, shell.ActiveControl);
         });
     }
 
     [Fact]
-    public void Fewer_than_two_explicit_songs_never_start_a_batch()
+    public void Batch_window_downloads_exactly_the_checked_songs()
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
-            var downloads = new RecordingBatchDownloads();
-            using var shell = CreateShell(downloads);
-            var list = RequiredListBox(shell, "CategorySongs");
-            FillSongs(list, 3);
-            list.SelectedIndex = 2;
+            var downloaded = new TaskCompletionSource<IReadOnlyList<MusicInfo>>();
+            using var form = new BatchSelectionForm(
+                new RecordingAnnouncer(),
+                CreateSongs(4),
+                "搜索结果",
+                songs =>
+                {
+                    downloaded.TrySetResult(songs);
+                    return Task.CompletedTask;
+                });
+            form.Show();
+            Application.DoEvents();
+            form.SetItemChecked(1, true);
+            form.SetItemChecked(3, true);
+            Application.DoEvents();
 
-            InvokePopup(list.ContextMenu);
-            var batch = RequiredBatchItem(list.ContextMenu!);
-            if (batch.Enabled) batch.PerformClick();
-            await Task.Delay(25);
+            Assert.Equal("已选择 2 首", form.StatusText);
+            form.DownloadCheckedForTests();
+            var selected = await downloaded.Task;
 
-            Assert.False(batch.Enabled);
-            Assert.Empty(downloads.Requests);
+            Assert.Equal(new[] { "song-1", "song-3" }, selected.Select(song => song.Id).ToArray());
         });
     }
 
+    [Fact]
+    public void Batch_window_space_checks_without_downloading_or_playing()
+    {
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            var downloads = 0;
+            using var form = new BatchSelectionForm(
+                new RecordingAnnouncer(),
+                CreateSongs(3),
+                "搜索结果",
+                _ =>
+                {
+                    downloads++;
+                    return Task.CompletedTask;
+                });
+            form.Show();
+            Application.DoEvents();
+            form.ItemsForTests.SelectedIndex = 1;
+            form.ItemsForTests.Focus();
+
+            var args = RaiseKeyDown(form.ItemsForTests, Keys.Space);
+            Application.DoEvents();
+
+            Assert.True(args.Handled);
+            await Task.Delay(1);
+            await Task.Delay(1);
+            Assert.True(form.ItemsForTests.GetItemChecked(1));
+            Assert.Equal("已选择 1 首", form.StatusText);
+            Assert.Equal(0, downloads);
+        });
+    }
+
+    [Fact]
+    public void Batch_window_ctrl_a_selects_all_and_clear_button_clears_all()
+    {
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            using var form = new BatchSelectionForm(
+                new RecordingAnnouncer(), CreateSongs(3), "搜索结果", _ => Task.CompletedTask);
+            form.Show();
+            Application.DoEvents();
+            form.ItemsForTests.SelectedIndex = 1;
+            form.ItemsForTests.Focus();
+            RaiseKeyDown(form.ItemsForTests, Keys.Control | Keys.A);
+            Application.DoEvents();
+
+            await Task.Delay(1);
+            Assert.All(Enumerable.Range(0, 3), index => Assert.True(form.ItemsForTests.GetItemChecked(index)));
+            Assert.Equal("已选择 3 首", form.StatusText);
+
+            form.ClearButtonForTests.PerformClick();
+            Application.DoEvents();
+
+            Assert.All(Enumerable.Range(0, 3), index => Assert.False(form.ItemsForTests.GetItemChecked(index)));
+            Assert.Equal("已选择 0 首", form.StatusText);
+        });
+    }
+
+    [Fact]
+    public void Batch_window_empty_selection_does_not_invoke_download()
+    {
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            var downloads = 0;
+            using var form = new BatchSelectionForm(
+                new RecordingAnnouncer(), CreateSongs(2), "搜索结果", _ =>
+                {
+                    downloads++;
+                    return Task.CompletedTask;
+                });
+            form.Show();
+            Application.DoEvents();
+
+            form.DownloadCheckedForTests();
+            await Task.Delay(25);
+
+            Assert.Equal(0, downloads);
+        });
+    }
+
+    [Fact]
+    public void Batch_window_closes_and_restores_focus_to_requesting_list()
+    {
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            using var shell = CreateShell(new RecordingBatchDownloads());
+            shell.Show();
+            Application.DoEvents();
+            shell.SelectTabForTests(1);
+            Application.DoEvents();
+            var list = RequiredListBox(shell, "FavoriteSongs");
+            FillSongs(list, 2);
+            list.SelectedIndex = 0;
+            list.Focus();
+
+            InvokePopup(list.ContextMenu);
+            RequiredMenuItem(list.ContextMenu!, "批量选择下载").PerformClick();
+            await WaitFor(() => shell.OwnedBatchFormsForTests.Count == 1);
+            var batch = shell.OwnedBatchFormsForTests.Single();
+            Assert.True(batch.Visible);
+
+            batch.Close();
+            Application.DoEvents();
+            await WaitFor(() => batch.IsDisposed);
+            Assert.Same(list, shell.ActiveControl);
+        });
+    }
     [Fact]
     public void Download_and_play_quality_menus_show_all_playable_states()
     {
@@ -343,14 +354,14 @@ public sealed class BatchDownloadSelectionTests
             using var shell = CreateShell(downloads, playback, qualityProbe: probe);
             var list = RequiredListBox(shell, "SearchResults");
             FillSongs(list, 2);
-            WinFormsUi.SelectOnly(list, 0);
-            SendMessage(list.Handle, 0x019E, (IntPtr)1, IntPtr.Zero);
+            list.SelectedIndex = 1;
             list.Focus();
             var selection = list.SelectedIndices.Cast<int>().ToArray();
 
             // The outer popup must synchronously prepare both child menus. A child popup that only starts
             // network work after the user reaches it cannot reliably become a native submenu on first Entry.
             InvokePopup(list.ContextMenu);
+            System.IO.File.WriteAllLines("batch-menu-debug.txt", list.ContextMenu!.MenuItems.Cast<MenuItem>().Select(item => item.Text ?? "<null>"));
             var download = RequiredMenuItem(list.ContextMenu!, "下载单曲音质");
             var play = RequiredMenuItem(list.ContextMenu!, "播放音质");
             Assert.True(download.MenuItems.Count > 0, "Download quality submenu was not ready when the context menu opened.");
@@ -437,14 +448,16 @@ public sealed class BatchDownloadSelectionTests
         Assert.Empty(downloads.SingleRequests);
 
         FillSongs(list, 2);
-        WinFormsUi.SelectOnly(list, 0);
-        list.SetSelected(1, true);
+        list.SelectedIndex = 0;
         list.Focus();
         InvokePopup(list.ContextMenu);
-
-        var batch = RequiredBatchItem(list.ContextMenu!);
-        batch.PerformClick();
+        RequiredMenuItem(list.ContextMenu!, "批量选择下载").PerformClick();
+        await WaitFor(() => shell.OwnedBatchFormsForTests.Count == 1);
+        var batch = shell.OwnedBatchFormsForTests.Single();
+        batch.SetItemChecked(1, true);
+        batch.DownloadCheckedForTests();
         await WaitFor(() => downloads.Requests.Count == 2);
+        batch.Close();
         Assert.All(downloads.Requests, request => Assert.Equal("320k", request.Quality));
     }
 
@@ -491,9 +504,14 @@ public sealed class BatchDownloadSelectionTests
         Application.DoEvents();
     }
 
-    private static MenuItem RequiredBatchItem(ContextMenu menu) =>
-        Assert.Single(menu.MenuItems.Cast<MenuItem>(), item =>
-            item.Text?.StartsWith("批量下载选中歌曲(", StringComparison.Ordinal) == true);
+    private static System.Collections.Generic.IReadOnlyList<MusicInfo> CreateSongs(int count) =>
+        Enumerable.Range(0, count).Select(index => new MusicInfo
+        {
+            Id = "song-" + index,
+            Source = "test",
+            Title = "Song " + index,
+            Artist = "Artist " + index
+        }).ToArray();
 
     private static void FillSongs(ListBox list, int count)
     {
@@ -714,11 +732,14 @@ public sealed class BatchDownloadSelectionTests
 
     private sealed class PlaybackSpy : IPlaybackCoordinator
     {
+        public List<PlaybackRequest> PlayRequests { get; } = new();
         public List<PlaybackRequest> ReplayRequests { get; } = new();
         public int ReplayCount { get; private set; }
-        public bool IsPlaying => false;
+        public int PauseCount { get; private set; }
+        public int ResumeCount { get; private set; }
+        public bool IsPlaying { get; set; }
         public bool IsPaused => false;
-        public MusicInfo? CurrentMusic { get; private set; }
+        public MusicInfo? CurrentMusic { get; set; }
         public PlayMode Mode { get; set; }
         public string DefaultQuality { get; set; } = "128k";
 #pragma warning disable 67
@@ -728,6 +749,7 @@ public sealed class BatchDownloadSelectionTests
 
         public Task<PlaybackResult> PlayAsync(PlaybackRequest request)
         {
+            PlayRequests.Add(request);
             ReplayRequests.Add(request);
             CurrentMusic = request.Selection;
             return Task.FromResult(new PlaybackResult(PlaybackResultStatus.Playing, request.Selection, request.Origin, "playing"));
@@ -737,10 +759,14 @@ public sealed class BatchDownloadSelectionTests
             ReplayCount++;
             return Task.FromResult(new PlaybackResult(PlaybackResultStatus.NoChange, CurrentMusic, PlaybackQueueOrigin.Static, "no change"));
         }
-        public void Pause() { }
+        public void Pause() => PauseCount++;
         public void Stop() { }
         public Task<PlaybackResult> NextAsync() => Task.FromResult(new PlaybackResult(PlaybackResultStatus.NoChange, CurrentMusic, PlaybackQueueOrigin.Static, "no change"));
         public Task<PlaybackResult> PreviousAsync() => Task.FromResult(new PlaybackResult(PlaybackResultStatus.NoChange, CurrentMusic, PlaybackQueueOrigin.Static, "no change"));
-        public Task ResumeAsync() => Task.CompletedTask;
+        public Task ResumeAsync()
+        {
+            ResumeCount++;
+            return Task.CompletedTask;
+        }
     }
 }
