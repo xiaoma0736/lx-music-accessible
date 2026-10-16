@@ -7,6 +7,8 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using LXMusicAccessible.App;
 using LXMusicAccessible.Models;
+using LXMusicAccessible.Tests.Infrastructure;
+using Microsoft.Extensions.DependencyInjection;
 using LXMusicAccessible.Services;
 using Xunit;
 
@@ -203,7 +205,7 @@ public sealed class BatchDownloadSelectionTests
 
             var items = list.ContextMenu!.MenuItems.Cast<MenuItem>().ToArray();
             Assert.Equal("下载当前歌曲", Assert.Single(items, item => item.Text == "下载当前歌曲").Text);
-            Assert.Single(items, item => item.Text == "下载单曲");
+            Assert.Single(items, item => item.Text == "下载单曲音质");
             Assert.Single(items, item => item.Text == "播放音质");
             Assert.DoesNotContain(items, item => item.Text == "下载音质");
             var batch = Assert.Single(items, item => item.Text == "批量下载选中歌曲(2)");
@@ -291,7 +293,7 @@ public sealed class BatchDownloadSelectionTests
     }
 
     [Fact]
-    public async Task Download_and_play_quality_menus_show_all_playable_states()
+    public void Download_and_play_quality_menus_show_all_playable_states()
     {
         var probe = new StaticQualityProbe(new QualityProbeResult(
             "qq|song-1",
@@ -304,20 +306,146 @@ public sealed class BatchDownloadSelectionTests
         var list = RequiredListBox(shell, "SearchResults");
         FillSongs(list, 2);
         list.SelectedIndex = 1;
+        _ = list.Handle;
+        SendMessage(list.Handle, 0x019E, (IntPtr)1, IntPtr.Zero);
 
-        var download = RequiredMenuItem(list.ContextMenu!, "下载单曲");
+        var download = RequiredMenuItem(list.ContextMenu!, "下载单曲音质");
         RaisePopup(download);
-        await WaitFor(() => download.MenuItems.Count == 2);
-        Assert.Equal(["极高，可播放，Interface A", "Hi-Res 无损，不可用"], download.MenuItems.Cast<MenuItem>().Select(item => item.Text).ToArray());
+        var downloadCount = download.MenuItems.Count;
+        Assert.True(downloadCount > 0);
+        var downloadItem = Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可播放，Interface A");
+        var unavailableItem = Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res 无损，不可用");
         Assert.Equal(1, probe.ProbeCalls);
 
         var play = RequiredMenuItem(list.ContextMenu!, "播放音质");
         RaisePopup(play);
-        await WaitFor(() => play.MenuItems.Count == 2);
+        var playCount = play.MenuItems.Count;
+        Assert.Equal(downloadCount, playCount);
+        Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可播放，Interface A");
+        Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res 无损，不可用");
         Assert.Equal(1, play.MenuItems.Cast<MenuItem>().Count(item => item.Enabled));
+        Assert.Same(downloadItem, Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可播放，Interface A"));
+        Assert.Same(unavailableItem, Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res 无损，不可用"));
+        Assert.Equal(downloadCount, download.MenuItems.Count);
 
         var items = list.ContextMenu!.MenuItems.Cast<MenuItem>().ToArray();
         Assert.DoesNotContain(items, item => item.Text == "下载音质");
+    }
+
+    [Fact]
+    public void Context_menu_provides_stable_quality_submenus_and_enter_activates_selected_quality()
+    {
+        WinFormsTestRunner.Run(() =>
+        {
+            var probe = new DelayedQualityProbe();
+            var downloads = new RecordingBatchDownloads();
+            var playback = new PlaybackSpy();
+            using var shell = CreateShell(downloads, playback, qualityProbe: probe);
+            var list = RequiredListBox(shell, "SearchResults");
+            FillSongs(list, 2);
+            WinFormsUi.SelectOnly(list, 0);
+            SendMessage(list.Handle, 0x019E, (IntPtr)1, IntPtr.Zero);
+            list.Focus();
+            var selection = list.SelectedIndices.Cast<int>().ToArray();
+
+            // The outer popup must synchronously prepare both child menus. A child popup that only starts
+            // network work after the user reaches it cannot reliably become a native submenu on first Entry.
+            InvokePopup(list.ContextMenu);
+            var download = RequiredMenuItem(list.ContextMenu!, "下载单曲音质");
+            var play = RequiredMenuItem(list.ContextMenu!, "播放音质");
+            Assert.True(download.MenuItems.Count > 0, "Download quality submenu was not ready when the context menu opened.");
+            Assert.True(play.MenuItems.Count > 0, "Play quality submenu was not ready when the context menu opened.");
+            Assert.All(download.MenuItems.Cast<MenuItem>(), item => Assert.False(item.Enabled));
+            Assert.All(play.MenuItems.Cast<MenuItem>(), item => Assert.False(item.Enabled));
+            var downloadCount = download.MenuItems.Count;
+            var playCount = play.MenuItems.Count;
+
+            probe.Complete(new QualityProbeResult(
+                "test|song-1",
+                [
+                    new("320k", "极高", QualityAvailability.Playable, "Interface A", "320k"),
+                    new("flac24bit", "Hi-Res 无损", QualityAvailability.Unavailable, null, null)
+                ],
+                "done"));
+            WaitForUi(() => download.MenuItems.Cast<MenuItem>().Any(item => item.Enabled));
+            WaitForUi(() => play.MenuItems.Cast<MenuItem>().Any(item => item.Enabled));
+            Assert.Equal(downloadCount, download.MenuItems.Count);
+            Assert.Equal(playCount, play.MenuItems.Count);
+
+            var downloadOption = Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Enabled);
+            var playOption = Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Enabled);
+            downloadOption.PerformClick();
+            WaitForUi(() => downloads.SingleRequests.Count == 1);
+            var downloadRequest = downloads.SingleRequests.Single();
+            Assert.Equal("song-1", downloadRequest.Music.Id);
+            Assert.Equal("320k", downloadRequest.Quality);
+
+            playOption.PerformClick();
+            WaitForUi(() => playback.ReplayRequests.Count == 1);
+            var playRequest = playback.ReplayRequests.Single();
+            Assert.Equal("song-1", playRequest.Selection?.Id);
+            Assert.Equal("320k", playRequest.Quality);
+            Assert.True(playRequest.ForceResolve);
+
+            Assert.Equal(selection, list.SelectedIndices.Cast<int>().ToArray());
+        });
+    }
+
+    [Fact]
+    public async Task Album_and_batch_downloads_keep_the_configured_default_quality()
+    {
+        using var host = await TestApplicationHost.StartAsync();
+        var settings = host.Services.GetRequiredService<SettingsWorkflow>();
+        await settings.LoadAsync(IntPtr.Zero);
+        var edited = settings.Edit(current => current.DefaultDownloadQuality = "320k");
+        Assert.True(edited.Accepted);
+        var source = new SinglePageAlbumSource();
+        var downloads = new RecordingBatchDownloads();
+        using var shell = new WinFormsShell(new WinFormsShellServices
+        {
+            Announcer = new RecordingAnnouncer(),
+            BrowseSource = source,
+            Playback = new PlaybackSpy(),
+            Downloads = downloads,
+            Settings = settings,
+            TemporaryDirectory = host.DataDirectory
+        });
+        shell.Show();
+        Application.DoEvents();
+        var list = RequiredListBox(shell, "SearchResults");
+        list.Items.Add(new ObjectBox<MusicInfo>(source.Album.AccessibleName, source.Album));
+        _ = list.Handle;
+        SendMessage(list.Handle, 0x019E, IntPtr.Zero, IntPtr.Zero);
+        list.Focus();
+
+        var browseField = typeof(WinFormsShell).GetField("_browse", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(browseField);
+        var browse = Assert.IsType<MusicBrowseWorkflow>(browseField!.GetValue(shell));
+        await browse.ActivateAlbumAsync(source.Album);
+        var albumField = typeof(WinFormsShell).GetField("_openAlbum", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(albumField);
+        albumField!.SetValue(shell, source.Album);
+        Application.DoEvents();
+
+        var album = RequiredMenuItem(list.ContextMenu!, "下载整张专辑");
+        RaisePopup(album);
+        Assert.True(album.Enabled);
+        album.PerformClick();
+        await WaitFor(() => downloads.Requests.Count == 1);
+        var albumRequest = Assert.Single(downloads.ListRequests);
+        Assert.Equal("320k", albumRequest.Quality);
+        Assert.Empty(downloads.SingleRequests);
+
+        FillSongs(list, 2);
+        WinFormsUi.SelectOnly(list, 0);
+        list.SetSelected(1, true);
+        list.Focus();
+        InvokePopup(list.ContextMenu);
+
+        var batch = RequiredBatchItem(list.ContextMenu!);
+        batch.PerformClick();
+        await WaitFor(() => downloads.Requests.Count == 2);
+        Assert.All(downloads.Requests, request => Assert.Equal("320k", request.Quality));
     }
 
     [Fact]
@@ -340,14 +468,14 @@ public sealed class BatchDownloadSelectionTests
         IPlaybackCoordinator? playback = null,
         FakeBrowseSource? source = null,
         IQualityProbeWorkflow? qualityProbe = null) => new(new WinFormsShellServices
-    {
-        Announcer = new RecordingAnnouncer(),
-        BrowseSource = source ?? new FakeBrowseSource(),
-        Playback = playback ?? new RecordingPlayback(),
-        Downloads = downloads,
-        QualityProbe = qualityProbe,
-        TemporaryDirectory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "lx-batch-selection-" + Guid.NewGuid().ToString("N"))
-    });
+        {
+            Announcer = new RecordingAnnouncer(),
+            BrowseSource = source ?? new FakeBrowseSource(),
+            Playback = playback ?? new RecordingPlayback(),
+            Downloads = downloads,
+            QualityProbe = qualityProbe,
+            TemporaryDirectory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "lx-batch-selection-" + Guid.NewGuid().ToString("N"))
+        });
 
     private static ListBox RequiredListBox(Control root, string name) =>
         Assert.IsType<ListBox>(root.Controls.Find(name, true).Single());
@@ -410,6 +538,17 @@ public sealed class BatchDownloadSelectionTests
         Application.DoEvents();
     }
 
+    private static void WaitForUi(Func<bool> condition)
+    {
+        for (var attempt = 0; attempt < 500; attempt++)
+        {
+            Application.DoEvents();
+            if (condition()) return;
+            Thread.Sleep(10);
+        }
+        throw new TimeoutException("The awaited UI condition was not reached.");
+    }
+
     private static async Task WaitFor(Func<bool> condition)
     {
         for (var attempt = 0; attempt < 200; attempt++)
@@ -433,12 +572,20 @@ public sealed class BatchDownloadSelectionTests
         public RecordingBatchDownloads() =>
             Tasks = new(_tasks);
 
+        public List<DownloadListRequest> ListRequests { get; } = new();
+
         public void ApplyPreferences(DownloadPreferences preferences) { }
-        public Task<DownloadTask> DownloadAsync(DownloadRequest request, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new DownloadTask());
+        public List<DownloadRequest> SingleRequests { get; } = new();
+
+        public Task<DownloadTask> DownloadAsync(DownloadRequest request, CancellationToken cancellationToken = default)
+        {
+            SingleRequests.Add(request);
+            return Task.FromResult(new DownloadTask());
+        }
         public Task<DownloadListResult> DownloadListAsync(DownloadListRequest request, CancellationToken cancellationToken = default)
         {
             Requests.Add(request);
+            ListRequests.Add(request);
             return Task.FromResult(new DownloadListResult(
                 request.Songs.Count,
                 request.Songs.Count,
@@ -463,6 +610,93 @@ public sealed class BatchDownloadSelectionTests
         public DownloadCacheCleanupResult ClearTemporaryFiles() => new(0, 0);
     }
 
+    private sealed class DelayedQualityProbe : IQualityProbeWorkflow
+    {
+        private readonly TaskCompletionSource<QualityProbeResult> _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int ProbeCalls { get; private set; }
+
+        public Task<QualityProbeResult> ProbeAsync(MusicInfo music, CancellationToken cancellationToken = default)
+        {
+            ProbeCalls++;
+            return _completion.Task;
+        }
+
+        public QualityProbeResult GetCached(MusicInfo music) => new("test|song-1", [], null);
+
+        public void Invalidate(MusicInfo music) { }
+
+        public void Complete(QualityProbeResult result) => _completion.TrySetResult(result);
+    }
+
+    private sealed class SinglePageAlbumSource : IMusicBrowseSource
+    {
+        public MusicInfo Album { get; } = new()
+        {
+            Id = "album-1",
+            Source = "test",
+            Title = "Test Album",
+            Artist = "Artist",
+            IsAlbum = true
+        };
+
+        public Task<PagedResult<MusicInfo>> SearchAsync(
+            string query,
+            int page,
+            int pageSize,
+            string searchType,
+            string sourceId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PagedResult<MusicInfo>());
+
+        public Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(
+            MusicInfo album,
+            int page,
+            int pageSize,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new PagedResult<MusicInfo>
+            {
+                Items = [new() { Id = "album-song", Source = "test", Title = "Album Song", Artist = "Artist" }],
+                CurrentPage = 1,
+                TotalItems = 1,
+                HasMore = false
+            });
+        }
+
+        public Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(
+            string sourceId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new List<PlaylistCategory>());
+
+        public Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(
+            string category,
+            int page,
+            int pageSize,
+            string sourceId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PagedResult<Playlist>());
+
+        public Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(
+            string playlistId,
+            int page,
+            int pageSize,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PagedResult<MusicInfo>());
+
+        public Task<List<Ranking>> GetRankingsAsync(
+            string sourceId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new List<Ranking>());
+
+        public Task<PagedResult<MusicInfo>> GetRankingDetailAsync(
+            string rankingId,
+            int page,
+            int pageSize,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PagedResult<MusicInfo>());
+    }
     private sealed class StaticQualityProbe(QualityProbeResult result) : IQualityProbeWorkflow
     {
         public int ProbeCalls { get; private set; }

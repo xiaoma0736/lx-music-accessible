@@ -215,12 +215,12 @@ public partial class WinFormsShell : Form
         play.MenuItems.Add(new MenuItem("切换播放模式(&M)", (_, _) => TogglePlayMode(), Shortcut.F1));
         play.MenuItems.Add(new MenuItem("下载当前歌曲(&W)", (_, _) => DownloadSelected(), Shortcut.F2));
         _playQualityMenu = new MenuItem("当前歌曲音质(&Q)");
-        _playQualityMenu.Popup += async (_, _) => await RefreshQualitySubmenuAsync(
+        _playQualityMenu.Popup += (_, _) => _ = RefreshQualitySubmenuAsync(
             _playQualityMenu,
             this,
             _current,
             "当前歌曲音质",
-            (song, quality) => PlayQualityAsync(song, quality, PlaybackQueueOrigin.Search),
+            choice => PlayQualityAsync(choice.Song, choice.Quality, PlaybackQueueOrigin.Search),
             "play-quality");
         play.MenuItems.Add(_playQualityMenu);
         var navigate = new MenuItem("导航(&D)");
