@@ -499,6 +499,7 @@ public partial class WinFormsShell : Form
     internal Task LoadMoreSavedSongsForTests() => LoadMoreSavedSongsAsync();
     internal Task ActivateSelectedSearchSongForTests() => ActivateSong(SearchResults);
     internal Task LoadMoreSearchResultsForTests() => SearchAsync(false);
+    internal Task LoadMoreAlbumSongsForTests() => LoadMoreAlbumSongsAsync();
     internal ListBox SearchResultsForTests => SearchResults;
     internal ListBox FavoriteSongsForTests => FavoriteSongs;
     internal ListBox RankingSongsForTests => RankingSongs;

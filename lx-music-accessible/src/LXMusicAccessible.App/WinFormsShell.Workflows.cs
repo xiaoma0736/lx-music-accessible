@@ -185,21 +185,7 @@ public partial class WinFormsShell
                 if (preservedSongIds is not null)
                 {
                     RestoreSelectedSongs(SearchResults, _searchSongs, preservedSongIds);
-                    if (loadMoreSelected)
-                    {
-                        // Choose the first song of the newly appended batch regardless of whether the
-                        // load-more marker remains. Selecting an item does not reliably move a
-                        // multi-simple ListBox reading cursor, so align it explicitly.
-                        var songIndex = firstNewSongIndex;
-                        if (songIndex >= 0 && songIndex < SearchResults.Items.Count)
-                        {
-                            if (preservedSongIds.Count == 0)
-                                WinFormsUi.SelectOnly(SearchResults, songIndex);
-                            else
-                                SearchResults.SetSelected(songIndex, true);
-                            SetListCaretIndex(SearchResults, songIndex);
-                        }
-                    }
+                    if (loadMoreSelected) FocusFirstAppendedSong(SearchResults, firstNewSongIndex, preservedSongIds);
                 }
                 else
                 {
@@ -222,6 +208,7 @@ public partial class WinFormsShell
     {
         var album = _openAlbum;
         if (album is null || _searchLoading || !SearchLoadMore.Enabled) return;
+        var previousSongCount = _searchSongs.Count;
         var requestedPage = (_browse.CurrentAlbumPage?.Page ?? 0) + 1;
         // The flag guards re-entry; disabling the focused load-more control would move focus away.
         _searchLoading = true;
@@ -236,6 +223,7 @@ public partial class WinFormsShell
                 WinFormsUi.FillSongs(SearchResults, songs);
                 RestoreSelection(SearchResults, songs, selected);
                 UpdateLoadMore(SearchLoadMore, SearchResults, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, songs.Count), () => LoadMoreAlbumSongsAsync());
+                FocusFirstAppendedSong(SearchResults, previousSongCount, SelectedSongIds(SearchResults));
                 Announce(result.Message, "album");
             }
             else if (!string.IsNullOrWhiteSpace(result.Message))
@@ -327,6 +315,7 @@ public partial class WinFormsShell
         if (playlist is null) return;
         var current = _browse.CurrentSavedPlaylistPage;
         if (current is null || current.Playlist.Id != playlist.Id) return;
+        var previousSongCount = _favoriteSongs.Count;
         _savedSongsLoading = true;
         try
         {
@@ -335,10 +324,15 @@ public partial class WinFormsShell
             // A failed page is not the end of the list: keep the songs already loaded and leave the
             // control available so the user can retry the same page.
             if (result.Succeeded)
+            {
                 RenderSaved(result.Snapshot, result.Message, AnnouncementKind.Success, append: true);
+                FocusFirstAppendedSong(FavoriteSongs, previousSongCount, SelectedSongIds(FavoriteSongs));
+            }
             else
+            {
                 Announce(result.Message, "saved-playlists", AnnouncementKind.Error);
-            RestoreSelection(FavoriteSongs, _favoriteSongs, selected);
+                RestoreSelection(FavoriteSongs, _favoriteSongs, selected);
+            }
         }
         finally
         {
@@ -559,6 +553,7 @@ public partial class WinFormsShell
         var playlist = WinFormsUi.Selected<Playlist>(CategoryPlaylists);
         if (playlist is null || _categorySongsLoading || (append && !CategorySongsLoadMore.Enabled)) return;
         var requestedPage = Math.Max(1, page);
+        var previousSongCount = append ? _categorySongs.Count : -1;
         _categorySongsLoading = true;
         if (!append) UpdateLoadMore(CategorySongsLoadMore, CategorySongs, false);
         try
@@ -572,6 +567,7 @@ public partial class WinFormsShell
                 WinFormsUi.FillSongs(CategorySongs, _categorySongs);
                 RestoreSelection(CategorySongs, _categorySongs, selected);
                 UpdateLoadMore(CategorySongsLoadMore, CategorySongs, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, _categorySongs.Count), LoadMoreCategorySongsAsync);
+                if (append) FocusFirstAppendedSong(CategorySongs, previousSongCount, SelectedSongIds(CategorySongs));
                 SetBrowseStatus(result.Message);
                 if (!append && ContainsFocus) CategorySongs.Focus();
             }
@@ -671,6 +667,20 @@ public partial class WinFormsShell
         return Task.CompletedTask;
     }
 
+    private static void FocusFirstAppendedSong(
+        ListBox list,
+        int previousSongCount,
+        IReadOnlyList<string>? preservedSongIds = null)
+    {
+        if (previousSongCount < 0 || previousSongCount >= list.Items.Count) return;
+        var index = previousSongCount;
+        if (!list.IsDisposed && list.CanFocus) list.Focus();
+        if (preservedSongIds is not null && preservedSongIds.Count == 0)
+            WinFormsUi.SelectOnly(list, index);
+        else
+            list.SetSelected(index, true);
+        SetListCaretIndex(list, index);
+    }
     private static void RestoreSelections(ListBox list, IReadOnlyList<int> indices)
     {
         foreach (var index in indices)
@@ -752,6 +762,7 @@ public partial class WinFormsShell
         var ranking = WinFormsUi.Selected<Ranking>(RankingList);
         if (ranking is null || _rankingSongsLoading || (append && !RankingSongsLoadMore.Enabled)) return;
         var requestedPage = Math.Max(1, page);
+        var previousSongCount = append ? _rankingSongs.Count : -1;
         _rankingSongsLoading = true;
         if (!append) UpdateLoadMore(RankingSongsLoadMore, RankingSongs, false);
         try
@@ -765,6 +776,7 @@ public partial class WinFormsShell
                 WinFormsUi.FillSongs(RankingSongs, _rankingSongs);
                 RestoreSelection(RankingSongs, _rankingSongs, selected);
                 UpdateLoadMore(RankingSongsLoadMore, RankingSongs, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, _rankingSongs.Count), LoadMoreRankingSongsAsync);
+                if (append) FocusFirstAppendedSong(RankingSongs, previousSongCount, SelectedSongIds(RankingSongs));
                 SetBrowseStatus(result.Message);
             }
             else SetBrowseStatus(result.Message);

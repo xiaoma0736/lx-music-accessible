@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -389,8 +389,8 @@ public sealed class Issue66Tests
 
             await shell.LoadMoreCategorySongsForTests();
 
-            Assert.True(loadMore.Focused, "Load-more focus must not move after appending.");
-            Assert.Equal("song-1", WinFormsUi.Selected<MusicInfo>(songs)!.Id);
+            Assert.True(songs.Focused, "Append moves focus to the first newly loaded song.");
+            Assert.Equal("song-2", WinFormsUi.Selected<MusicInfo>(songs)!.Id);
             Assert.Equal(new[] { "song-1", "song-2" }, Songs(songs).Select(song => song.Id).ToArray());
         });
     }
@@ -448,6 +448,30 @@ public sealed class Issue66Tests
     }
 
     [Fact]
+    public void Album_load_more_appends_and_focuses_first_new_song()
+    {
+        var source = new Issue66BrowseSource { AlbumSongTotal = 2 };
+        StaAsync(async () =>
+        {
+            using var shell = CreateShell(source);
+            shell.Show();
+            Application.DoEvents();
+            var results = shell.SearchResultsForTests;
+            results.Items.Add(new ObjectBox<MusicInfo>("Album", new MusicInfo { Id = "album-1", Title = "Album", Source = "netease", IsAlbum = true }));
+            results.SelectedIndex = 0;
+            await shell.ActivateSelectedSearchSongForTests();
+            var previousCount = Songs(results).Count();
+            Assert.Equal(1, previousCount);
+            results.SelectedIndex = 0;
+
+            await shell.LoadMoreAlbumSongsForTests();
+
+            Assert.Equal(2, results.Items.Count);
+            Assert.Equal(previousCount, results.SelectedIndex);
+            Assert.Equal(previousCount, ListCaretIndex(results));
+        });
+    }
+    [Fact]
     public void Ranking_load_more_appends_and_reaches_end_of_list()
     {
         var source = new Issue66BrowseSource();
@@ -462,9 +486,13 @@ public sealed class Issue66Tests
             await shell.LoadRankingSongsForTests();
             Assert.True(Assert.IsType<Button>(Assert.Single(shell.Controls.Find("RankingSongsLoadMore", true))).Enabled);
 
+            var songs = shell.RankingSongsForTests;
+            var previousCount = Songs(songs).Count();
             await shell.LoadMoreRankingSongsForTests();
 
-            Assert.Equal(new[] { "song-1", "song-2" }, Songs(shell.RankingSongsForTests).Select(song => song.Id).ToArray());
+            Assert.Equal(new[] { "song-1", "song-2" }, Songs(songs).Select(song => song.Id).ToArray());
+            Assert.Equal(previousCount, songs.SelectedIndex);
+            Assert.Equal(previousCount, ListCaretIndex(songs));
             Assert.False(Assert.IsType<Button>(Assert.Single(shell.Controls.Find("RankingSongsLoadMore", true))).Enabled);
         });
     }
@@ -489,9 +517,13 @@ public sealed class Issue66Tests
             Assert.Equal(new[] { "song-1" }, Songs(shell.FavoriteSongsForTests).Select(song => song.Id).ToArray());
             Assert.True(shell.SavedPlaylistLoadMoreForTests.Enabled, "A remote playlist with another page must keep load-more available.");
 
+            var songs = shell.FavoriteSongsForTests;
+            var previousCount = Songs(songs).Count();
             await shell.LoadMoreSavedSongsForTests();
 
-            Assert.Equal(new[] { "song-1", "song-2" }, Songs(shell.FavoriteSongsForTests).Select(song => song.Id).ToArray());
+            Assert.Equal(new[] { "song-1", "song-2" }, Songs(songs).Select(song => song.Id).ToArray());
+            Assert.Equal(previousCount, songs.SelectedIndex);
+            Assert.Equal(previousCount, ListCaretIndex(songs));
             Assert.False(shell.SavedPlaylistLoadMoreForTests.Enabled, "The end-of-list control must be disabled.");
         });
     }
@@ -531,8 +563,8 @@ public sealed class Issue66Tests
             source.ReleasePlaylistDetail();
             await WaitFor(() => Songs(songs).Count == 2);
             Assert.Equal(2, source.PlaylistDetailCalls);
-            Assert.True(loadMore.Focused, "Load-more focus must not move after appending.");
-            Assert.Equal("song-1", WinFormsUi.Selected<MusicInfo>(songs)!.Id);
+            Assert.True(songs.Focused, "Append moves focus to the first newly loaded song.");
+            Assert.Equal("song-2", WinFormsUi.Selected<MusicInfo>(songs)!.Id);
             Assert.Equal(new[] { "song-1", "song-2" }, Songs(songs).Select(song => song.Id).ToArray());
             Assert.True(loadMore.Enabled, "The control stays enabled while another page exists.");
         });
@@ -631,6 +663,12 @@ public sealed class Issue66Tests
         });
 
     /// <summary>The songs the list currently shows, in display order.</summary>
+    private static int ListCaretIndex(ListBox list) =>
+        SendMessage(list.Handle, 0x019F, IntPtr.Zero, IntPtr.Zero).ToInt32();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int message, IntPtr wParam, IntPtr lParam);
+
     private static IReadOnlyList<MusicInfo> Songs(ListBox list) =>
         list.Items.Cast<object>().OfType<ObjectBox<MusicInfo>>().Select(item => item.Value).ToArray();
 
