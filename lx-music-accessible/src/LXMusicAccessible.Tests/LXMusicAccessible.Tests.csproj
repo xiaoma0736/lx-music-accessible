@@ -46,7 +46,6 @@
     <Compile Remove="PlaybackFakeIpRegressionTests.cs" />
     <Compile Remove="ScriptSecurityTests.cs" />
     <Compile Remove="PlaylistSnapshotTests.cs" />
-    <Compile Remove="QualitySelectionRegressionTests.cs" />
     <Compile Remove="JsonMusicSourceTests.cs" />
     <Compile Remove="Issue49HotkeyTests.cs" />
     <Compile Remove="InstallDirectoryOwnershipTests.cs" />

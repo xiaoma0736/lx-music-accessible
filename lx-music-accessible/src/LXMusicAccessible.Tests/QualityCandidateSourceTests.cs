@@ -1,4 +1,4 @@
-﻿using System.Net.Http;
+using System.Net.Http;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Data;
 using LXMusicAccessible.Models;
@@ -34,6 +34,21 @@ public sealed class QualityCandidateSourceTests
                 new("high", "high", 2, "320k")
             ],
             candidates);
+    }
+
+    [Fact]
+    public async Task Builtin_candidates_stay_on_the_current_source_and_declared_qualities()
+    {
+        using var host = await TestApplicationHost.StartAsync();
+        var source = (IQualityCandidateSource)host.Services.GetRequiredService<MusicSourceService>();
+        var song = QualitySong();
+        song.Source = "netease";
+        var candidates = await source.GetCandidatesAsync(song);
+
+        var builtin = candidates.Where(candidate => candidate.InterfaceId == "netease").ToArray();
+        Assert.NotEmpty(builtin);
+        Assert.All(builtin, candidate => Assert.Equal("netease", candidate.InterfaceId));
+        Assert.Equal(["128k", "192k", "320k", "flac", "flac24bit"], builtin.Select(candidate => candidate.Quality).ToArray());
     }
 
     [Fact]
