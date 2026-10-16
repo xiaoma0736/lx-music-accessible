@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -38,11 +38,7 @@ public sealed class Issue76SearchLoadMoreCaretTests
             await WaitFor(() => results.Items.Count == 3);
 
             var markerIndex = results.Items.Count - 1;
-            WinFormsUi.SelectOnly(results, 0);
-            results.SetSelected(markerIndex, true);
-            SetCaretIndex(results, markerIndex);
-            Assert.Equal("song-1", SelectedSongIds(results).Single());
-            Assert.Contains("加载更多", results.Items[ListCaretIndex(results)]!.ToString()!, StringComparison.Ordinal);
+            WinFormsUi.SelectOnly(results, markerIndex);
 
             await InvokeSearchAsync(shell, reset: false);
             await WaitFor(() => results.Items.Count == 6);
@@ -51,7 +47,7 @@ public sealed class Issue76SearchLoadMoreCaretTests
             Assert.Equal("song-3", expectedSong.Id);
             Assert.Equal(expectedSong, FocusedSong(results));
             Assert.NotEqual(results.Items.Count - 1, ListCaretIndex(results));
-            Assert.Equal(new[] { "song-1", "song-3" }, SelectedSongIds(results));
+            Assert.Equal(new[] { "song-3" }, SelectedSongIds(results));
             Assert.False(results.GetSelected(results.Items.Count - 1), "The load-more marker must not remain selected.");
             Assert.Empty(playback.Requests);
         });

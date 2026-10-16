@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -116,6 +116,32 @@ public sealed class WinFormsPlaylistPagingTests
     }
 
     [Fact]
+    public void Category_songs_append_focuses_first_new_song()
+    {
+        var source = new CountingBrowseSource();
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            using var shell = CreateShell(source);
+            shell.Show();
+            Application.DoEvents();
+            AddCategory(shell);
+            shell.LoadCategoryPlaylistsForTests();
+            await WaitForAsync(() => shell.CategoryPlaylistsForTests.Items.Count > 0);
+            shell.CategoryPlaylistsForTests.SelectedIndex = 0;
+            await shell.LoadCategorySongsForTests();
+            var songs = shell.CategorySongsForTests;
+            var previousCount = songs.Items.Cast<object>().OfType<ObjectBox<MusicInfo>>().Count();
+            Assert.Equal(1, previousCount);
+            songs.SelectedIndex = 0;
+
+            await shell.LoadMoreCategorySongsForTests();
+
+            Assert.Equal(2, songs.Items.Count);
+            Assert.Equal(previousCount, songs.SelectedIndex);
+            Assert.Equal(previousCount, ListCaretIndex(songs));
+        });
+    }
+    [Fact]
     public void Network_error_sets_visible_status_and_announces_error()
     {
         var source = new CountingBrowseSource { ThrowCategoryPlaylists = true };
@@ -191,6 +217,11 @@ public sealed class WinFormsPlaylistPagingTests
     private static void PerformClick(Control control) =>
         ((Button)control).PerformClick();
 
+    private static int ListCaretIndex(ListBox list) =>
+        SendMessage(list.Handle, 0x019F, IntPtr.Zero, IntPtr.Zero).ToInt32();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int message, IntPtr wParam, IntPtr lParam);
     private static async Task WaitForAsync(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(5);

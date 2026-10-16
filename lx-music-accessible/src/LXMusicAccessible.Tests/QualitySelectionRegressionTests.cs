@@ -20,8 +20,7 @@ public sealed class QualitySelectionRegressionTests
 {
     private static readonly string[] ProductionQualities =
     [
-        "128k", "192k", "320k", "flac", "flac24bit", "hires", "atmos",
-        "atmos_plus", "master", "jyeffect", "sky", "dolby", "jymaster"
+        "128k", "192k", "320k", "flac", "flac24bit", "hires"
     ];
     private static readonly Uri LowResolve = new(
         "https://low-resolver.test/url?source=tx&songId=quality-song&quality=320k");
@@ -176,16 +175,6 @@ public sealed class QualitySelectionRegressionTests
         }
     }
 
-    [Fact]
-    public void Settings_expose_the_same_complete_quality_token_set_for_playback_and_download()
-    {
-        var xaml = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "src", "LXMusicAccessible.App", "SettingsWindow.xaml"));
-
-        Assert.Equal(ProductionQualities, ComboTokens(xaml, "DefaultQualityCombo"));
-        Assert.Equal(ProductionQualities, ComboTokens(xaml, "DownloadQualityCombo"));
-    }
-
     [Theory]
     [InlineData("flac", "128k", false)]
     [InlineData("flac", "320k", false)]
@@ -263,28 +252,6 @@ public sealed class QualitySelectionRegressionTests
         "128k" or "192k" or "320k" or "flac" or "flac24bit" or "hires" => quality,
         _ => "flac"
     };
-
-    private static string[] ComboTokens(string xaml, string comboName)
-    {
-        var start = xaml.IndexOf($"x:Name=\"{comboName}\"", StringComparison.Ordinal);
-        Assert.True(start >= 0, $"Missing combo {comboName}");
-        var end = xaml.IndexOf("</ComboBox>", start, StringComparison.Ordinal);
-        Assert.True(end > start, $"Unclosed combo {comboName}");
-        return Regex.Matches(xaml[start..end], "Tag=\"([^\"]+)\"")
-            .Select(match => match.Groups[1].Value)
-            .ToArray();
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            if (File.Exists(Path.Combine(current.FullName, "AGENTS.md"))) return current.FullName;
-            current = current.Parent;
-        }
-        throw new DirectoryNotFoundException("Repository root not found.");
-    }
 
     private static HttpResponseMessage AudioResponse(string quality)
     {

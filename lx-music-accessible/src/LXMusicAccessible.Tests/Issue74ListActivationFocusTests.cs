@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
@@ -63,7 +63,7 @@ public sealed class Issue74ListActivationFocusTests
     }
 
     [Fact]
-    public void Search_load_more_uses_focused_marker_when_multiple_items_selected()
+    public void Search_load_more_uses_focused_marker_in_single_select_list()
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
@@ -79,23 +79,13 @@ public sealed class Issue74ListActivationFocusTests
             var results = RequiredListBox(shell, "SearchResults");
             await WaitForList(results, 2);
 
-            results.SetSelected(0, true);
             var markerIndex = results.Items.Count - 1;
             results.SetSelected(markerIndex, true);
-            var caret = typeof(WinFormsShell).GetMethod(
-                "SetListCaretIndex",
-                BindingFlags.NonPublic | BindingFlags.Static,
-                null,
-                [typeof(ListBox), typeof(int)],
-                null);
-            Assert.NotNull(caret);
-            caret!.Invoke(null, [results, markerIndex]);
             results.Focus();
             Application.DoEvents();
             RaiseKeyDown(results, Keys.Enter);
             await WaitFor(() => source.SearchCalls == 2);
 
-            Assert.True(results.GetSelected(0));
             var newestSong = results.Items.Count - 2;
             Assert.True(results.GetSelected(newestSong), "The newest appended song must be selected.");
             Assert.False(results.GetSelected(results.Items.Count - 1), "The load-more marker must not stay selected.");

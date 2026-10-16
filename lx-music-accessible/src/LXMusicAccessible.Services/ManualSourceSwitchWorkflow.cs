@@ -21,6 +21,10 @@ public sealed record ManualSourceOption(
 {
     public string AccessibleLabel => DisplayLabel;
 
+    public bool IsPlayable { get; init; } = true;
+
+    public string? StateMessage { get; init; }
+
     public static ManualSourceOption Create(
         string sourceId,
         string sourceName,
@@ -38,6 +42,28 @@ public sealed record ManualSourceOption(
             ? $"{sourceName}，{quality}，{candidate.Title}，{candidate.Artist}"
             : displayLabel.Trim();
         return new(sourceId, sourceName, platform, candidate, quality, label);
+    }
+
+    public static ManualSourceOption Unavailable(
+        string sourceId,
+        string sourceName,
+        string platform,
+        MusicInfo candidate,
+        string quality,
+        string stateMessage)
+    {
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(sourceId);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(sourceName);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(platform);
+        FrameworkCompatibility.ThrowIfNull(candidate);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(quality);
+        FrameworkCompatibility.ThrowIfNullOrWhiteSpace(stateMessage);
+        var label = $"{sourceName}，{QualityCatalog.Label(quality)}，不可用，{stateMessage}，{candidate.Title}，{candidate.Artist}";
+        return new(sourceId, sourceName, platform, candidate, quality, label)
+        {
+            IsPlayable = false,
+            StateMessage = stateMessage
+        };
     }
 
     internal string DeduplicationKey =>
@@ -133,7 +159,7 @@ public sealed class ManualSourceDiscoveryWorkflow(
     ILogger<ManualSourceDiscoveryWorkflow> logger,
     TimeSpan? budget = null) : IManualSourceDiscoveryWorkflow
 {
-    private static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(11);
+    private static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan CancellationPropagationGrace = TimeSpan.FromMilliseconds(250);
 
     public async Task<ManualSourceDiscoveryResult> DiscoverAsync(
@@ -178,6 +204,16 @@ public sealed class ManualSourceDiscoveryWorkflow(
         FrameworkCompatibility.ThrowIfNull(request);
         FrameworkCompatibility.ThrowIfNull(request.Target);
         FrameworkCompatibility.ThrowIfNull(request.Option);
+        if (!request.Option.IsPlayable)
+        {
+            return new(
+                PlaybackResultStatus.Failed,
+                null,
+                request.Origin,
+                request.Option.StateMessage ?? "所选音源音质不可用",
+                PlaybackTrigger.UserInitiated);
+        }
+
         if (!MusicSearchMatcher.IsSameSong(request.Option.Candidate, request.Target))
         {
             return new(
@@ -252,6 +288,7 @@ public sealed class ManualSourceDiscoveryWorkflow(
             .GroupBy(option => option.DeduplicationKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .OrderBy(option => option.SourceId, StringComparer.OrdinalIgnoreCase)
+            .ThenByDescending(option => QualityCatalog.Rank(option.Quality))
             .ThenBy(option => option.Quality, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -298,46 +335,70 @@ public sealed class ManualSourceDiscoveryWorkflow(
         if (candidate is null || !MusicSearchMatcher.IsSameSong(candidate, target))
             return [];
 
-        var options = new List<ManualSourceOption>();
-        foreach (var quality in source.Qualities
-                     .Where(quality => !string.IsNullOrWhiteSpace(quality))
-                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        var qualities = source.Qualities
+            .Where(quality => !string.IsNullOrWhiteSpace(quality))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var probes = qualities.Select(quality => ProbeQualityAsync(
+            candidate,
+            source,
+            quality,
+            cancellationToken)).ToArray();
+        var options = await Task.WhenAll(probes);
+        return options;
+    }
+
+    private async Task<ManualSourceOption> ProbeQualityAsync(
+        MusicInfo candidate,
+        ManualSourceInterface source,
+        string quality,
+        CancellationToken cancellationToken)
+    {
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            string? url;
-            try
+            var url = await gateway.ResolveExactAsync(
+                candidate,
+                source.Id,
+                quality,
+                cancellationToken);
+            if (!string.IsNullOrWhiteSpace(url))
             {
-                url = await gateway.ResolveExactAsync(
+                return ManualSourceOption.Create(
+                    source.Id,
+                    source.DisplayName,
+                    source.Platform,
                     candidate,
-                    source.Id,
                     quality,
-                    cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                logger.LogDebug(
-                    exception,
-                    "Manual source URL probe failed ({SourceId}, {Quality})",
-                    source.Id,
-                    quality);
-                continue;
+                    $"{source.DisplayName}，{TranslateQuality(quality)}，{candidate.Title}，{candidate.Artist}");
             }
 
-            if (string.IsNullOrWhiteSpace(url)) continue;
-            options.Add(ManualSourceOption.Create(
+            return ManualSourceOption.Unavailable(
                 source.Id,
                 source.DisplayName,
                 source.Platform,
                 candidate,
                 quality,
-                $"{source.DisplayName}，{TranslateQuality(quality)}，{candidate.Title}，{candidate.Artist}"));
+                "未解析到播放地址");
         }
-
-        return options;
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(
+                exception,
+                "Manual source URL probe failed ({SourceId}, {Quality})",
+                source.Id,
+                quality);
+            return ManualSourceOption.Unavailable(
+                source.Id,
+                source.DisplayName,
+                source.Platform,
+                candidate,
+                quality,
+                string.IsNullOrWhiteSpace(exception.Message) ? "解析失败" : exception.Message);
+        }
     }
 
     private static string TranslateQuality(string quality) => quality switch
