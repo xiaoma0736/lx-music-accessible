@@ -1,4 +1,4 @@
-﻿# Batch Selection And Quality Playback Implementation Plan
+# Batch Selection And Quality Playback Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -43,7 +43,7 @@
 - Produces: `private bool HandleSongListSpace(ListBox list, KeyEventArgs e)`; returns true only for unmodified Space.
 - Consumes existing `TogglePlayback()` and `ActivateSong(ListBox, PlaybackQueueOrigin)`.
 
-- [ ] **Step 1: Write failing tests.** Replace the old multi-selection assertions with: all four song lists equal `SelectionMode.One`; `Space` with a playing `PlaybackSpy` sets `Handled`, increments `PauseCount`, and does not call `PlayAsync`; no-current Space does not start a new song in this task. Use existing `CreateShell`, `RequiredListBox`, `FillSongs`, and `RaiseKeyDown` helpers. Extend `PlaybackSpy` with `PauseCount` and `ResumeCount` where needed.
+- [ ] **Step 1: Write failing tests.** Replace the old multi-selection assertions with: all four song lists equal `SelectionMode.One`; `Space` with a playing `PlaybackSpy` sets `Handled`, increments `PauseCount`, and does not call `PlayAsync`; no-current Space starts the focused song exactly once and does not call ReplayAsync. Use existing `CreateShell`, `RequiredListBox`, `FillSongs`, and `RaiseKeyDown` helpers. Extend `PlaybackSpy` with `PauseCount` and `ResumeCount` where needed.
 - [ ] **Step 2: Run RED.** `dotnet test src\LXMusicAccessible.Tests\LXMusicAccessible.Tests.csproj --configuration Release --filter "FullyQualifiedName~BatchDownloadSelectionTests"`; expected failure is `MultiSimple`/swallowed Space, not compilation noise.
 - [ ] **Step 3: Implement.** Change `SearchResults`, `FavoriteSongs`, `CategorySongs`, and `RankingSongs` to `SelectionMode.One`. Replace `HandleSongListSelection` with:
 
@@ -52,7 +52,14 @@ private bool HandleSongListSpace(ListBox list, KeyEventArgs e)
 {
     if (e.Control || e.Shift || e.Alt || e.KeyCode != Keys.Space) return false;
     e.Handled = true;
-    TogglePlayback();
+    if (_services.Playback?.CurrentMusic is not null)
+    {
+        TogglePlayback();
+        return true;
+    }
+
+    var song = FocusedItem<MusicInfo>(list);
+    if (song is not null) _ = ActivateSong(list);
     return true;
 }
 ```
@@ -88,7 +95,7 @@ Call it first in every main and imported song-list `KeyDown` handler. Preserve E
 **Files:**
 - Modify: `src/LXMusicAccessible.App/WinFormsShell.Workflows.cs`
 - Modify: `src/LXMusicAccessible.Tests/WinFormsPlaylistPagingTests.cs`
-- Modify existing album/search append tests where appropriate.
+- Modify existing album/search append tests: `WinFormsPlaylistPagingTests.cs`, `Issue76SearchLoadMoreCaretTests.cs`, and `BatchDownloadSelectionTests.cs`.
 
 **Interfaces:**
 - Produces: `private static void FocusFirstAppendedSong(ListBox list, int previousSongCount, IReadOnlyList<string>? preservedSongIds = null)`.
@@ -165,7 +172,7 @@ Apply after successful append only: `SearchAsync(false)` (replacing its inline b
 **Files:**
 - Modify: `README.md`, `KEYBOARD_NAVIGATION_GUIDE.md`, `src/LXMusicAccessible.App/Docs/使用说明.md`.
 
-- [ ] **Step 1: Update user behavior docs.** State that song lists are single-select; ordinary song-list `Space` toggles playback and resumes when paused; batch selection lives in the separate “批量选择下载” window and Space checks there; append moves the reading cursor to the first new song; source switching lists all enabled source/quality candidates with state; current-source quality probing only reports the current platform. Remove all stale `Ctrl+Space` batch-selection guidance.
+- [ ] **Step 1: Update user behavior docs.** State that song lists are single-select; ordinary song-list `Space` toggles current playback, resumes paused current music, or starts the focused song when nothing is current; batch selection lives in the separate “批量选择下载” window and Space checks there; append moves the reading cursor to the first new song; source switching lists all enabled source/quality candidates with state; current-source quality probing only reports the current platform. Remove all stale `Ctrl+Space` batch-selection guidance.
 - [ ] **Step 2: Run text checks.** `git diff --check` and `powershell -ExecutionPolicy Bypass -File scripts\check-text.ps1`; both exit 0.
 - [ ] **Step 3: Full gate.** Run `powershell -ExecutionPolicy Bypass -File verify.ps1`. Restore, dependency audit, Release build, all tests, text checks, source checks, release/installer verification, and smoke test must pass. Record exact TRX executed count.
 - [ ] **Step 4: Final self-review.** Review `git diff origin/fix/search-loadmore-first-new-item...HEAD` against every section of `docs/superpowers/specs/2026-10-16-batch-selection-quality-playback-design.md`; check no stale old batch menu, no stray multi-selection handler, and no stale keybinding. Commit documentation as `docs(ui): document batch selection and quality playback`.
