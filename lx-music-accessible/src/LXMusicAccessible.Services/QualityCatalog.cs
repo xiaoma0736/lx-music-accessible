@@ -1,7 +1,13 @@
-﻿namespace LXMusicAccessible.Services;
+namespace LXMusicAccessible.Services;
 
-internal static class QualityCatalog
+public static class QualityCatalog
 {
+    public static IReadOnlyList<string> KnownQualities { get; } =
+    [
+        "jymaster", "master", "atmos_plus", "atmos", "dolby", "sky", "jyeffect",
+        "hires", "flac24bit", "flac", "320k", "192k", "128k"
+    ];
+
     public static string Label(string? quality) => Normalize(quality) switch
     {
         "128k" => "标准",

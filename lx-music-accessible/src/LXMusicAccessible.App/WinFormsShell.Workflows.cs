@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using LXMusicAccessible.Models;
@@ -1059,31 +1060,32 @@ public partial class WinFormsShell
         menu.MenuItems.Add(new MenuItem("查看详情", (_, _) => ShowSongDetails(list)));
         menu.MenuItems.Add(new MenuItem("收藏歌曲", (_, _) => _ = AddFavorites(WinFormsUi.Songs(list))));
         menu.MenuItems.Add(new MenuItem("下载当前歌曲", (_, _) => DownloadList(WinFormsUi.Songs(list))));
-        var qualityDownload = new MenuItem("下载单曲");
-        qualityDownload.Popup += async (_, _) =>
+        var focused = FocusedItem<MusicInfo>(list);
+        var qualityDownload = new MenuItem("下载单曲音质");
+        qualityDownload.Popup += (_, _) =>
         {
-            var focused = FocusedItem<MusicInfo>(list);
-            await RefreshQualitySubmenuAsync(
+            var song = FocusedItem<MusicInfo>(list);
+            _ = RefreshQualitySubmenuAsync(
                 qualityDownload,
                 list,
-                focused,
-                "下载单曲",
-                async (song, quality) => await DownloadQualityAsync(song, quality),
-                "download-quality:" + focused?.Id);
+                song,
+                "下载单曲音质",
+                choice => DownloadQualityAsync(choice.Song, choice.Quality),
+                "download-quality:" + song?.Id);
         };
-        menu.MenuItems.Add(qualityDownload);
         var playQuality = new MenuItem("播放音质");
-        playQuality.Popup += async (_, _) =>
+        playQuality.Popup += (_, _) =>
         {
-            var focused = FocusedItem<MusicInfo>(list);
-            await RefreshQualitySubmenuAsync(
+            var song = FocusedItem<MusicInfo>(list);
+            _ = RefreshQualitySubmenuAsync(
                 playQuality,
                 list,
-                focused,
+                song,
                 "播放音质",
-                async (song, quality) => await PlayQualityAsync(song, quality, OriginForList(list)),
-                "context-play-quality:" + focused?.Id);
+                choice => PlayQualityAsync(choice.Song, choice.Quality, OriginForList(list)),
+                "context-play-quality:" + song?.Id);
         };
+        menu.MenuItems.Add(qualityDownload);
         menu.MenuItems.Add(playQuality);
         var albumDownload = new MenuItem("下载整张专辑");
         albumDownload.Popup += (_, _) =>
@@ -1099,6 +1101,23 @@ public partial class WinFormsShell
             var count = SelectedSongs(list).Count;
             batchDownload.Text = $"批量下载选中歌曲({count})";
             batchDownload.Enabled = count >= 2;
+            // Prepare both native submenus while the outer menu is being created. A submenu that waits
+            // for its own Popup cannot reliably become enterable while its first network probe runs.
+            focused = FocusedItem<MusicInfo>(list);
+            _ = RefreshQualitySubmenuAsync(
+                qualityDownload,
+                list,
+                focused,
+                "下载单曲音质",
+                selected => DownloadQualityAsync(selected.Song, selected.Quality),
+                "download-quality:" + focused?.Id);
+            _ = RefreshQualitySubmenuAsync(
+                playQuality,
+                list,
+                focused,
+                "播放音质",
+                selected => PlayQualityAsync(selected.Song, selected.Quality, OriginForList(list)),
+                "context-play-quality:" + focused?.Id);
         };
         menu.MenuItems.Add(batchDownload);
         menu.MenuItems.Add(new MenuItem("切换音源播放", (_, _) => OpenManualSource(WinFormsUi.Selected<MusicInfo>(list))));
@@ -1225,73 +1244,102 @@ public partial class WinFormsShell
         Announce(result.Message, "album-download:" + result.Requested, AnnouncementKind.Success);
     }
 
-    private int _qualityMenuGeneration;
+    private sealed class QualityMenuChoice
+    {
+        public MusicInfo Song { get; init; } = new();
+        public string Quality { get; init; } = "128k";
+    }
+
+    private sealed class QualityMenuState
+    {
+        public int Generation { get; set; }
+        public List<(string Quality, MenuItem Item)> Options { get; } = [];
+    }
+
+    private readonly Dictionary<MenuItem, QualityMenuState> _qualityMenuStates = new();
 
     private async Task RefreshQualitySubmenuAsync(
         MenuItem parent,
         Control? owner,
         MusicInfo? song,
         string parentLabel,
-        Func<MusicInfo, string, Task> activate,
-        string activityId,
-        PlaybackQueueOrigin origin = PlaybackQueueOrigin.Search)
+        Func<QualityMenuChoice, Task> activate,
+        string activityId)
     {
-        var generation = ++_qualityMenuGeneration;
         var ownerControl = owner ?? this;
         if (ownerControl.IsDisposed || IsDisposed) return;
-        parent.MenuItems.Clear();
+        var state = _qualityMenuStates.TryGetValue(parent, out var existing)
+            ? existing
+            : _qualityMenuStates[parent] = new QualityMenuState();
+        var generation = ++state.Generation;
         if (song is null)
         {
+            state.Options.Clear();
             parent.Text = parentLabel + "（无歌曲）";
+            parent.MenuItems.Clear();
             parent.MenuItems.Add(new MenuItem("暂无可探测歌曲", (_, _) => { }) { Enabled = false });
             return;
         }
 
         parent.Text = parentLabel;
-        parent.MenuItems.Add(new MenuItem("音质探测中", (_, _) => { }) { Enabled = false });
+        parent.MenuItems.Clear();
+        state.Options.Clear();
+        foreach (var quality in QualityCatalog.KnownQualities)
+        {
+            var capturedSong = song;
+            var item = new MenuItem(QualityCatalog.Label(quality) + "，音质探测中", (_, _) =>
+            {
+                if (!IsDisposed)
+                    _ = activate(new QualityMenuChoice { Song = capturedSong, Quality = quality });
+            })
+            {
+                Enabled = false
+            };
+            parent.MenuItems.Add(item);
+            state.Options.Add((quality, item));
+        }
+
         var probe = _services.QualityProbe;
         if (probe is null)
         {
-            parent.MenuItems.Clear();
-            parent.MenuItems.Add(new MenuItem("音质探测不可用", (_, _) => { }) { Enabled = false });
+            foreach (var (quality, item) in state.Options)
+                item.Text = QualityCatalog.Label(quality) + "，音质探测不可用";
+            Announce("音质探测不可用", activityId, AnnouncementKind.Error);
             return;
         }
 
         try
         {
             var result = await probe.ProbeAsync(song);
-            if (generation != _qualityMenuGeneration || ownerControl.IsDisposed || IsDisposed) return;
-            parent.MenuItems.Clear();
-            foreach (var option in result.Options)
+            if (generation != state.Generation || ownerControl.IsDisposed || IsDisposed) return;
+            foreach (var (quality, item) in state.Options)
             {
-                var quality = option.Quality;
-                var state = option.Status switch
-                {
-                    QualityAvailability.Playable => $"可播放，{option.InterfaceName ?? "当前接口"}",
-                    QualityAvailability.Failed => "探测失败，可重试",
-                    _ => "不可用"
-                };
-                var capturedSong = song;
-                var item = new MenuItem($"{option.Label}，{state}", (_, _) =>
-                {
-                    if (option.Status == QualityAvailability.Playable && !IsDisposed)
-                        _ = activate(capturedSong, quality);
-                })
-                {
-                    Enabled = option.Status == QualityAvailability.Playable
-                };
-                parent.MenuItems.Add(item);
+                var normalized = QualityCatalog.Normalize(quality);
+                var option = result.Options.FirstOrDefault(value =>
+                    string.Equals(QualityCatalog.Normalize(value.Quality), normalized, StringComparison.Ordinal));
+                var stateText = option is null
+                    ? "不可用"
+                    : option.Status switch
+                    {
+                        QualityAvailability.Playable => $"可播放，{option.InterfaceName ?? "当前接口"}",
+                        QualityAvailability.Failed => "探测失败，可重试",
+                        _ => "不可用"
+                    };
+                item.Text = (option?.Label ?? QualityCatalog.Label(quality)) + "，" + stateText;
+                item.Enabled = option?.Status == QualityAvailability.Playable;
             }
+
+            if (result.Options.All(option => option.Status != QualityAvailability.Playable))
+                Announce(result.Message, activityId, AnnouncementKind.Error);
         }
         catch (Exception exception)
         {
-            if (generation != _qualityMenuGeneration || ownerControl.IsDisposed || IsDisposed) return;
+            if (generation != state.Generation || ownerControl.IsDisposed || IsDisposed) return;
+            foreach (var (quality, item) in state.Options)
+                item.Text = QualityCatalog.Label(quality) + "，探测失败，请重新打开菜单";
             Announce($"音质探测失败：{exception.GetType().Name}", activityId, AnnouncementKind.Error);
-            parent.MenuItems.Clear();
-            parent.MenuItems.Add(new MenuItem("探测失败，请重新打开菜单", (_, _) => { }) { Enabled = false });
         }
     }
-
     private async Task PlayQualityAsync(
         MusicInfo song,
         string quality,
