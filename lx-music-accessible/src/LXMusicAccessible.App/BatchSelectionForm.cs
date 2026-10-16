@@ -167,5 +167,3 @@ internal sealed class BatchSelectionForm : Form
         return button;
     }
 }
-
-
