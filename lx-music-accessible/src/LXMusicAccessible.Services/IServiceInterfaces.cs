@@ -394,11 +394,13 @@ public interface IMusicSourceService
     /// 从 URL 导入音源
     /// </summary>
     Task<MusicSource?> ImportFromUrlAsync(string url, CancellationToken cancellationToken = default);
+    Task<MusicSourceImportResult?> ImportFromUrlDetailedAsync(string url, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 从文件导入音源
     /// </summary>
     Task<MusicSource?> ImportFromFileAsync(string filePath, CancellationToken cancellationToken = default);
+    Task<MusicSourceImportResult?> ImportFromFileDetailedAsync(string filePath, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 测试音源

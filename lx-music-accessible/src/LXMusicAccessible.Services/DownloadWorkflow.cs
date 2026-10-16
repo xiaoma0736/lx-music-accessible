@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using LXMusicAccessible.Models;
@@ -104,6 +106,9 @@ public interface IDownloadWorkflow
         string? targetDirectory = null,
         CancellationToken cancellationToken = default);
     void Cancel(DownloadTask task);
+    void Pause(DownloadTask task);
+    void Resume(DownloadTask task);
+    bool Delete(DownloadTask task, bool deleteSourceFile);
     void ClearCompleted();
     string ResolveDownloadDirectory(string? requested = null);
     ExternalPlaybackResult OpenDownloadDirectory(string? requested = null);
@@ -170,6 +175,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     private readonly IDownloadSource _source;
     private readonly HttpClient _httpClient;
     private readonly BackgroundWorkHost _backgroundWork;
+    private readonly ConcurrentDictionary<string, DownloadOperation> _operations = new(StringComparer.Ordinal);
     private readonly IAccessibleAnnouncer _announcer;
     private readonly IProcessLauncher _processLauncher;
     private readonly string _temporaryRoot;
@@ -442,7 +448,58 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     public void Cancel(DownloadTask task)
     {
         if (task is null) return;
+        if (_operations.TryGetValue(task.Id, out var operation)) operation.Cancel();
         _backgroundWork.Cancel(DownloadSlot(task));
+    }
+
+    public void Pause(DownloadTask task)
+    {
+        if (task is null || task.Status != DownloadTaskStatus.Downloading) return;
+        if (_operations.TryGetValue(task.Id, out var operation) && operation.Pause())
+            task.Status = DownloadTaskStatus.Paused;
+    }
+
+    public void Resume(DownloadTask task)
+    {
+        if (task is null || task.Status != DownloadTaskStatus.Paused) return;
+        if (_operations.TryGetValue(task.Id, out var operation) && operation.Resume())
+            task.Status = DownloadTaskStatus.Downloading;
+    }
+
+    public bool Delete(DownloadTask task, bool deleteSourceFile) => DeleteAsync(task, deleteSourceFile).GetAwaiter().GetResult();
+
+    private async Task<bool> DeleteAsync(DownloadTask task, bool deleteSourceFile)
+    {
+        if (task is null) return false;
+        var wasActive = task.Status is DownloadTaskStatus.Pending
+            or DownloadTaskStatus.Downloading
+            or DownloadTaskStatus.Paused;
+        if (wasActive) Cancel(task);
+
+        if (wasActive)
+        {
+            using var waitTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
+            {
+                await _backgroundWork.WaitAsync(DownloadSlot(task), waitTimeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+        }
+
+
+        _tasks.Remove(task);
+        lock (_gate) _plans.Remove(task.Id);
+
+        if (deleteSourceFile)
+        {
+            DeleteTemporaryFile(task.SavePath, task.Id);
+            DeleteTemporaryFile(task.LyricPath, task.Id);
+        }
+
+        return true;
     }
 
     public void ClearCompleted()
@@ -670,12 +727,29 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         if (announce)
             SafeAnnounce(new($"已开始下载：{task.DisplayName}", AnnouncementKind.Busy, activityId));
 
-        await _backgroundWork.RunLatestAsync(DownloadSlot(task), async context =>
+        var operation = new DownloadOperation();
+        _operations[task.Id] = operation;
+        try
         {
-            using var registration = cancellationToken.Register(() =>
-                _backgroundWork.Cancel(DownloadSlot(task)));
-            await RunTaskAsync(task, targetDirectory, preferences, announce, activityId, context.CancellationToken);
-        });
+            using var registration = cancellationToken.Register(operation.Cancel);
+            await _backgroundWork.RunLatestAsync(DownloadSlot(task), async context =>
+            {
+                using var contextRegistration = context.CancellationToken.Register(operation.Cancel);
+                await RunTaskAsync(
+                    task,
+                    targetDirectory,
+                    preferences,
+                    announce,
+                    activityId,
+                    operation,
+                    context.CancellationToken);
+            });
+        }
+        finally
+        {
+            _operations.TryRemove(task.Id, out _);
+            operation.Dispose();
+        }
     }
 
     private async Task RunTaskAsync(
@@ -684,6 +758,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         DownloadPreferences preferences,
         bool announce,
         string activityId,
+        DownloadOperation operation,
         CancellationToken cancellationToken)
     {
         string? audioTemporary = null;
@@ -724,6 +799,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                             activityId,
                             AnnouncementSpeech.None));
                     } : null,
+                    operation,
                     cancellationToken);
                 audioTemporary = download.Path;
                 extension = download.Actual.Extension;
@@ -823,6 +899,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         string directory,
         DownloadPreferences preferences,
         Action<int>? progress,
+        DownloadOperation operation,
         CancellationToken cancellationToken)
     {
         var qualities = await _source.GetQualitiesAsync(task.Music.Source, cancellationToken);
@@ -874,7 +951,8 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         string directory,
         DownloadPreferences preferences,
         CancellationToken cancellationToken,
-        Action<long, long>? progress)
+        Action<long, long>? progress,
+        DownloadOperation? operation = null)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(10));
@@ -904,9 +982,16 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             {
                 await output.WriteAsync(buffer, 0, count, timeout.Token);
                 read += count;
+                if (operation is not null)
+                    await operation.WaitIfPausedAsync(timeout.Token);
                 await _throttle.PaceTransferAsync(preferences, clock.Elapsed, read, timeout.Token);
                 progress?.Invoke(read, total);
             }
+
+            // On .NET Framework, HttpClient can turn a canceled content-stream read into a zero-byte
+            // EOF. A request that was cancelled during transfer must surface as cancelled, not fall
+            // through to audio sniffing and quality-fallback errors.
+            cancellationToken.ThrowIfCancellationRequested();
             await output.FlushAsync(timeout.Token);
             return new(temporary, GetExtension(url, response.Content.Headers.ContentType));
         }
@@ -1308,6 +1393,54 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
                 "Download temporary file release failed ({TaskId}): {ErrorType}",
                 taskId,
                 exception.GetType().Name);
+        }
+    }
+
+    private sealed class DownloadOperation : IDisposable
+    {
+        private readonly CancellationTokenSource _cancellation = new();
+        private readonly TaskCompletionSource<object?> _resume = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private volatile bool _paused;
+        private bool _disposed;
+
+        public CancellationToken Token => _cancellation.Token;
+
+        public void Cancel()
+        {
+            if (_disposed) return;
+            _paused = false;
+            _resume.TrySetResult(null);
+            _cancellation.Cancel();
+        }
+
+        public bool Pause()
+        {
+            if (_disposed || _paused) return false;
+            _paused = true;
+            return true;
+        }
+
+        public bool Resume()
+        {
+            if (_disposed || !_paused) return false;
+            _paused = false;
+            _resume.TrySetResult(null);
+            return true;
+        }
+
+        public async Task WaitIfPausedAsync(CancellationToken cancellationToken)
+        {
+            if (!_paused) return;
+            using var registration = cancellationToken.Register(() => _resume.TrySetCanceled(cancellationToken));
+            await _resume.Task;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _resume.TrySetResult(null);
+            _cancellation.Dispose();
         }
     }
 

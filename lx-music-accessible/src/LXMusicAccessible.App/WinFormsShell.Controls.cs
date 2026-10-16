@@ -24,6 +24,7 @@ public sealed class WinFormsShellServices
     public SettingsWorkflow? Settings { get; init; }
     public ITtsService? Tts { get; init; }
     public IMusicSourceService? Sources { get; init; }
+    public IQualityProbeWorkflow? QualityProbe { get; init; }
     public IManualSourceDiscoveryWorkflow? ManualSources { get; init; }
     public ApplicationWindowFactory? Windows { get; init; }
     public DesktopLifecycleWorkflow? Desktop { get; init; }
@@ -77,6 +78,7 @@ public partial class WinFormsShell : Form
     protected Label StatusText;
     protected Label PlaybackInfoText;
     protected MenuItem VoiceAnnouncementItem;
+    private MenuItem? _playQualityMenu;
     protected MenuItem LyricAnnouncementItem;
     protected Label LiveRegion;
     protected Button CategorySongsLoadMore;
@@ -212,6 +214,15 @@ public partial class WinFormsShell : Form
         play.MenuItems.Add(new MenuItem("下一个播放设备(&X)", (_, _) => SwitchDevice(1), Shortcut.F12));
         play.MenuItems.Add(new MenuItem("切换播放模式(&M)", (_, _) => TogglePlayMode(), Shortcut.F1));
         play.MenuItems.Add(new MenuItem("下载当前歌曲(&W)", (_, _) => DownloadSelected(), Shortcut.F2));
+        _playQualityMenu = new MenuItem("当前歌曲音质(&Q)");
+        _playQualityMenu.Popup += async (_, _) => await RefreshQualitySubmenuAsync(
+            _playQualityMenu,
+            this,
+            _current,
+            "当前歌曲音质",
+            (song, quality) => PlayQualityAsync(song, quality, PlaybackQueueOrigin.Search),
+            "play-quality");
+        play.MenuItems.Add(_playQualityMenu);
         var navigate = new MenuItem("导航(&D)");
         navigate.MenuItems.Add(new MenuItem("搜索(&1)", (_, _) => SelectTab(0), Shortcut.Ctrl1));
         navigate.MenuItems.Add(new MenuItem("播放列表(&2)", (_, _) => SelectTab(1), Shortcut.Ctrl2));
@@ -340,11 +351,6 @@ public partial class WinFormsShell : Form
                 e.Handled = true;
                 _ = ActivateSong(SearchResults);
             }
-            else if (e.KeyCode == Keys.Space)
-            {
-                e.Handled = true;
-                TogglePlayback();
-            }
         };
         SearchLoadMore.Click += (_, _) => _ = SearchAsync(false);
         return page;
@@ -395,7 +401,7 @@ public partial class WinFormsShell : Form
         FavoriteSongs.DoubleClick += (_, _) => _ = ActivateSong(FavoriteSongs);
         SavedPlaylistLoadMore.Click += (_, _) => _ = LoadMoreSavedSongsAsync();
         FavoriteSongs.KeyDown += async (_, e) => { if (HandleSongListSelection(FavoriteSongs, e)) return;
-            if (await TryActivateLoadMore(FavoriteSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(FocusedItem<MusicInfo>(FavoriteSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(FavoriteSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(FavoriteSongs); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
+            if (await TryActivateLoadMore(FavoriteSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(FocusedItem<MusicInfo>(FavoriteSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(FavoriteSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(FavoriteSongs); } };
         return page;
     }
 
@@ -462,7 +468,7 @@ public partial class WinFormsShell : Form
         };
         CategorySongs.DoubleClick += (_, _) => _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category);
         CategorySongs.KeyDown += async (_, e) => { if (HandleSongListSelection(CategorySongs, e)) return;
-            if (await TryActivateLoadMore(CategorySongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(FocusedItem<MusicInfo>(CategorySongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(CategorySongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
+            if (await TryActivateLoadMore(CategorySongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(FocusedItem<MusicInfo>(CategorySongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(CategorySongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(CategorySongs, PlaybackQueueOrigin.Category); } };
         var playlistMenu = new ContextMenu();
         var favorite = new MenuItem("收藏整个歌单到在线收藏", (_, _) => FavoriteCategoryPlaylist());
         playlistMenu.MenuItems.Add(favorite);
@@ -531,7 +537,7 @@ public partial class WinFormsShell : Form
         };
         RankingSongs.DoubleClick += (_, _) => _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking);
         RankingSongs.KeyDown += async (_, e) => { if (HandleSongListSelection(RankingSongs, e)) return;
-            if (await TryActivateLoadMore(RankingSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(FocusedItem<MusicInfo>(RankingSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(RankingSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking); } else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); } };
+            if (await TryActivateLoadMore(RankingSongs, e)) return; if (e.Shift && e.KeyCode == Keys.Enter) { e.Handled = true; OpenLyrics(FocusedItem<MusicInfo>(RankingSongs)); return; } if (e.KeyCode == Keys.Back && HandleBrowseBack(RankingSongs)) return; if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(RankingSongs, PlaybackQueueOrigin.Ranking); } };
         var rankingMenu = new ContextMenu();
         rankingMenu.MenuItems.Add(new MenuItem("收藏整个榜单到在线收藏", (_, _) => FavoriteRanking()));
         RankingList.ContextMenu = rankingMenu;
@@ -595,6 +601,17 @@ public partial class WinFormsShell : Form
     }
 
     /// <summary>Translates the source-level quality number carried by MusicInfo.</summary>
+    protected static string TranslateSource(string? sourceId) => sourceId?.Trim().ToLowerInvariant() switch
+    {
+        "netease" or "wy" => "网易云",
+        "qq" or "tx" => "QQ音乐",
+        "kg" => "酷狗",
+        "kw" => "酷我",
+        "migu" or "mg" => "咪咕",
+        "local" => "本地",
+        var id => string.IsNullOrWhiteSpace(id) ? "未知" : sourceId!.Trim()
+    };
+
     protected static string TranslateQualityLevel(int quality) => quality switch
     {
         >= 999 => "无损",

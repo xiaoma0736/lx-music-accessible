@@ -281,21 +281,28 @@ public sealed class SourceModuleAuditTests
         public List<string> UrlImports { get; } = new();
         public List<string> FileImports { get; } = new();
         public MusicSource? Imported { get; set; }
+        public MusicSourceImportStatus DetailedStatus { get; set; } = MusicSourceImportStatus.Imported;
 
-        public Task<MusicSource?> ImportFromUrlAsync(string url, CancellationToken cancellationToken = default)
+        public async Task<MusicSource?> ImportFromUrlAsync(string url, CancellationToken cancellationToken = default) =>
+            (await ImportFromUrlDetailedAsync(url, cancellationToken))?.Source;
+
+        public Task<MusicSourceImportResult?> ImportFromUrlDetailedAsync(string url, CancellationToken cancellationToken = default)
         {
             UrlImports.Add(url);
-            if (Imported is null) return Task.FromResult<MusicSource?>(null);
-            _sources.Add(Imported);
-            return Task.FromResult<MusicSource?>(Imported);
+            if (Imported is null) return Task.FromResult<MusicSourceImportResult?>(null);
+            if (!_sources.Any(source => source.Id == Imported.Id)) _sources.Add(Imported);
+            return Task.FromResult<MusicSourceImportResult?>(new(Imported, DetailedStatus));
         }
 
-        public Task<MusicSource?> ImportFromFileAsync(string filePath, CancellationToken cancellationToken = default)
+        public async Task<MusicSource?> ImportFromFileAsync(string filePath, CancellationToken cancellationToken = default) =>
+            (await ImportFromFileDetailedAsync(filePath, cancellationToken))?.Source;
+
+        public Task<MusicSourceImportResult?> ImportFromFileDetailedAsync(string filePath, CancellationToken cancellationToken = default)
         {
             FileImports.Add(filePath);
-            if (Imported is null) return Task.FromResult<MusicSource?>(null);
-            _sources.Add(Imported);
-            return Task.FromResult<MusicSource?>(Imported);
+            if (Imported is null) return Task.FromResult<MusicSourceImportResult?>(null);
+            if (!_sources.Any(source => source.Id == Imported.Id)) _sources.Add(Imported);
+            return Task.FromResult<MusicSourceImportResult?>(new(Imported, DetailedStatus));
         }
 
         public List<MusicSource> GetAllSources() => _sources.ToList();

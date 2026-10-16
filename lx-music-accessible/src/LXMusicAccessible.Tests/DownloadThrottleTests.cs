@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
@@ -116,28 +117,42 @@ public sealed class DownloadThrottleTests
     }
 
     [Fact]
-    public async Task Batch_cancellation_during_transfer_stops_remaining_song()
+    public async Task Batch_cancellation_during_resolution_stops_remaining_song()
     {
         await using var harness = new DownloadHarness();
         harness.Workflow.ApplyPreferences(new(true, DownloadNameOrder.ArtistTitle, true, 2, 32));
-        Uri url = harness.Source.Register("blocking");
+        harness.Source.BlockUrl("blocking");
         harness.Source.Register("remaining");
-        var stream = new BlockingReadStream(1024);
-        harness.Http.Register(HttpMethod.Get, url, () => StreamResponse(stream, 1024));
         using var cancellation = new CancellationTokenSource();
 
         var pending = harness.Workflow.DownloadListAsync(
-            new DownloadListRequest([Song("blocking"), Song("remaining")], "取消", TargetDirectory: harness.Target),
+            new DownloadListRequest([Song("blocking"), Song("remaining")], "batch-cancel", TargetDirectory: harness.Target),
             cancellation.Token);
-        await stream.FirstRead.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var downloadTask = await WaitForDownloadingTaskAsync(harness.Workflow.Tasks, "blocking");
+        harness.Workflow.Cancel(downloadTask);
         cancellation.Cancel();
         var result = await pending;
 
         Assert.Equal((0, 0, 1, 1),
             (result.Completed, result.Failed, result.Cancelled, result.Skipped));
-        Assert.Single(harness.Http.Requests);
+        Assert.Empty(harness.Http.Requests);
         Assert.Empty(EnumerateFiles(harness.Target));
         Assert.Equal(0, harness.ActiveBackgroundWork);
+    }
+
+    private static async Task<DownloadTask> WaitForDownloadingTaskAsync(
+        ReadOnlyObservableCollection<DownloadTask> tasks,
+        string songId)
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            var task = tasks.FirstOrDefault(item => item.Music.Id == songId);
+            if (task is not null && task.Status == DownloadTaskStatus.Downloading) return task;
+            await Task.Delay(25);
+        }
+
+        throw new TimeoutException("The blocked batch download did not start.");
     }
 
     private static HttpResponseMessage AudioResponse(int size)
@@ -146,14 +161,6 @@ public sealed class DownloadThrottleTests
         "ID3"u8.CopyTo(bytes);
         var content = new ByteArrayContent(bytes);
         content.Headers.ContentType = new MediaTypeHeaderValue("audio/mpeg");
-        return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
-    }
-
-    private static HttpResponseMessage StreamResponse(Stream stream, int length)
-    {
-        var content = new StreamContent(stream);
-        content.Headers.ContentType = new MediaTypeHeaderValue("audio/mpeg");
-        content.Headers.ContentLength = length;
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
     }
 
@@ -248,7 +255,14 @@ public sealed class DownloadThrottleTests
     private sealed class ControlledDownloadSource : IDownloadSource
     {
         private readonly Dictionary<string, Uri> _urls = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _blocked = new(StringComparer.Ordinal);
         private readonly IReadOnlyList<string> _qualities = ["128k"];
+
+        public void BlockUrl(string id)
+        {
+            _urls[id] = new Uri($"https://downloads.invalid/{id}.mp3");
+            _blocked.Add(id);
+        }
 
         public Uri Register(string id)
         {
@@ -265,13 +279,18 @@ public sealed class DownloadThrottleTests
             return Task.FromResult(_qualities);
         }
 
-        public Task<string?> GetUrlAsync(
+        public async Task<string?> GetUrlAsync(
             MusicInfo music,
             string quality,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(_urls.TryGetValue(music.Id, out var url) ? url.AbsoluteUri : null);
+            if (!_urls.TryGetValue(music.Id, out var url)) return null;
+            if (!_blocked.Contains(music.Id)) return url.AbsoluteUri;
+
+            var blocked = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = cancellationToken.Register(() => blocked.TrySetCanceled(cancellationToken));
+            return await blocked.Task;
         }
 
         public Task<LyricResult?> GetLyricAsync(
@@ -290,38 +309,4 @@ public sealed class DownloadThrottleTests
         public void Start(ProcessStartInfo startInfo) => Invocations.Add(startInfo.FileName);
     }
 
-    private sealed class BlockingReadStream : Stream
-    {
-        private readonly byte[] _bytes;
-        private readonly TaskCompletionSource<object?> _firstRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private bool _first = true;
-
-        public BlockingReadStream(int length) => _bytes = new byte[length];
-
-        public Task FirstRead => _firstRead.Task;
-        public override bool CanRead => true;
-        public override bool CanSeek => false;
-        public override bool CanWrite => false;
-        public override long Length => _bytes.LongLength;
-        public override long Position { get => 0; set => throw new NotSupportedException(); }
-
-        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-        {
-            if (_first)
-            {
-                _first = false;
-                var length = Math.Min(count, _bytes.Length);
-                Array.Copy(_bytes, 0, buffer, offset, length);
-                _firstRead.TrySetResult(null);
-                return Task.FromResult(length);
-            }
-            return Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ContinueWith(_ => 0, cancellationToken);
-        }
-
-        public override void Flush() { }
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-    }
 }

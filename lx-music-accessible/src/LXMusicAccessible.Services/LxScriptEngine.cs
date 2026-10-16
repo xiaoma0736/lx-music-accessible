@@ -304,6 +304,7 @@ public class LxScriptEngine
     private static void ConfigureV8Inputs(
         V8ScriptEngine engine, LxScriptInfo script, string? action, MusicInfo music, string lxSource, string? quality)
     {
+        engine.Script.__lxLoadMode = action == null;
         engine.Script.__scriptInfo = BuildScriptInfoJson(script);
         engine.Script.__mi = action == null ? "{}" : BuildMusicInfoJson(music, lxSource);
         engine.Script.__src = lxSource;
@@ -318,6 +319,7 @@ public class LxScriptEngine
             throw new LxScriptActionException("脚本内容为空");
 
         using var engine = CreateEngine(cancellationToken);
+        engine.SetValue("__lxLoadMode", true);
         engine.Execute(ShimJs);
         engine.Execute(rawScript);
 
@@ -333,6 +335,7 @@ public class LxScriptEngine
     {
         var lxSource = ToLxSource(source);
         using var engine = CreateEngine(cancellationToken);
+        engine.SetValue("__lxLoadMode", false);
         engine.SetValue("__scriptInfo", BuildScriptInfoJson(script));
         engine.SetValue("__mi", BuildMusicInfoJson(music, lxSource));
         engine.SetValue("__src", lxSource);
@@ -365,9 +368,13 @@ public class LxScriptEngine
         {
             using var document = JsonDocument.Parse(initedJson);
             if (document.RootElement.ValueKind != JsonValueKind.Object
+                || (document.RootElement.TryGetProperty("status", out var status)
+                    && status.ValueKind == JsonValueKind.False)
                 || !document.RootElement.TryGetProperty("sources", out var sources)
                 || sources.ValueKind != JsonValueKind.Object)
-                return;
+            {
+                throw new LxScriptActionException("script initialization failed");
+            }
 
             foreach (var declaredSource in sources.EnumerateObject())
             {
@@ -1575,6 +1582,12 @@ public class LxScriptEngine
       });
     },
     request: function (url, options, callback) {
+      if (globalThis.__lxLoadMode === true) {
+        // Top-level update/IP requests are not needed to validate a handler and inited manifest.
+        // The synchronous native bridge would otherwise block first launch on optional network calls.
+        if (callback) callback(new Error('network requests are unavailable during source validation'), null, null);
+        return function () {};
+      }
       var opt = options || {};
       var cancelled = false;
       var reqBody = opt.body;
@@ -1634,6 +1647,9 @@ public class LxScriptEngine
 
   // ===================== global fetch =====================
   globalThis.fetch = function (url, options) {
+    if (globalThis.__lxLoadMode === true) {
+      return Promise.reject(new Error('network requests are unavailable during source validation'));
+    }
     return new Promise(function (resolve, reject) {
       var opt = options || {};
       var body = opt.body;
@@ -1675,6 +1691,9 @@ public class LxScriptEngine
     var module = { exports: {} };
     function req(n) { return globalThis.require(n); }
     function httpFetch(url, options) {
+      if (globalThis.__lxLoadMode === true) {
+        return Promise.reject(new Error('network requests are unavailable during source validation'));
+      }
       return new Promise(function (resolve, reject) {
         var opt = options || {};
         var body = opt.body;

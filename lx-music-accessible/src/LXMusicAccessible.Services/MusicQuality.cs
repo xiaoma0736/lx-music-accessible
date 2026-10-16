@@ -23,15 +23,5 @@ internal static class MusicQuality
         return Rank(requested) >= 4 && Rank(actual) >= 4;
     }
 
-    internal static int Rank(string? quality) => quality?.Trim().ToLowerInvariant() switch
-    {
-        "128k" or "mp3" or "aac" or "ogg" or "m4a" or "wma" => 1,
-        "192k" => 2,
-        "320k" => 3,
-        "flac" or "无损" or "ape" or "alac" or "wav" or "opus" => 4,
-        "flac24bit" => 5,
-        "hires" => 6,
-        "atmos" or "atmos_plus" or "master" or "jyeffect" or "sky" or "dolby" or "jymaster" => 4,
-        _ => 0
-    };
+    internal static int Rank(string? quality) => QualityCatalog.Rank(quality);
 }

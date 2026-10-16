@@ -34,12 +34,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="DownloadWorkflowTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="Win32GlobalHotkeyAdapterTests.cs" />
     <Compile Remove="AppDataOwnershipTests.cs" />
-    <Compile Remove="DownloadWorkflowTests.cs" />
     <Compile Remove="LyricsWorkflowTests.cs" />
     <Compile Remove="MusicPlayerBackgroundTests.cs" />
     <Compile Remove="BackgroundWorkHostTests.cs" />

@@ -18,16 +18,22 @@ public class SourceManagerForm : Form
     private readonly IAccessibleAnnouncer _announcer;
     private readonly IMusicSourceService _sources;
     private readonly Func<KeyEventArgs, bool> _handleHotkey;
+    private readonly Func<string, bool> _confirmDelete;
     private readonly ListBox _list = WinFormsUi.ListBox("音源", 1);
     private readonly Label _empty = new() { Text = "暂无自定义音源。", AutoSize = true, Name = "SourceListStatus", TabStop = false };
     private string _sourceSignature = string.Empty;
     private volatile bool _sourcesChangingByThisWindow;
 
-    public SourceManagerForm(IAccessibleAnnouncer announcer, IMusicSourceService sources, Func<KeyEventArgs, bool> handleHotkey)
+    public SourceManagerForm(
+        IAccessibleAnnouncer announcer,
+        IMusicSourceService sources,
+        Func<KeyEventArgs, bool> handleHotkey,
+        Func<string, bool>? confirmDelete = null)
     {
         _announcer = announcer;
         _sources = sources;
         _handleHotkey = handleHotkey;
+        _confirmDelete = confirmDelete ?? (message => WinFormsUi.Confirm(this, message));
         Text = "音源管理";
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(760, 580);
@@ -52,16 +58,66 @@ public class SourceManagerForm : Form
         menu.MenuItems.Add(new MenuItem("检查更新", async (_, _) => await UpdateAsync()));
         menu.MenuItems.Add(new MenuItem("删除", (_, _) => Delete()));
         _list.ContextMenu = menu;
-        _list.KeyDown += (_, e) => { if (e.KeyCode is Keys.Enter or Keys.Space) { e.Handled = true; menu.Show(_list, new Point(10, 10)); } };
-        _sources.SourcesChanged += (_, _) =>
+        _list.KeyDown += async (_, e) => await HandleSourceListKeyAsync(e, menu);
+        _sources.SourcesChanged += OnSourcesChanged;
+        _sources.ScriptUpdateAlert += OnScriptUpdateAlert;
+        Disposed += (_, _) =>
         {
-            // The service raises the event while a command of this window is still on the stack, so the
-            // marker has to be read here; the refresh itself only runs later on the message loop.
-            var alreadyAnnounced = _sourcesChangingByThisWindow;
-            BeginInvoke(() => RefreshSourcesAfterExternalChange(alreadyAnnounced));
+            _sources.SourcesChanged -= OnSourcesChanged;
+            _sources.ScriptUpdateAlert -= OnScriptUpdateAlert;
         };
         RefreshSources();
         Shown += (_, _) => _list.Focus();
+    }
+
+    internal async Task<bool> HandleSourceListKeyAsync(KeyEventArgs e, ContextMenu? menu = null, bool requireConfirmation = true)
+    {
+        if (e.KeyCode is Keys.Enter or Keys.Space)
+        {
+            e.Handled = true;
+            menu?.Show(_list, new Point(10, 10));
+            return true;
+        }
+
+        if (e.KeyCode == Keys.Delete && Selected() is not null)
+        {
+            e.Handled = true;
+            await DeleteAsync(requireConfirmation);
+            return true;
+        }
+
+        return false;
+    }
+
+    private void OnScriptUpdateAlert(object? sender, LxScriptUpdateAlertEventArgs e)
+    {
+        // lx.send(updateAlert) is part of the upstream source contract. Announcing it keeps the message
+        // perceivable without stealing keyboard focus from playback or source-management tasks.
+        var updateUrl = string.IsNullOrWhiteSpace(e.UpdateUrl) ? "" : $"，更新地址：{e.UpdateUrl}";
+        Announce($"音源更新：{e.Log}{updateUrl}", "source-update-alert");
+    }
+
+    private void OnSourcesChanged(object? sender, EventArgs e)
+    {
+        // The real service raises this from background work. An import can still be running after the
+        // source manager is closed, and subscriptions can fire before its handle exists; posting to a
+        // missing control handle must not turn a successful import into an InvalidOperationException.
+        var alreadyAnnounced = _sourcesChangingByThisWindow;
+        BeginOnUiThread(() => RefreshSourcesAfterExternalChange(alreadyAnnounced));
+    }
+
+    private void BeginOnUiThread(Action action)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        try { BeginInvoke(action); }
+        catch (ObjectDisposedException)
+        {
+            // The manager was closed while background source work was completing.
+        }
+        catch (InvalidOperationException)
+        {
+            // A handle-creation or close race removed the target before the refresh could post.
+        }
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -119,17 +175,34 @@ public class SourceManagerForm : Form
             var isHttpLocation = Uri.TryCreate(label, UriKind.Absolute, out var location)
                 && (string.Equals(location.Scheme, "http", StringComparison.Ordinal)
                     || string.Equals(location.Scheme, "https", StringComparison.Ordinal));
-            var source = await InSourceCommand(() => isHttpLocation
-                ? _sources.ImportFromUrlAsync(label)
-                : _sources.ImportFromFileAsync(label));
-            if (source is null)
+            var result = await InSourceCommand(() => isHttpLocation
+                ? _sources.ImportFromUrlDetailedAsync(label)
+                : _sources.ImportFromFileDetailedAsync(label));
+            if (result is null)
             {
                 Announce("导入音源失败，请检查脚本格式。", "source-import", AnnouncementKind.Error);
                 return;
             }
 
             RefreshSources();
-            Announce($"已导入并设为默认音源：{source.Name}", "source-import", AnnouncementKind.Success);
+            if (result.Status == MusicSourceImportStatus.VersionConflict)
+            {
+                Announce(
+                    $"导入音源失败：已存在相同或更高版本的 {result.Source.Name}，保留当前音源。",
+                    "source-import",
+                    AnnouncementKind.Error);
+                return;
+            }
+
+            var verb = result.Status switch
+            {
+                MusicSourceImportStatus.Merged when result.Source.IsDefault => "已合并并设为默认音源",
+                MusicSourceImportStatus.Merged => "已合并音源",
+                MusicSourceImportStatus.Replaced when result.Source.IsDefault => "已用高版本替换并设为默认音源",
+                MusicSourceImportStatus.Replaced => "已用高版本替换音源",
+                _ => "已导入并设为默认音源"
+            };
+            Announce($"{verb}：{result.Source.Name}", "source-import", AnnouncementKind.Success);
         }
         catch (Exception ex) { WinFormsUi.Error(this, ex, "导入音源"); }
     }
@@ -186,10 +259,13 @@ public class SourceManagerForm : Form
         Announce(ok ? $"音源更新成功：{source.Name}" : $"音源更新失败：{source.Name}", "source-update", ok ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
-    private async void Delete()
+    private async void Delete() => await DeleteAsync();
+
+    private async Task DeleteAsync(bool requireConfirmation = true)
     {
         var source = Selected();
-        if (source is null || !WinFormsUi.Confirm(this, $"确定要删除音源“{source.Name}”吗？")) return;
+        if (source is null) return;
+        if (requireConfirmation && !_confirmDelete($"确定要删除音源“{source.Name}”吗？")) return;
         if (!await InSourceCommand(() => _sources.RemoveSourceAsync(source)))
         {
             Announce($"删除音源保存失败：{source.Name}", "source-delete", AnnouncementKind.Error);
@@ -231,6 +307,12 @@ public class SourceManagerForm : Form
     }
 }
 
+internal enum DownloadWorkflowCommand
+{
+    Pause,
+    Resume
+}
+
 /// <summary>Download manager backed by the existing DownloadWorkflow observable collection.</summary>
 public class DownloadManagerForm : Form
 {
@@ -241,13 +323,23 @@ public class DownloadManagerForm : Form
     private readonly Label _empty = new() { Text = "暂无下载任务。", AutoSize = true, Name = "DownloadListStatus", TabStop = false };
     private readonly Button _cancel;
     private readonly Button _retry;
+    private readonly Button _pause;
+    private readonly Button _resume;
+    private readonly Button _delete;
     private readonly Button _clearCompleted;
+    private readonly ComboBox _filter = new ComboBox { Name = "DownloadTaskFilter", AccessibleName = "下载任务分类", DropDownStyle = ComboBoxStyle.DropDownList, TabIndex = 2 };
+    private readonly Func<string, bool> _confirmDelete;
 
-    public DownloadManagerForm(IAccessibleAnnouncer announcer, IDownloadWorkflow downloads, Func<KeyEventArgs, bool>? handleHotkey = null)
+    public DownloadManagerForm(
+        IAccessibleAnnouncer announcer,
+        IDownloadWorkflow downloads,
+        Func<KeyEventArgs, bool>? handleHotkey = null,
+        Func<string, bool>? confirmDelete = null)
     {
         _announcer = announcer;
         _downloads = downloads;
         _handleHotkey = handleHotkey;
+        _confirmDelete = confirmDelete ?? (message => WinFormsUi.Confirm(this, message));
         Text = "下载管理";
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(900, 580);
@@ -257,21 +349,32 @@ public class DownloadManagerForm : Form
         _tasks.Columns.Add("进度", 100);
         _tasks.Columns.Add("文件", 300);
         _tasks.ItemSelectionChanged += (_, _) => UpdateButtonState();
-        _cancel = CreateButton("取消", 2, (_, _) => Cancel());
-        _retry = CreateButton("重试", 3, (_, _) => _ = Retry());
-        var open = CreateButton("打开文件夹", 4, (_, _) => _downloads.OpenDownloadDirectory());
-        _clearCompleted = CreateButton("清除已完成", 5, (_, _) => ClearCompleted());
-        _cancel.SetBounds(12, 12, 90, 28);
-        _retry.SetBounds(110, 12, 90, 28);
-        open.SetBounds(208, 12, 105, 28);
-        _clearCompleted.SetBounds(321, 12, 105, 28);
+        _cancel = CreateButton("取消", 3, (_, _) => Cancel());
+        _pause = CreateButton("暂停", 4, (_, _) => ChangeState(DownloadWorkflowCommand.Pause));
+        _resume = CreateButton("继续", 5, (_, _) => ChangeState(DownloadWorkflowCommand.Resume));
+        _retry = CreateButton("重试", 6, (_, _) => _ = Retry());
+        _delete = CreateButton("删除", 7, (_, _) => Delete());
+        var open = CreateButton("打开文件夹", 8, (_, _) => _downloads.OpenDownloadDirectory());
+        _clearCompleted = CreateButton("清除已完成", 9, (_, _) => ClearCompleted());
+        _filter.Items.AddRange(new object[] { "全部", "下载中", "已完成", "失败/取消" });
+        _filter.SelectedIndex = 0;
+        _filter.SelectedIndexChanged += (_, _) => Reload();
+        _cancel.SetBounds(140, 12, 80, 28);
+        _pause.SetBounds(228, 12, 80, 28);
+        _resume.SetBounds(316, 12, 80, 28);
+        _retry.SetBounds(404, 12, 80, 28);
+        _delete.SetBounds(492, 12, 80, 28);
+        open.SetBounds(580, 12, 105, 28);
+        _clearCompleted.SetBounds(693, 12, 105, 28);
         _tasks.SetBounds(12, 48, 860, 440);
         _empty.SetBounds(20, 56, 300, 22);
-        Controls.AddRange(new Control[] { _cancel, _retry, open, _clearCompleted, _tasks, _empty });
+        Controls.AddRange(new Control[] { _filter, _cancel, _pause, _resume, _retry, _delete, open, _clearCompleted, _tasks, _empty });
         // Same as in the source manager: the empty-state label must not be hidden behind the task list.
         _empty.BringToFront();
         Reload();
         ((INotifyCollectionChanged)_downloads.Tasks).CollectionChanged += (_, _) => BeginInvoke(Reload);
+        foreach (var task in _downloads.Tasks)
+            task.PropertyChanged += TaskPropertyChanged;
         Shown += (_, _) => _tasks.Focus();
     }
 
@@ -288,7 +391,8 @@ public class DownloadManagerForm : Form
         var listHadFocus = _tasks.Focused;
         _tasks.BeginUpdate();
         _tasks.Items.Clear();
-        foreach (var task in _downloads.Tasks)
+        var category = _filter.SelectedItem?.ToString() ?? "全部";
+        foreach (var task in _downloads.Tasks.Where(task => MatchesCategory(task, category)))
         {
             var item = new ListViewItem(task.DisplayName) { Tag = task };
             item.SubItems.Add(task.StatusText);
@@ -313,13 +417,15 @@ public class DownloadManagerForm : Form
     private void UpdateButtonState()
     {
         var selected = Selected();
-        bool downloading = selected.Any(task => task.Status is DownloadTaskStatus.Pending or DownloadTaskStatus.Downloading);
+        bool downloading = selected.Any(task => task.Status is DownloadTaskStatus.Pending or DownloadTaskStatus.Downloading or DownloadTaskStatus.Paused);
         bool retryable = selected.Any(task => task.Status is DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled);
         var focused = ActiveControl;
         // Each task command keeps its own reference. Matching buttons by their caption stopped enabling or
         // disabling a command as soon as its text was reworded, and a command that can never enable is
         // unreachable for a user who cannot see that it is greyed out.
         _cancel.Enabled = downloading;
+        _pause.Enabled = selected.Any(task => task.Status == DownloadTaskStatus.Downloading);
+        _resume.Enabled = selected.Any(task => task.Status == DownloadTaskStatus.Paused);
         _retry.Enabled = retryable;
         _clearCompleted.Enabled = _downloads.Tasks.Any(task => task.Status == DownloadTaskStatus.Completed);
 
@@ -332,8 +438,78 @@ public class DownloadManagerForm : Form
     private void Cancel()
     {
         foreach (var task in Selected()) _downloads.Cancel(task);
-        Announce("已请求取消所选下载", "download-manager");
+        Announce("已请求取消所选任务", "download-manager");
         Reload();
+    }
+
+    private void ChangeState(DownloadWorkflowCommand command)
+    {
+        foreach (var task in Selected())
+        {
+            if (command == DownloadWorkflowCommand.Pause) _downloads.Pause(task);
+            else if (command == DownloadWorkflowCommand.Resume) _downloads.Resume(task);
+        }
+
+        Announce(command == DownloadWorkflowCommand.Pause ? "已请求暂停所选任务" : "已请求继续所选任务", "download-manager");
+        Reload();
+    }
+
+    private void Delete()
+    {
+        var tasks = Selected();
+        if (tasks.Count == 0) return;
+        if (!_confirmDelete(tasks.Count == 1
+            ? "确定删除所选下载任务，并删除已下载源文件吗？"
+            : $"确定删除 {tasks.Count} 个下载任务，并删除已下载源文件吗？")) return;
+
+        foreach (var task in tasks)
+        {
+            if (!_downloads.Delete(task, deleteSourceFile: true))
+                Announce($"任务仍无法删除：{task.DisplayName}", "download-manager-delete", AnnouncementKind.Error);
+        }
+
+        Announce("已删除所选任务", "download-manager-delete", AnnouncementKind.Success);
+        Reload();
+    }
+
+    private ContextMenu BuildTaskMenu()
+    {
+        var menu = new ContextMenu();
+        var pauseItem = new MenuItem("暂停", (_, _) => ChangeState(DownloadWorkflowCommand.Pause));
+        var resumeItem = new MenuItem("继续", (_, _) => ChangeState(DownloadWorkflowCommand.Resume));
+        var cancelItem = new MenuItem("取消", (_, _) => Cancel());
+        var retryItem = new MenuItem("重试", (_, _) => _ = Retry());
+        menu.MenuItems.Add(pauseItem);
+        menu.MenuItems.Add(resumeItem);
+        menu.MenuItems.Add(cancelItem);
+        menu.MenuItems.Add(retryItem);
+        menu.MenuItems.Add(new MenuItem("删除（包含源文件）", (_, _) => Delete()));
+        menu.Popup += (_, _) =>
+        {
+            var selected = Selected();
+            pauseItem.Enabled = selected.Any(task => task.Status == DownloadTaskStatus.Downloading);
+            resumeItem.Enabled = selected.Any(task => task.Status == DownloadTaskStatus.Paused);
+            cancelItem.Enabled = selected.Any(task => task.Status is DownloadTaskStatus.Pending or DownloadTaskStatus.Downloading or DownloadTaskStatus.Paused);
+            retryItem.Enabled = selected.Any(task => task.Status is DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled);
+            UpdateButtonState();
+        };
+        return menu;
+    }
+
+    private static bool MatchesCategory(DownloadTask task, string category) => category switch
+    {
+        "下载中" => task.Status is DownloadTaskStatus.Pending or DownloadTaskStatus.Downloading or DownloadTaskStatus.Paused,
+        "已完成" => task.Status == DownloadTaskStatus.Completed,
+        "失败/取消" => task.Status is DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled,
+        _ => true
+    };
+
+    private void TaskPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(DownloadTask.Status)
+            or nameof(DownloadTask.ProgressText)
+            or nameof(DownloadTask.AccessibleName))
+            BeginInvoke(Reload);
     }
 
     private async Task Retry()

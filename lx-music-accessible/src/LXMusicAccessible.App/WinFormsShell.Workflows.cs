@@ -956,7 +956,7 @@ public partial class WinFormsShell
         if (e.Control && e.KeyCode == Keys.Space)
         {
             var focused = ListCaretIndex(list);
-            if (focused >= 0 && focused < list.Items.Count)
+            if (IsSongIndex(list, focused))
             {
                 list.SetSelected(focused, !list.GetSelected(focused));
                 e.Handled = true;
@@ -965,7 +965,10 @@ public partial class WinFormsShell
         }
         if (e.Control && e.KeyCode == Keys.A)
         {
-            for (var index = 0; index < list.Items.Count; index++) list.SetSelected(index, true);
+            for (var index = 0; index < list.Items.Count; index++)
+            {
+                if (IsSongIndex(list, index)) list.SetSelected(index, true);
+            }
             e.Handled = true;
             return true;
         }
@@ -975,12 +978,50 @@ public partial class WinFormsShell
             if (list.Items.Count > 0 && next >= 0 && next < list.Items.Count)
             {
                 SetListCaretIndex(list, next);
+                _selectionAnchors[list] = next;
             }
             e.Handled = true;
             return true;
         }
+        if (e.Shift && !e.Control && !e.Alt && e.KeyCode is Keys.Up or Keys.Down)
+        {
+            var current = ListCaretIndex(list);
+            var anchor = _selectionAnchors.TryGetValue(list, out var stored)
+                ? stored
+                : Math.Max(0, current);
+            var next = current + (e.KeyCode == Keys.Down ? 1 : -1);
+            if (next >= 0 && next < list.Items.Count)
+            {
+                SetListCaretIndex(list, next);
+                var first = Math.Min(anchor, next);
+                var last = Math.Max(anchor, next);
+                for (var index = first; index <= last; index++)
+                {
+                    if (IsSongIndex(list, index)) list.SetSelected(index, true);
+                }
+            }
+            e.Handled = true;
+            return true;
+        }
+        if (e.KeyCode == Keys.Space)
+        {
+            // Native MultiSimple ListBox toggles the focused item on Space. The app reserves Space for
+            // explicit Ctrl+Space selection, so the unmodified key must never reach that default path.
+            e.Handled = true;
+            _selectionAnchors.Remove(list);
+            return true;
+        }
+        if (e.KeyCode is Keys.Enter or Keys.Home or Keys.End)
+        {
+            _selectionAnchors.Remove(list);
+        }
         return false;
     }
+
+    private static bool IsSongIndex(ListBox list, int index) =>
+        index >= 0 && index < list.Items.Count && list.Items[index] is ObjectBox<MusicInfo>;
+
+    private readonly Dictionary<ListBox, int> _selectionAnchors = new();
 
     private async void DownloadBatch(ListBox list)
     {
@@ -1018,6 +1059,40 @@ public partial class WinFormsShell
         menu.MenuItems.Add(new MenuItem("查看详情", (_, _) => ShowSongDetails(list)));
         menu.MenuItems.Add(new MenuItem("收藏歌曲", (_, _) => _ = AddFavorites(WinFormsUi.Songs(list))));
         menu.MenuItems.Add(new MenuItem("下载当前歌曲", (_, _) => DownloadList(WinFormsUi.Songs(list))));
+        var qualityDownload = new MenuItem("下载单曲");
+        qualityDownload.Popup += async (_, _) =>
+        {
+            var focused = FocusedItem<MusicInfo>(list);
+            await RefreshQualitySubmenuAsync(
+                qualityDownload,
+                list,
+                focused,
+                "下载单曲",
+                async (song, quality) => await DownloadQualityAsync(song, quality),
+                "download-quality:" + focused?.Id);
+        };
+        menu.MenuItems.Add(qualityDownload);
+        var playQuality = new MenuItem("播放音质");
+        playQuality.Popup += async (_, _) =>
+        {
+            var focused = FocusedItem<MusicInfo>(list);
+            await RefreshQualitySubmenuAsync(
+                playQuality,
+                list,
+                focused,
+                "播放音质",
+                async (song, quality) => await PlayQualityAsync(song, quality, OriginForList(list)),
+                "context-play-quality:" + focused?.Id);
+        };
+        menu.MenuItems.Add(playQuality);
+        var albumDownload = new MenuItem("下载整张专辑");
+        albumDownload.Popup += (_, _) =>
+        {
+            var focusedAlbum = FocusedItem<MusicInfo>(list);
+            albumDownload.Enabled = focusedAlbum is not null && focusedAlbum.IsAlbum && _openAlbum?.Id == focusedAlbum.Id && !_albumDownloadLoading;
+        };
+        albumDownload.Click += async (_, _) => await DownloadAlbumAsync();
+        menu.MenuItems.Add(albumDownload);
         var batchDownload = new MenuItem("批量下载选中歌曲(0)", (_, _) => DownloadBatch(list));
         menu.Popup += (_, _) =>
         {
@@ -1055,12 +1130,13 @@ public partial class WinFormsShell
         // back from the source-advertised quality, so surface the actually detected media quality separately.
         var actual = _services.Audio?.ActualQuality;
         if (!string.IsNullOrWhiteSpace(actual)
-            && string.Equals(_current?.Id, song.Id, StringComparison.Ordinal))
+            && string.Equals(_current?.Id, song.Id, StringComparison.Ordinal)
+            && string.Equals(_current?.Source, song.Source, StringComparison.OrdinalIgnoreCase))
         {
             lines.Add($"当前播放音质：{TranslateQuality(actual)}");
         }
 
-        lines.Add($"音源：{song.Source}");
+        lines.Add($"音源：{TranslateSource(song.Source)}");
         return lines.ToArray();
     }
 
@@ -1071,12 +1147,196 @@ public partial class WinFormsShell
         Announce(result.Message, "favorite", result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
-    private async void DownloadList(IReadOnlyList<MusicInfo> songs)
+    private async void DownloadList(IReadOnlyList<MusicInfo> songs, string? subdirectory = null)
     {
         if (_services.Downloads is null || songs.Count == 0) return;
         var quality = _services.Settings?.Current.Settings.DefaultDownloadQuality ?? "128k";
-        var result = await _services.Downloads.DownloadListAsync(new DownloadListRequest(songs, MainTabs.SelectedTab?.Text ?? "歌曲", quality));
+        var result = await _services.Downloads.DownloadListAsync(new DownloadListRequest(
+            songs,
+            MainTabs.SelectedTab?.Text ?? "歌曲",
+            quality,
+            Subdirectory: subdirectory));
         Announce(result.Message, "download-list:" + result.Requested, AnnouncementKind.Success);
+    }
+
+    private bool _albumDownloadLoading;
+
+    private async Task DownloadAlbumAsync()
+    {
+        var album = _openAlbum;
+        if (album is null || _services.Downloads is null || _albumDownloadLoading || _searchLoading)
+        {
+            if (_searchLoading)
+                Announce("专辑仍在加载，请稍后整张下载", "album-download", AnnouncementKind.Busy);
+            return;
+        }
+        _albumDownloadLoading = true;
+        _searchLoading = true;
+        try
+        {
+            var snapshot = _browse.CurrentAlbumPage;
+            if (snapshot is null || snapshot.Album.Id != album.Id)
+            {
+                Announce("专辑歌曲尚未加载，无法整张下载", "album-download", AnnouncementKind.Error);
+                return;
+            }
+
+            var songs = snapshot.Items.ToList();
+            var hasMore = HasMore(false, 0, snapshot.TotalItems, songs.Count);
+            while (hasMore)
+            {
+                var result = await _browse.ActivateAlbumAsync(album, snapshot.Page + 1, append: true);
+                if (!result.Succeeded || result.Value is null)
+                {
+                    Announce($"整张专辑下载失败：{result.Message}", "album-download", AnnouncementKind.Error);
+                    return;
+                }
+
+                snapshot = _browse.CurrentAlbumPage;
+                if (snapshot is null) break;
+                songs = snapshot.Items.ToList();
+                hasMore = HasMore(result.Value.HasMore, result.Value.Items.Count, snapshot.TotalItems, songs.Count);
+            }
+
+            if (songs.Count == 0)
+            {
+                Announce("专辑中没有可下载歌曲", "album-download", AnnouncementKind.Error);
+                return;
+            }
+
+            await DownloadListAsyncWithQuality(songs, album.Title);
+        }
+        finally
+        {
+            _albumDownloadLoading = false;
+            _searchLoading = false;
+        }
+    }
+
+    private async Task DownloadListAsyncWithQuality(IReadOnlyList<MusicInfo> songs, string? subdirectory)
+    {
+        if (_services.Downloads is null || songs.Count == 0) return;
+        var quality = _services.Settings?.Current.Settings.DefaultDownloadQuality ?? "128k";
+        var result = await _services.Downloads.DownloadListAsync(new DownloadListRequest(
+            songs,
+            string.IsNullOrWhiteSpace(subdirectory) ? "歌曲" : subdirectory,
+            quality,
+            Subdirectory: subdirectory));
+        Announce(result.Message, "album-download:" + result.Requested, AnnouncementKind.Success);
+    }
+
+    private int _qualityMenuGeneration;
+
+    private async Task RefreshQualitySubmenuAsync(
+        MenuItem parent,
+        Control? owner,
+        MusicInfo? song,
+        string parentLabel,
+        Func<MusicInfo, string, Task> activate,
+        string activityId,
+        PlaybackQueueOrigin origin = PlaybackQueueOrigin.Search)
+    {
+        var generation = ++_qualityMenuGeneration;
+        var ownerControl = owner ?? this;
+        if (ownerControl.IsDisposed || IsDisposed) return;
+        parent.MenuItems.Clear();
+        if (song is null)
+        {
+            parent.Text = parentLabel + "（无歌曲）";
+            parent.MenuItems.Add(new MenuItem("暂无可探测歌曲", (_, _) => { }) { Enabled = false });
+            return;
+        }
+
+        parent.Text = parentLabel;
+        parent.MenuItems.Add(new MenuItem("音质探测中", (_, _) => { }) { Enabled = false });
+        var probe = _services.QualityProbe;
+        if (probe is null)
+        {
+            parent.MenuItems.Clear();
+            parent.MenuItems.Add(new MenuItem("音质探测不可用", (_, _) => { }) { Enabled = false });
+            return;
+        }
+
+        try
+        {
+            var result = await probe.ProbeAsync(song);
+            if (generation != _qualityMenuGeneration || ownerControl.IsDisposed || IsDisposed) return;
+            parent.MenuItems.Clear();
+            foreach (var option in result.Options)
+            {
+                var quality = option.Quality;
+                var state = option.Status switch
+                {
+                    QualityAvailability.Playable => $"可播放，{option.InterfaceName ?? "当前接口"}",
+                    QualityAvailability.Failed => "探测失败，可重试",
+                    _ => "不可用"
+                };
+                var capturedSong = song;
+                var item = new MenuItem($"{option.Label}，{state}", (_, _) =>
+                {
+                    if (option.Status == QualityAvailability.Playable && !IsDisposed)
+                        _ = activate(capturedSong, quality);
+                })
+                {
+                    Enabled = option.Status == QualityAvailability.Playable
+                };
+                parent.MenuItems.Add(item);
+            }
+        }
+        catch (Exception exception)
+        {
+            if (generation != _qualityMenuGeneration || ownerControl.IsDisposed || IsDisposed) return;
+            Announce($"音质探测失败：{exception.GetType().Name}", activityId, AnnouncementKind.Error);
+            parent.MenuItems.Clear();
+            parent.MenuItems.Add(new MenuItem("探测失败，请重新打开菜单", (_, _) => { }) { Enabled = false });
+        }
+    }
+
+    private async Task PlayQualityAsync(
+        MusicInfo song,
+        string quality,
+        PlaybackQueueOrigin origin = PlaybackQueueOrigin.Search)
+    {
+        if (_services.Playback is null) return;
+        try
+        {
+            var result = await _services.Playback.PlayAsync(new PlaybackRequest(
+                [song], song, quality, origin, ForceResolve: true));
+            Announce(
+                result.Status == PlaybackResultStatus.Playing
+                    ? $"正在按{TranslateQuality(quality)}播放：{song.Title}"
+                    : "所选音质播放失败",
+                "play-quality:" + song.Source + ":" + song.Id,
+                result.Status == PlaybackResultStatus.Playing ? AnnouncementKind.Success : AnnouncementKind.Error);
+        }
+        catch (Exception exception)
+        {
+            Announce(
+                $"所选音质播放失败：{exception.GetType().Name}",
+                "play-quality:" + song.Source + ":" + song.Id,
+                AnnouncementKind.Error);
+        }
+    }
+
+    private PlaybackQueueOrigin OriginForList(ListBox list) => list switch
+    {
+        var value when ReferenceEquals(value, CategorySongs) => PlaybackQueueOrigin.Category,
+        var value when ReferenceEquals(value, RankingSongs) => PlaybackQueueOrigin.Ranking,
+        _ => PlaybackQueueOrigin.Search
+    };
+
+    private async Task DownloadQualityAsync(MusicInfo song, string quality)
+    {
+        if (_services.Downloads is null) return;
+        try
+        {
+            await _services.Downloads.DownloadAsync(new DownloadRequest(song, quality));
+        }
+        catch (Exception exception)
+        {
+            Announce("音质下载任务创建失败", "download-quality:" + song.Id, AnnouncementKind.Error);
+            WinFormsUi.Error(this, exception, "音质下载");
+        }
     }
 
     private async void PlayExternally(MusicInfo? song)
@@ -1352,7 +1612,6 @@ public partial class WinFormsShell
                 return;
             }
             if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = ActivateSong(list); }
-            else if (e.KeyCode == Keys.Space) { e.Handled = true; TogglePlayback(); }
         };
     }
 

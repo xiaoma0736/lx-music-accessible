@@ -65,7 +65,7 @@ public sealed class LegacyDataCompatibilityTests
         await data.SetSettingValueAsync("hotkeys", "{\"toggle\":\"Ctrl+Alt+M\"}");
         await data.SaveMusicSourcesAsync(new List<MusicSource> { source });
 
-        Assert.Equal(2, await QueryAsync<int>(expectedDefault, "PRAGMA user_version").ContinueWith(t => t.Result.Single()));
+        Assert.Equal(3, await QueryAsync<int>(expectedDefault, "PRAGMA user_version").ContinueWith(t => t.Result.Single()));
         Assert.Single(await QueryAsync<string>(expectedDefault, "SELECT Value FROM Settings WHERE Key = 'hotkeys'"));
         Assert.Equal(1, (await QueryAsync<int>(expectedDefault, "SELECT COUNT(*) FROM PlaylistItems")).Single());
 

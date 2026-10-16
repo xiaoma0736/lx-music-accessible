@@ -77,6 +77,23 @@ public sealed class BatchDownloadSelectionTests
     }
 
     [Fact]
+    public void Ctrl_a_skips_non_song_load_more_rows()
+    {
+        WinFormsTestRunner.Run(() =>
+        {
+            using var shell = CreateShell(new RecordingBatchDownloads());
+            var list = RequiredListBox(shell, "SearchResults");
+            FillSongs(list, 2);
+            list.Items.Add(new ObjectBox<string>("加载更多", "load-more"));
+            list.Focus();
+
+            RaiseKeyDown(list, Keys.Control | Keys.A);
+
+            Assert.Equal(new[] { 0, 1 }, list.SelectedIndices.Cast<int>().ToArray());
+        });
+    }
+
+    [Fact]
     public void Arrow_keys_move_focus_without_changing_explicit_selection()
     {
         WinFormsTestRunner.Run(() =>
@@ -100,7 +117,7 @@ public sealed class BatchDownloadSelectionTests
     }
 
     [Fact]
-    public void Plain_space_toggles_playback_and_preserves_selection()
+    public void Plain_space_preserves_selection_and_does_not_toggle_playback()
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
@@ -114,10 +131,31 @@ public sealed class BatchDownloadSelectionTests
             list.SetSelected(2, true);
             list.Focus();
 
-            RaiseKeyDown(list, Keys.Space);
-            await WaitFor(() => playback.ReplayCount == 1);
+            var args = RaiseKeyDown(list, Keys.Space);
+            Assert.True(args.Handled);
+            await Task.Delay(50);
 
+            Assert.Equal(0, playback.ReplayCount);
             Assert.Equal(new[] { 0, 2 }, list.SelectedIndices.Cast<int>().ToArray());
+        });
+    }
+
+    [Theory]
+    [InlineData(Keys.Down, new[] { 0, 1 })]
+    [InlineData(Keys.Up, new[] { 0 })]
+    public void Shift_arrow_extends_selection_from_the_anchor(Keys key, int[] expected)
+    {
+        WinFormsTestRunner.Run(() =>
+        {
+            using var shell = CreateShell(new RecordingBatchDownloads());
+            var list = RequiredListBox(shell, "SearchResults");
+            FillSongs(list, 4);
+            WinFormsUi.SelectOnly(list, 0);
+
+            RaiseKeyDown(list, Keys.Shift | key);
+
+            Assert.Equal(expected, list.SelectedIndices.Cast<int>().ToArray());
+            Assert.Equal(key == Keys.Down ? expected[^1] : expected[0], FocusedIndex(list));
         });
     }
 
@@ -165,6 +203,9 @@ public sealed class BatchDownloadSelectionTests
 
             var items = list.ContextMenu!.MenuItems.Cast<MenuItem>().ToArray();
             Assert.Equal("下载当前歌曲", Assert.Single(items, item => item.Text == "下载当前歌曲").Text);
+            Assert.Single(items, item => item.Text == "下载单曲");
+            Assert.Single(items, item => item.Text == "播放音质");
+            Assert.DoesNotContain(items, item => item.Text == "下载音质");
             var batch = Assert.Single(items, item => item.Text == "批量下载选中歌曲(2)");
             Assert.True(batch.Enabled);
             Assert.Equal(selection, list.SelectedIndices.Cast<int>().ToArray());
@@ -249,20 +290,78 @@ public sealed class BatchDownloadSelectionTests
         });
     }
 
+    [Fact]
+    public async Task Download_and_play_quality_menus_show_all_playable_states()
+    {
+        var probe = new StaticQualityProbe(new QualityProbeResult(
+            "qq|song-1",
+            [
+                new("320k", "极高", QualityAvailability.Playable, "Interface A", "320k"),
+                new("flac24bit", "Hi-Res 无损", QualityAvailability.Unavailable, null, null)
+            ],
+            "done"));
+        using var shell = CreateShell(new RecordingBatchDownloads(), qualityProbe: probe);
+        var list = RequiredListBox(shell, "SearchResults");
+        FillSongs(list, 2);
+        list.SelectedIndex = 1;
+
+        var download = RequiredMenuItem(list.ContextMenu!, "下载单曲");
+        RaisePopup(download);
+        await WaitFor(() => download.MenuItems.Count == 2);
+        Assert.Equal(["极高，可播放，Interface A", "Hi-Res 无损，不可用"], download.MenuItems.Cast<MenuItem>().Select(item => item.Text).ToArray());
+        Assert.Equal(1, probe.ProbeCalls);
+
+        var play = RequiredMenuItem(list.ContextMenu!, "播放音质");
+        RaisePopup(play);
+        await WaitFor(() => play.MenuItems.Count == 2);
+        Assert.Equal(1, play.MenuItems.Cast<MenuItem>().Count(item => item.Enabled));
+
+        var items = list.ContextMenu!.MenuItems.Cast<MenuItem>().ToArray();
+        Assert.DoesNotContain(items, item => item.Text == "下载音质");
+    }
+
+    [Fact]
+    public void Whole_album_command_is_present_and_disabled_outside_album_context()
+    {
+        using var shell = CreateShell(new RecordingBatchDownloads());
+        var list = RequiredListBox(shell, "SearchResults");
+        FillSongs(list, 2);
+        list.SelectedIndex = 0;
+
+        InvokePopup(list.ContextMenu);
+        var album = RequiredMenuItem(list.ContextMenu!, "下载整张专辑");
+        RaisePopup(album);
+
+        Assert.False(album.Enabled);
+    }
+
     private static WinFormsShell CreateShell(
         RecordingBatchDownloads downloads,
         IPlaybackCoordinator? playback = null,
-        FakeBrowseSource? source = null) => new(new WinFormsShellServices
+        FakeBrowseSource? source = null,
+        IQualityProbeWorkflow? qualityProbe = null) => new(new WinFormsShellServices
     {
         Announcer = new RecordingAnnouncer(),
         BrowseSource = source ?? new FakeBrowseSource(),
         Playback = playback ?? new RecordingPlayback(),
         Downloads = downloads,
+        QualityProbe = qualityProbe,
         TemporaryDirectory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "lx-batch-selection-" + Guid.NewGuid().ToString("N"))
     });
 
     private static ListBox RequiredListBox(Control root, string name) =>
         Assert.IsType<ListBox>(root.Controls.Find(name, true).Single());
+
+    private static MenuItem RequiredMenuItem(ContextMenu menu, string text) =>
+        Assert.Single(menu.MenuItems.Cast<MenuItem>(), item => item.Text == text);
+
+    private static void RaisePopup(MenuItem item)
+    {
+        var method = typeof(MenuItem).GetMethod("OnPopup", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+        method!.Invoke(item, new object[] { EventArgs.Empty });
+        Application.DoEvents();
+    }
 
     private static MenuItem RequiredBatchItem(ContextMenu menu) =>
         Assert.Single(menu.MenuItems.Cast<MenuItem>(), item =>
@@ -286,12 +385,14 @@ public sealed class BatchDownloadSelectionTests
         list.EndUpdate();
     }
 
-    private static void RaiseKeyDown(Control control, Keys key)
+    private static KeyEventArgs RaiseKeyDown(Control control, Keys key)
     {
         var method = typeof(Control).GetMethod("OnKeyDown", BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(method);
-        method!.Invoke(control, new object[] { new KeyEventArgs(key) });
+        var args = new KeyEventArgs(key);
+        method!.Invoke(control, new object[] { args });
         Application.DoEvents();
+        return args;
     }
 
     private static int FocusedIndex(ListBox list)
@@ -349,6 +450,9 @@ public sealed class BatchDownloadSelectionTests
         }
         public Task<bool> RetryAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public void Cancel(DownloadTask task) { }
+    public void Pause(DownloadTask task) { }
+    public void Resume(DownloadTask task) { }
+    public bool Delete(DownloadTask task, bool deleteSourceFile) => true;
         public void ClearCompleted() { }
         public string ResolveDownloadDirectory(string? requested = null) => requested ?? System.IO.Path.GetTempPath();
         public ExternalPlaybackResult OpenDownloadDirectory(string? requested = null) => new(true, "ok");
@@ -357,6 +461,21 @@ public sealed class BatchDownloadSelectionTests
         public Task<ExternalPlaybackResult> PlayExternallyAsync(ExternalPlaybackRequest request, CancellationToken cancellationToken = default) =>
             Task.FromResult(new ExternalPlaybackResult(true, "ok"));
         public DownloadCacheCleanupResult ClearTemporaryFiles() => new(0, 0);
+    }
+
+    private sealed class StaticQualityProbe(QualityProbeResult result) : IQualityProbeWorkflow
+    {
+        public int ProbeCalls { get; private set; }
+
+        public Task<QualityProbeResult> ProbeAsync(MusicInfo music, CancellationToken cancellationToken = default)
+        {
+            ProbeCalls++;
+            return Task.FromResult(result);
+        }
+
+        public QualityProbeResult GetCached(MusicInfo music) => result;
+
+        public void Invalidate(MusicInfo music) { }
     }
 
     private sealed class PlaybackSpy : IPlaybackCoordinator

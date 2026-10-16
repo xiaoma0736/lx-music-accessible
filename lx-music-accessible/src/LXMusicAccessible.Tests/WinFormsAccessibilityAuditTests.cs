@@ -1132,6 +1132,9 @@ public sealed class WinFormsAccessibilityAuditTests
         public Task<DownloadListResult> DownloadListAsync(DownloadListRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> RetryAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public void Cancel(DownloadTask task) { }
+    public void Pause(DownloadTask task) { }
+    public void Resume(DownloadTask task) { }
+    public bool Delete(DownloadTask task, bool deleteSourceFile) => true;
         public void ClearCompleted() => _tasks.Where(task => task.Status == DownloadTaskStatus.Completed).ToList().ForEach(task => _tasks.Remove(task));
         public string ResolveDownloadDirectory(string? requested = null) => requested ?? System.IO.Path.GetTempPath();
         public ExternalPlaybackResult OpenDownloadDirectory(string? requested = null) => new(true, "ok");
@@ -1204,6 +1207,8 @@ public sealed class WinFormsAccessibilityAuditTests
         public Task<string?> GetPlayUrlAsync(string musicId, string source, string quality = "128k", CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<MusicSource?> ImportFromUrlAsync(string url, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<MusicSource?> ImportFromFileAsync(string filePath, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<MusicSourceImportResult?> ImportFromUrlDetailedAsync(string url, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<MusicSourceImportResult?> ImportFromFileDetailedAsync(string filePath, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> UpdateSourceAsync(MusicSource source) => throw new NotSupportedException();
         public Task<List<string>> GetQualitiesForSourceAsync(string sourceId) => throw new NotSupportedException();
         public Task InitializeScriptSourcesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

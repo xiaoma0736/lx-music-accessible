@@ -56,6 +56,41 @@ public sealed class MolanSourceImportUsabilityTests
     }
 
     [Fact]
+    public void Source_changed_before_handle_is_created_does_not_throw_from_import_event()
+    {
+        var announcer = new RecordingSourceAnnouncer();
+        var sources = new RouteRecordingSourceService();
+        using var form = new SourceManagerForm(announcer, sources, _ => false);
+
+        Assert.Null(Record.Exception(() => sources.Replace(new MusicSource
+        {
+            Id = "background_imported",
+            Name = "Background source",
+            IsDefault = true,
+            IsEnabled = true
+        })));
+        Assert.Empty(announcer.Messages);
+    }
+
+    [Fact]
+    public void Script_update_alert_is_announced_without_a_modal_dialog()
+    {
+        var announcer = new RecordingSourceAnnouncer();
+        var sources = new RouteRecordingSourceService();
+        using var form = new SourceManagerForm(announcer, sources, _ => false);
+
+        sources.RaiseScriptUpdateAlert(new LxScriptUpdateAlertEventArgs
+        {
+            Log = "fixed source endpoint",
+            UpdateUrl = "https://fixture.invalid/source.js"
+        });
+
+        var message = Assert.Single(announcer.Messages);
+        Assert.Contains("音源更新：fixed source endpoint", message);
+        Assert.Contains("https://fixture.invalid/source.js", message);
+    }
+
+    [Fact]
     public async Task Local_import_uses_the_file_path_and_announces_the_usable_default_source()
     {
         var announcer = new RecordingSourceAnnouncer();
@@ -72,6 +107,120 @@ public sealed class MolanSourceImportUsabilityTests
         Assert.Empty(sources.UrlImports);
         Assert.Equal([path], sources.FileImports);
         Assert.Equal(["已导入并设为默认音源：Imported source"], announcer.Messages);
+    }
+
+    [Fact]
+    public async Task Delete_key_removes_the_selected_source_after_keyboard_confirmation_flow()
+    {
+        var announcer = new RecordingSourceAnnouncer();
+        var target = new MusicSource
+        {
+            Id = "delete_target",
+            Name = "Deletable source",
+            IsEnabled = true,
+            IsDefault = true
+        };
+        var sources = new RouteRecordingSourceService();
+        using var form = new SourceManagerForm(announcer, sources, _ => false);
+        var list = (ListBox)typeof(SourceManagerForm).GetField(
+            "_list", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(form)!;
+        list.Items.Clear();
+        list.Items.Add(new ObjectBox<MusicSource>(target.AccessibleName, target));
+        list.SelectedIndex = 0;
+        var handled = await form.HandleSourceListKeyAsync(
+            new KeyEventArgs(Keys.Delete), null, requireConfirmation: false);
+
+        Assert.True(handled);
+        Assert.Equal(["delete_target"], sources.Removed);
+        Assert.Contains("已删除音源：Deletable source", announcer.Messages);
+    }
+
+    [Theory]
+    [InlineData(MusicSourceImportStatus.Imported, "已导入并设为默认音源：Imported source")]
+    [InlineData(MusicSourceImportStatus.Merged, "已合并并设为默认音源：Imported source")]
+    [InlineData(MusicSourceImportStatus.Replaced, "已用高版本替换并设为默认音源：Imported source")]
+    [InlineData(MusicSourceImportStatus.VersionConflict, "导入音源失败：已存在相同或更高版本的 Imported source，保留当前音源。")]
+    public async Task Detailed_import_results_have_explicit_announcements(
+        MusicSourceImportStatus status,
+        string expectedMessage)
+    {
+        var announcer = new RecordingSourceAnnouncer();
+        var sources = new RouteRecordingSourceService
+        {
+            DetailedStatus = status,
+            Imported = new MusicSource
+            {
+                Id = "imported_status",
+                Name = "Imported source",
+                IsEnabled = true,
+                IsDefault = status != MusicSourceImportStatus.VersionConflict
+            }
+        };
+        using var form = new SourceManagerForm(announcer, sources, _ => false);
+        var method = typeof(SourceManagerForm).GetMethod(
+            "ImportSourceAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        await RunImportAsync(method!, form, @"C:\fixture\molan-source.js");
+
+        Assert.Contains(expectedMessage, announcer.Messages);
+    }
+
+    [Fact]
+    public async Task Physical_delete_key_uses_the_destructive_confirmation_workflow()
+    {
+        var announcer = new RecordingSourceAnnouncer();
+        var target = new MusicSource { Id = "delete_target", Name = "Deletable source" };
+        var sources = new RouteRecordingSourceService();
+        var confirmationMessages = new List<string>();
+        using var form = new SourceManagerForm(
+            announcer,
+            sources,
+            _ => false,
+            message =>
+            {
+                confirmationMessages.Add(message);
+                return true;
+            });
+        var list = (ListBox)typeof(SourceManagerForm).GetField(
+            "_list", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(form)!;
+        list.Items.Clear();
+        list.Items.Add(new ObjectBox<MusicSource>(target.AccessibleName, target));
+        list.SelectedIndex = 0;
+
+        var handled = await form.HandleSourceListKeyAsync(new KeyEventArgs(Keys.Delete));
+
+        Assert.True(handled);
+        var confirmation = Assert.Single(confirmationMessages);
+        Assert.Contains("Deletable source", confirmation);
+        Assert.Equal(["delete_target"], sources.Removed);
+        Assert.Contains("已删除音源：Deletable source", announcer.Messages);
+    }
+
+    [Fact]
+    public async Task Merged_or_replaced_source_that_is_not_default_does_not_claim_default()
+    {
+        var announcer = new RecordingSourceAnnouncer();
+        var sources = new RouteRecordingSourceService
+        {
+            DetailedStatus = MusicSourceImportStatus.Replaced,
+            Imported = new MusicSource
+            {
+                Id = "non_default_replacement",
+                Name = "Imported source",
+                IsEnabled = false,
+                IsDefault = false
+            }
+        };
+        using var form = new SourceManagerForm(announcer, sources, _ => false);
+        var method = typeof(SourceManagerForm).GetMethod(
+            "ImportSourceAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        await RunImportAsync(method!, form, @"C:\fixture\molan-source.js");
+
+        Assert.Contains("已用高版本替换音源：Imported source", announcer.Messages);
     }
 
     private static async Task RunImportAsync(MethodInfo method, Form form, string path)
@@ -103,32 +252,48 @@ public sealed class MolanSourceImportUsabilityTests
             remove => _changed -= value;
         }
 
+        private EventHandler<LxScriptUpdateAlertEventArgs>? _scriptUpdateAlert;
+
         public event EventHandler<LxScriptUpdateAlertEventArgs>? ScriptUpdateAlert
         {
-            add { }
-            remove { }
+            add => _scriptUpdateAlert += value;
+            remove => _scriptUpdateAlert -= value;
         }
 
         public List<string> UrlImports { get; } = new();
         public List<string> FileImports { get; } = new();
+        public List<string> Removed { get; } = new();
+        public MusicSource? Imported { get; set; }
+        public MusicSourceImportStatus DetailedStatus { get; set; } = MusicSourceImportStatus.Imported;
 
-        public Task<MusicSource?> ImportFromUrlAsync(string url, CancellationToken cancellationToken = default)
+        public async Task<MusicSource?> ImportFromUrlAsync(string url, CancellationToken cancellationToken = default) =>
+            (await ImportFromUrlDetailedAsync(url, cancellationToken))?.Source;
+
+        public Task<MusicSourceImportResult?> ImportFromUrlDetailedAsync(string url, CancellationToken cancellationToken = default)
         {
             UrlImports.Add(url);
-            return Task.FromResult<MusicSource?>(null);
+            if (Imported is null) return Task.FromResult<MusicSourceImportResult?>(null);
+            if (!_sources.Any(source => source.Id == Imported.Id)) _sources.Add(Imported);
+            return Task.FromResult<MusicSourceImportResult?>(new(Imported, DetailedStatus));
         }
 
-        public Task<MusicSource?> ImportFromFileAsync(string filePath, CancellationToken cancellationToken = default)
+        public async Task<MusicSource?> ImportFromFileAsync(string filePath, CancellationToken cancellationToken = default) =>
+            (await ImportFromFileDetailedAsync(filePath, cancellationToken))?.Source;
+
+        public Task<MusicSourceImportResult?> ImportFromFileDetailedAsync(string filePath, CancellationToken cancellationToken = default)
         {
             FileImports.Add(filePath);
-            var source = new MusicSource { Id = "script_imported", Name = "Imported source" };
-            _sources.Add(source);
-            return Task.FromResult<MusicSource?>(source);
+            Imported ??= new MusicSource { Id = "script_imported", Name = "Imported source" };
+            if (!_sources.Any(source => source.Id == Imported.Id)) _sources.Add(Imported);
+            return Task.FromResult<MusicSourceImportResult?>(new(Imported, DetailedStatus));
         }
 
         public List<MusicSource> GetAllSources() => _sources.ToList();
         public List<MusicSource> GetEnabledSources() => _sources.Where(source => source.IsEnabled).ToList();
         public MusicSource? GetDefaultSource() => _sources.FirstOrDefault(source => source.IsDefault);
+
+        public void RaiseScriptUpdateAlert(LxScriptUpdateAlertEventArgs args) =>
+            _scriptUpdateAlert?.Invoke(this, args);
 
         public void Replace(params MusicSource[] source)
         {
@@ -141,7 +306,12 @@ public sealed class MolanSourceImportUsabilityTests
         public void DisableSource(MusicSource source) { }
         public Task<bool> DisableSourceAsync(MusicSource source, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public void RemoveSource(MusicSource source) { }
-        public Task<bool> RemoveSourceAsync(MusicSource source, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> RemoveSourceAsync(MusicSource source, CancellationToken cancellationToken = default)
+        {
+            Removed.Add(source.Id);
+            _sources.Remove(source);
+            return Task.FromResult(true);
+        }
         public Task<bool> UpdateSourceAsync(MusicSource source) => Task.FromResult(true);
         public Task<bool> RefreshSourceAsync(MusicSource source, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public Task<bool> TestSourceAsync(MusicSource source) => Task.FromResult(true);

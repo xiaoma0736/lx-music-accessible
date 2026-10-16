@@ -406,6 +406,8 @@ public static class ApplicationHost
                 services.AddSingleton<IPlaylistImportProvider, KuwoPlaylistProvider>();
                 services.AddSingleton<KugouQrLoginService>();
                 services.AddSingleton<IPlaylistLoginWindowFactory, PlaylistLoginWindowFactory>();
+                services.AddSingleton<IQualityCandidateSource>(sp => sp.GetRequiredService<MusicSourceService>());
+                services.AddSingleton<IQualityProbeWorkflow, QualityProbeWorkflow>();
                 services.AddSingleton<ApplicationWindowFactory>();
                 services.AddSingleton<AnnouncementToggleService>();
                 services.AddSingleton<ApplicationShutdownRequest>();
@@ -430,6 +432,7 @@ public static class ApplicationHost
                     Settings = sp.GetRequiredService<SettingsWorkflow>(),
                     Tts = sp.GetRequiredService<ITtsService>(),
                     Sources = sp.GetRequiredService<IMusicSourceService>(),
+                    QualityProbe = sp.GetRequiredService<IQualityProbeWorkflow>(),
                     ManualSources = sp.GetRequiredService<IManualSourceDiscoveryWorkflow>(),
                     Windows = sp.GetRequiredService<ApplicationWindowFactory>(),
                     Desktop = sp.GetRequiredService<DesktopLifecycleWorkflow>(),

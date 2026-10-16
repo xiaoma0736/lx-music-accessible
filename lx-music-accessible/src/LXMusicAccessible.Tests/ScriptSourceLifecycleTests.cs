@@ -363,7 +363,7 @@ public sealed class ScriptSourceLifecycleTests
         Assert.Equal(ScriptTrustState.UserApproved, restored.TrustState);
 
         var sameUrlAgain = Assert.IsType<MusicSource>(await sources.ImportFromUrlAsync(ScriptUrl));
-        Assert.NotEqual(imported.Id, sameUrlAgain.Id);
+        Assert.Equal(imported.Id, sameUrlAgain.Id);
         Assert.True(sameUrlAgain.IsEnabled);
         Assert.Equal(ScriptTrustState.UserApproved, sameUrlAgain.TrustState);
         Assert.NotNull(((MusicSourceService)sources).GetScriptSource().GetScript(sameUrlAgain.Id));

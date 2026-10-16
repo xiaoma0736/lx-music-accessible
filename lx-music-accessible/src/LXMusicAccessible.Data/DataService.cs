@@ -20,7 +20,7 @@ public sealed record DatabaseMigrationResult(
 /// </summary>
 public class DatabaseInitializer
 {
-    private const int CurrentSchemaVersion = 2;
+    private const int CurrentSchemaVersion = 3;
     private readonly ILogger<DatabaseInitializer> _logger;
     private readonly string _dataDir;
     private const string DbFileName = "lxmusic.db";
@@ -136,6 +136,11 @@ public class DatabaseInitializer
             {
                 await connection.ExecuteAsync("ALTER TABLE MusicSources ADD COLUMN ContentSha256 TEXT");
                 _logger.LogInformation("已为 MusicSources 表添加 ContentSha256 列");
+            }
+            if (!cols.Any(n => string.Equals(n, "Author", StringComparison.OrdinalIgnoreCase)))
+            {
+                await connection.ExecuteAsync("ALTER TABLE MusicSources ADD COLUMN Author TEXT");
+                _logger.LogInformation("已为 MusicSources 表添加 Author 列");
             }
 
             // 迁移：Playlists 表补充 Source / RemoteId 列（在线收藏歌单的远程元数据）
@@ -376,7 +381,8 @@ public class DatabaseInitializer
                 LastUpdateDate TEXT,
                 Type INTEGER,
                 TrustState INTEGER NOT NULL DEFAULT 0,
-                ContentSha256 TEXT
+                ContentSha256 TEXT,
+                Author TEXT
             )");
 
         // 播放历史表
@@ -865,10 +871,11 @@ public class DataService : IDataService
             {
                 await connection.ExecuteAsync(new CommandDefinition(@"
                 INSERT INTO MusicSources
-                (Id, Name, Version, ScriptUrl, ScriptContent, IsEnabled, Priority, AddedDate, LastUpdateDate, Type, IsDefault, TrustState, ContentSha256)
-                VALUES (@Id, @Name, @Version, @ScriptUrl, @ScriptContent, @IsEnabled, @Priority, @AddedDate, @LastUpdateDate, @Type, @IsDefault, @TrustState, @ContentSha256)
+                (Id, Name, Author, Version, ScriptUrl, ScriptContent, IsEnabled, Priority, AddedDate, LastUpdateDate, Type, IsDefault, TrustState, ContentSha256)
+                VALUES (@Id, @Name, @Author, @Version, @ScriptUrl, @ScriptContent, @IsEnabled, @Priority, @AddedDate, @LastUpdateDate, @Type, @IsDefault, @TrustState, @ContentSha256)
                 ON CONFLICT(Id) DO UPDATE SET
                     Name = excluded.Name,
+                    Author = excluded.Author,
                     Version = excluded.Version,
                     ScriptUrl = excluded.ScriptUrl,
                     ScriptContent = excluded.ScriptContent,
@@ -884,6 +891,7 @@ public class DataService : IDataService
                     {
                         Id = source.Id,
                         Name = source.Name,
+                        Author = source.Author,
                         Version = source.Version,
                         ScriptUrl = source.ScriptUrl,
                         ScriptContent = source.ScriptContent,
@@ -913,7 +921,7 @@ public class DataService : IDataService
         using var connection = await GetConnectionAsync();
         
         var sources = await connection.QueryAsync<dynamic>(@"
-            SELECT Id, Name, Version, ScriptUrl, ScriptContent, IsEnabled, IsDefault, Priority, AddedDate, LastUpdateDate, Type, TrustState, ContentSha256
+            SELECT Id, Name, Author, Version, ScriptUrl, ScriptContent, IsEnabled, IsDefault, Priority, AddedDate, LastUpdateDate, Type, TrustState, ContentSha256
             FROM MusicSources
             ORDER BY Priority ASC");
             
@@ -929,6 +937,7 @@ public class DataService : IDataService
             {
                 Id = s.Id,
                 Name = s.Name,
+                Author = s.Author,
                 Version = s.Version,
                 ScriptUrl = s.ScriptUrl,
                 ScriptContent = s.ScriptContent,

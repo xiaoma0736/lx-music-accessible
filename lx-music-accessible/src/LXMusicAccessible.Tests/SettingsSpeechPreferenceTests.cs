@@ -334,6 +334,9 @@ public sealed class SettingsSpeechPreferenceTests
         public Task<bool> RetryAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default)
             => Task.FromResult(true);
         public void Cancel(DownloadTask task) { }
+    public void Pause(DownloadTask task) { }
+    public void Resume(DownloadTask task) { }
+    public bool Delete(DownloadTask task, bool deleteSourceFile) => true;
         public void ClearCompleted() { }
         public string ResolveDownloadDirectory(string? requested = null) => requested ?? Path.GetTempPath();
         public ExternalPlaybackResult OpenDownloadDirectory(string? requested = null) => new(true, "ok");

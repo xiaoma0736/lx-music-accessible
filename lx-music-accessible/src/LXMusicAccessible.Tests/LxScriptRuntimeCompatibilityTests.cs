@@ -374,6 +374,28 @@ public sealed class LxScriptRuntimeCompatibilityTests
         Assert.Equal("Metadata fixture|A compatibility source|3.4.5|Fixture Author|https://fixture.invalid/author|object|string|true|function|true", lyric!.Lyric);
     }
 
+    [Fact]
+    public async Task Failed_inited_status_is_rejected_by_the_original_runtime_contract()
+    {
+        var engine = CreateEngine();
+        var script = CreateScript("""
+            lx.on(lx.EVENT_NAMES.request, function () {
+              return Promise.reject(new Error('not usable'));
+            });
+            lx.send(lx.EVENT_NAMES.inited, {
+              status: false,
+              sources: {
+                tx: { type: 'music', actions: ['musicUrl'], qualitys: ['128k'] }
+              }
+            });
+            """);
+
+        var loaded = await engine.TestLoadAsync(script);
+
+        Assert.False(loaded);
+        Assert.NotNull(engine.LastError);
+    }
+
     private static LxScriptEngine CreateEngine(HttpMessageHandler? handler = null)
     {
         var actualHandler = handler ?? new RejectingHttpMessageHandler();

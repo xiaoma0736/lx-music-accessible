@@ -19,7 +19,7 @@ public sealed class DatabaseMigrationTests
         var migration = await initializer.InitializeAsync();
 
         Assert.True(migration.Succeeded, migration.Message);
-        Assert.Equal(2, migration.CurrentVersion);
+        Assert.Equal(3, migration.CurrentVersion);
         Assert.Null(migration.BackupPath);
 
         var data = CreateDataService(fixture.Path);
@@ -56,7 +56,7 @@ public sealed class DatabaseMigrationTests
 
         Assert.True(first.Succeeded, first.Message);
         Assert.Equal(0, first.PreviousVersion);
-        Assert.Equal(2, first.CurrentVersion);
+        Assert.Equal(3, first.CurrentVersion);
         Assert.Equal(1, first.OrphansRemoved);
         Assert.NotNull(first.BackupPath);
         Assert.True(File.Exists(first.BackupPath));
@@ -70,7 +70,7 @@ public sealed class DatabaseMigrationTests
         using (var connection = await OpenAsync(fixture.DatabasePath, foreignKeys: true))
         {
             Assert.Equal(1, await connection.QuerySingleAsync<int>("PRAGMA foreign_keys"));
-            Assert.Equal(2, await connection.QuerySingleAsync<int>("PRAGMA user_version"));
+            Assert.Equal(3, await connection.QuerySingleAsync<int>("PRAGMA user_version"));
             Assert.Equal(1, await connection.QuerySingleAsync<int>(
                 "SELECT COUNT(*) FROM PlaylistItems WHERE PlaylistId = 'legacy-playlist'"));
             var legalMusic = await connection.QuerySingleAsync<string>(
@@ -84,7 +84,7 @@ public sealed class DatabaseMigrationTests
         var backupsBeforeRepeat = Directory.GetFiles(fixture.Path, "*.bak").Length;
         var second = await initializer.InitializeAsync();
         Assert.True(second.Succeeded, second.Message);
-        Assert.Equal(2, second.PreviousVersion);
+        Assert.Equal(3, second.PreviousVersion);
         Assert.Equal(0, second.OrphansRemoved);
         Assert.Null(second.BackupPath);
         Assert.Equal(backupsBeforeRepeat, Directory.GetFiles(fixture.Path, "*.bak").Length);
@@ -118,6 +118,31 @@ public sealed class DatabaseMigrationTests
         Assert.True(retry.Succeeded, retry.Message);
         Assert.Equal(1, retry.OrphansRemoved);
         await AssertDatabaseIntegrityAsync(fixture.DatabasePath);
+    }
+
+    [Fact]
+    public async Task Current_version_database_without_author_column_is_upgraded_in_place()
+    {
+        using var fixture = new TemporaryDatabaseDirectory();
+        var initializer = CreateInitializer(fixture.Path);
+        var first = await initializer.InitializeAsync();
+        Assert.True(first.Succeeded, first.Message);
+
+        using (var connection = await OpenAsync(fixture.DatabasePath, foreignKeys: false))
+        {
+            await connection.ExecuteAsync("ALTER TABLE MusicSources DROP COLUMN Author");
+            await connection.ExecuteAsync("PRAGMA user_version = 2");
+        }
+
+        var migrated = await initializer.InitializeAsync();
+
+        Assert.True(migrated.Succeeded, migrated.Message);
+        Assert.Equal(2, migrated.PreviousVersion);
+        Assert.Equal(3, migrated.CurrentVersion);
+        using var verify = await OpenAsync(fixture.DatabasePath, foreignKeys: true);
+        Assert.Equal(1, await verify.QuerySingleAsync<int>(
+            "SELECT COUNT(*) FROM pragma_table_info('MusicSources') WHERE name = 'Author'"));
+        Assert.Equal(3, await verify.QuerySingleAsync<int>("PRAGMA user_version"));
     }
 
     private static DatabaseInitializer CreateInitializer(string directory) =>

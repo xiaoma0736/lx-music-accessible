@@ -8,7 +8,7 @@ namespace LXMusicAccessible.Services;
 /// <summary>
 /// 音源管理服务 — 统一调度 5 大内置音源 + 外部脚本源
 /// </summary>
-public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManualSourceGateway
+public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManualSourceGateway, IQualityCandidateSource
 {
     private readonly ILogger<MusicSourceService> _logger;
     private readonly NeteaseMusicService _netease;
@@ -269,6 +269,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             && !existing.IsEnabled;
 
         source.Name = candidate.Name;
+        source.Author = candidate.Author;
         source.Version = candidate.Version
             ?? (string.IsNullOrEmpty(source.Version) ? "1.0" : source.Version);
         source.ScriptUrl = subscription.Url;
@@ -1235,6 +1236,95 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             scriptAttempt.Token);
     }
 
+    public Task<IReadOnlyList<SourceQualityCandidate>> GetCandidatesAsync(
+        MusicInfo music,
+        CancellationToken cancellationToken = default)
+    {
+        FrameworkCompatibility.ThrowIfNull(music);
+        cancellationToken.ThrowIfCancellationRequested();
+        var platform = music.Source.Trim().ToLowerInvariant();
+        var candidates = new List<SourceQualityCandidate>();
+        foreach (var source in _sources.Where(source => source.IsEnabled).OrderBy(source => source.Priority))
+        {
+            if (IsOfficialBuiltIn(source))
+            {
+                if (!string.Equals(source.Id, platform, StringComparison.OrdinalIgnoreCase)
+                    || !_apiMap.TryGetValue(platform, out var builtin))
+                    continue;
+                candidates.AddRange(builtin.GetSupportedQualities().Select(quality => new SourceQualityCandidate(
+                    source.Id,
+                    builtin.SourceName,
+                    source.Priority,
+                    quality)));
+                continue;
+            }
+
+            if (source.IsSystemHidden
+                || source.Type is SourceType.Bundled or SourceType.Local)
+                continue;
+
+            var script = _scriptSource.GetScript(source.Id);
+            if (script is null
+                || !SupportsRequestedSource(script, platform)
+                || !script.QualityMap.TryGetValue(platform, out var qualities)
+                || qualities.Count == 0)
+                continue;
+
+            candidates.AddRange(qualities.Select(quality => new SourceQualityCandidate(
+                source.Id,
+                string.IsNullOrWhiteSpace(source.Name) ? source.Id : source.Name,
+                source.Priority,
+                quality)));
+        }
+
+        return Task.FromResult<IReadOnlyList<SourceQualityCandidate>>(candidates);
+    }
+
+    public async Task<string?> ResolveAsync(
+        MusicInfo music,
+        SourceQualityCandidate candidate,
+        CancellationToken cancellationToken = default)
+    {
+        FrameworkCompatibility.ThrowIfNull(music);
+        FrameworkCompatibility.ThrowIfNull(candidate);
+        cancellationToken.ThrowIfCancellationRequested();
+        var platform = music.Source.Trim().ToLowerInvariant();
+        var source = _sources.FirstOrDefault(item =>
+            item.IsEnabled
+            && string.Equals(item.Id, candidate.InterfaceId, StringComparison.OrdinalIgnoreCase));
+        if (source is null) return null;
+
+        if (IsOfficialBuiltIn(source))
+        {
+            if (!string.Equals(source.Id, platform, StringComparison.OrdinalIgnoreCase)
+                || !_apiMap.TryGetValue(platform, out var builtin)
+                || !builtin.GetSupportedQualities().Contains(candidate.Quality, StringComparer.OrdinalIgnoreCase))
+                return null;
+            using var builtinAttempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            builtinAttempt.CancelAfter(TimeSpan.FromSeconds(8));
+            return await builtin.GetPlayUrlAsync(
+                music.Id,
+                candidate.Quality,
+                builtinAttempt.Token);
+        }
+
+        var script = _scriptSource.GetScript(source.Id);
+        if (script is null
+            || !SupportsRequestedSource(script, platform)
+            || !SupportsQuality(script, platform, candidate.Quality))
+            return null;
+
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        attempt.CancelAfter(TimeSpan.FromSeconds(10));
+        return await TryResolveScriptUrlAsync(
+            script,
+            music.Id,
+            platform,
+            candidate.Quality,
+            music,
+            attempt.Token);
+    }
+
     private IReadOnlyList<string> GetScriptQualities(LxScriptInfo script, string source)
     {
         if (script.QualityMap.TryGetValue(source, out var declared)
@@ -1327,7 +1417,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             s.ContentSha256 = expectedDigest;
             try
             {
-                await _dataService.SaveMusicSourcesAsync(_sources);
+                await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -1478,6 +1568,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         var previous = SourceSnapshot.Capture(source);
 
         source.Name = candidate.Name;
+        source.Author = candidate.Author;
         source.Version = candidate.Version
             ?? (string.IsNullOrEmpty(source.Version) ? "1.0" : source.Version);
         source.ScriptContent = candidate.RawScript;
@@ -1521,22 +1612,38 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         string url,
         CancellationToken cancellationToken = default)
     {
+        var result = await ImportFromUrlDetailedAsync(url, cancellationToken);
+        return result?.Source;
+    }
+
+    public async Task<MusicSourceImportResult?> ImportFromUrlDetailedAsync(
+        string url,
+        CancellationToken cancellationToken = default)
+    {
         var scriptId = $"script_{Guid.NewGuid():N}"[..16];
         var info = await _scriptSource.StageFromUrlAsync(url, scriptId, cancellationToken);
-        return await ImportValidatedSourceAsync(info, url, SourceType.Network, cancellationToken);
+        return await ImportValidatedSourceDetailedAsync(info, url, SourceType.Network, cancellationToken);
     }
 
     public async Task<MusicSource?> ImportFromFileAsync(
         string filePath,
         CancellationToken cancellationToken = default)
     {
+        var result = await ImportFromFileDetailedAsync(filePath, cancellationToken);
+        return result?.Source;
+    }
+
+    public async Task<MusicSourceImportResult?> ImportFromFileDetailedAsync(
+        string filePath,
+        CancellationToken cancellationToken = default)
+    {
         if (!File.Exists(filePath)) return null;
         var scriptId = $"script_{Guid.NewGuid():N}"[..16];
         var info = await _scriptSource.StageFromFileAsync(filePath, scriptId, cancellationToken);
-        return await ImportValidatedSourceAsync(info, filePath, SourceType.Custom, cancellationToken);
+        return await ImportValidatedSourceDetailedAsync(info, filePath, SourceType.Custom, cancellationToken);
     }
 
-    private async Task<MusicSource?> ImportValidatedSourceAsync(
+    private async Task<MusicSourceImportResult?> ImportValidatedSourceDetailedAsync(
         LxScriptInfo? info,
         string location,
         SourceType type,
@@ -1544,10 +1651,37 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (info?.RawScript is null) return null;
+
+        var matches = FindImportMergeTargets(info);
+        if (matches.Count > 0)
+        {
+            var existing = matches
+                .OrderByDescending(source => source.IsDefault)
+                .ThenBy(source => source.Priority)
+                .ThenBy(source => source.AddedDate)
+                .First();
+            var result = await MergeValidatedSourceAsync(
+                existing, info, location, type, cancellationToken);
+            if (result is { Status: not MusicSourceImportStatus.VersionConflict })
+                await ConsolidateDuplicateImportTargetsAsync(
+                    existing, matches, cancellationToken);
+            return result;
+        }
+
+        return await ImportNewValidatedSourceAsync(info, location, type, cancellationToken);
+    }
+
+    private async Task<MusicSourceImportResult?> ImportNewValidatedSourceAsync(
+        LxScriptInfo info,
+        string location,
+        SourceType type,
+        CancellationToken cancellationToken)
+    {
         var source = new MusicSource
         {
             Id = info.Id,
             Name = info.Name,
+            Author = info.Author,
             Version = info.Version ?? "1.0",
             ScriptUrl = location,
             ScriptContent = info.RawScript,
@@ -1559,9 +1693,9 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             AddedDate = DateTime.Now,
             LastUpdateDate = DateTime.Now
         };
-        // 新导入的脚本已通过执行校验，导入动作本身就是用户“立即使用”的意图。
-        // 让它作为唯一默认源进入同一次启用持久化，否则默认源仍可能是旧订阅，
-        // 屏幕阅读器用户很难发现还需要单独执行“设为默认”。
+
+        // The import action itself means “use this source now”. Make it the single default source in
+        // the same validated activation/persistence transaction instead of requiring a second step.
         var previousDefaults = _sources.Where(item => item.IsDefault).ToArray();
         foreach (var item in _sources)
             item.IsDefault = false;
@@ -1578,10 +1712,234 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
                 "音源导入验证失败: SourceId={SourceId}, Status={Status}",
                 source.Id,
                 activation.Status);
+            return null!;
+        }
+
+        _defaultTouchedByUser = true;
+        return new(source, MusicSourceImportStatus.Imported);
+    }
+
+    private async Task<MusicSourceImportResult?> MergeValidatedSourceAsync(
+        MusicSource existing,
+        LxScriptInfo info,
+        string location,
+        SourceType type,
+        CancellationToken cancellationToken)
+    {
+        var candidateDigest = ScriptMusicSource.ComputeSha256(info.RawScript!);
+        var existingDigest = ScriptMusicSource.ComputeSha256(existing.ScriptContent ?? "");
+        var isReplacement = !string.Equals(
+            candidateDigest,
+            existingDigest,
+            StringComparison.OrdinalIgnoreCase);
+
+        if (isReplacement)
+        {
+            var comparison = CompareSourceVersions(info.Version, existing.Version);
+            if (comparison <= 0)
+            {
+                _logger.LogInformation(
+                    "拒绝导入同版本或更低版本音源: SourceId={SourceId}, ImportedVersion={ImportedVersion}, ExistingVersion={ExistingVersion}",
+                    existing.Id,
+                    info.Version,
+                    existing.Version);
+                return new(existing, MusicSourceImportStatus.VersionConflict);
+            }
+        }
+
+        // Validate and register the candidate under the retained source id before any model mutation.
+        // A single persistence operation then contains the final enabled/default state, so there is no
+        // observable intermediate “enabled because activation succeeded” version on disk.
+        var candidate = _scriptSource.StageFromContent(
+            info.RawScript!,
+            existing.Id,
+            location,
+            type is SourceType.Custom or SourceType.Local or SourceType.Bundled);
+        if (candidate is null)
+        {
+            _logger.LogWarning("音源合并暂存失败，保留现有版本: {SourceId}", existing.Id);
             return null;
         }
-        _defaultTouchedByUser = true;
-        return source;
+
+        if (candidate.Kind is not LxSourceType.JsonManifest
+            && !await _scriptEngine.TestLoadAsync(candidate, cancellationToken))
+        {
+            _logger.LogWarning("音源合并脚本执行校验失败，保留现有版本: {SourceId}", existing.Id);
+            return null;
+        }
+
+        var snapshot = SourceSnapshot.Capture(existing);
+        var previousScript = _scriptSource.GetScript(existing.Id);
+        existing.Name = info.Name;
+        existing.Author = info.Author;
+        existing.Version = info.Version ?? "1.0";
+        existing.ScriptUrl = location;
+        existing.ScriptContent = info.RawScript;
+        existing.ContentSha256 = candidateDigest;
+        existing.Type = type;
+        existing.TrustState = ScriptTrustState.UserApproved;
+        existing.LastUpdateDate = DateTime.Now;
+
+        if (!_scriptSource.RegisterVerified(candidate, candidateDigest))
+        {
+            snapshot.Restore(existing);
+            return null;
+        }
+
+        try
+        {
+            await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
+        }
+        catch
+        {
+            snapshot.Restore(existing);
+            if (previousScript?.RawScript is not null)
+            {
+                _scriptSource.RegisterVerified(
+                    previousScript,
+                    ScriptMusicSource.ComputeSha256(previousScript.RawScript));
+            }
+            else
+            {
+                _scriptSource.Remove(existing.Id);
+            }
+
+            try
+            {
+                await _dataService.SaveMusicSourcesAsync(_sources, CancellationToken.None);
+            }
+            catch (Exception saveException)
+            {
+                _logger.LogError(saveException, "音源合并回滚保存失败: {SourceId}", existing.Id);
+            }
+
+            ClearCache();
+            RaiseSourcesChanged();
+            throw;
+        }
+
+        ClearCache();
+        RaiseSourcesChanged();
+        return new(
+            existing,
+            isReplacement
+                ? MusicSourceImportStatus.Replaced
+                : MusicSourceImportStatus.Merged);
+    }
+
+    private async Task ConsolidateDuplicateImportTargetsAsync(
+        MusicSource retained,
+        IReadOnlyList<MusicSource> matches,
+        CancellationToken cancellationToken)
+    {
+        var duplicates = matches
+            .Where(source => !ReferenceEquals(source, retained))
+            .ToArray();
+        if (duplicates.Length == 0) return;
+
+        foreach (var duplicate in duplicates)
+        {
+            _sources.Remove(duplicate);
+            _scriptSource.Remove(duplicate.Id);
+        }
+
+        try
+        {
+            await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
+        }
+        catch
+        {
+            _sources.AddRange(duplicates);
+            foreach (var duplicate in duplicates)
+            {
+                if (!string.IsNullOrEmpty(duplicate.ScriptContent))
+                {
+                    _scriptSource.RegisterVerified(
+                        _scriptSource.StageFromContent(
+                            duplicate.ScriptContent,
+                            duplicate.Id,
+                            duplicate.ScriptUrl,
+                            duplicate.Type is SourceType.Custom or SourceType.Local or SourceType.Bundled)
+                            ?? _scriptSource.GetScript(duplicate.Id),
+                        duplicate.ContentSha256 ?? string.Empty);
+                }
+            }
+
+            try { await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken); }
+            catch (Exception saveException)
+            {
+                _logger.LogError(saveException, "旧重复音源合并回滚保存失败");
+            }
+
+            RaiseSourcesChanged();
+            throw;
+        }
+
+        RaiseSourcesChanged();
+    }
+
+    private List<MusicSource> FindImportMergeTargets(LxScriptInfo info)
+    {
+        return _sources.Where(source =>
+            !source.IsSystemHidden
+            && source.Type != SourceType.Bundled
+            && !IsOfficialBuiltIn(source)
+            && IsSameImportIdentity(
+                source.Name,
+                source.Author,
+                info.Name,
+                info.Author))
+            .ToList();
+    }
+
+    private static bool IsSameImportIdentity(
+        string leftName,
+        string? leftAuthor,
+        string rightName,
+        string? rightAuthor)
+    {
+        if (!string.Equals(
+                leftName?.Trim(),
+                rightName?.Trim(),
+                StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (string.IsNullOrWhiteSpace(leftAuthor) || string.IsNullOrWhiteSpace(rightAuthor))
+            return true;
+
+        return string.Equals(
+            leftAuthor.Trim(),
+            rightAuthor.Trim(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int CompareSourceVersions(string? importedVersion, string? existingVersion)
+    {
+        var importedParsed = TryParseSourceVersion(importedVersion, out var imported);
+        var existingParsed = TryParseSourceVersion(existingVersion, out var existing);
+        if (importedParsed && existingParsed) return imported.CompareTo(existing);
+        return 0;
+    }
+
+    private static bool TryParseSourceVersion(string? value, out Version version)
+    {
+        version = new Version(0, 0, 0, 0);
+        var text = value?.Trim().TrimStart('v', 'V');
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var terminator = text.IndexOfAny(['-', '+', ' ']);
+        if (terminator >= 0) text = text[..terminator];
+
+        var parts = text.Split('.');
+        if (parts is not { Length: >= 2 and <= 4 }) return false;
+        var normalized = new int[4];
+        for (var index = 0; index < parts.Length; index++)
+        {
+            if (!int.TryParse(parts[index], out var number) || number < 0) return false;
+            normalized[index] = number;
+        }
+
+        version = new Version(normalized[0], normalized[1], normalized[2], normalized[3]);
+        return true;
     }
 
     public async Task<bool> TestSourceAsync(MusicSource s)

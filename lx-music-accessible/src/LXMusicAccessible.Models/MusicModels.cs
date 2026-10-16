@@ -200,6 +200,7 @@ public class MusicSource
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Name { get; set; } = string.Empty;
+    public string Author { get; set; } = string.Empty;
     public string Version { get; set; } = string.Empty;
     public string ScriptUrl { get; set; } = string.Empty;
     public string? ScriptContent { get; set; }
@@ -240,7 +241,8 @@ public class MusicSource
         {
             var name = string.IsNullOrEmpty(Name) ? "未命名音源" : Name;
             var ver = string.IsNullOrEmpty(Version) ? "" : $"，版本 {Version}";
-            return $"{name}{ver}，{TypeText}，{StatusText}";
+            var author = string.IsNullOrWhiteSpace(Author) ? "" : $"，作者 {Author}";
+            return $"{name}{ver}{author}，{TypeText}，{StatusText}";
         }
     }
 
@@ -265,6 +267,18 @@ public enum ScriptTrustState
     UserApproved,
     Bundled
 }
+
+public enum MusicSourceImportStatus
+{
+    Imported,
+    Merged,
+    Replaced,
+    VersionConflict
+}
+
+public sealed record MusicSourceImportResult(
+    MusicSource Source,
+    MusicSourceImportStatus Status);
 
 public enum ScriptActivationStatus
 {
@@ -354,6 +368,7 @@ public enum DownloadTaskStatus
 {
     Pending,
     Downloading,
+    Paused,
     Completed,
     Failed,
     Cancelled
@@ -416,6 +431,7 @@ public class DownloadTask : System.ComponentModel.INotifyPropertyChanged
     {
         DownloadTaskStatus.Pending => "等待中",
         DownloadTaskStatus.Downloading => "下载中",
+        DownloadTaskStatus.Paused => "已暂停",
         DownloadTaskStatus.Completed => "已完成",
         DownloadTaskStatus.Failed => "失败",
         DownloadTaskStatus.Cancelled => "已取消",
@@ -424,7 +440,7 @@ public class DownloadTask : System.ComponentModel.INotifyPropertyChanged
 
     public string ProgressText => Status switch
     {
-        DownloadTaskStatus.Downloading => $"{Progress:0}%",
+        DownloadTaskStatus.Downloading or DownloadTaskStatus.Paused => $"{Progress:0}%",
         DownloadTaskStatus.Completed => "100%",
         _ => StatusText
     };
