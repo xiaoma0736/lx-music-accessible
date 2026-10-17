@@ -407,7 +407,15 @@ public static class ApplicationHost
                 services.AddSingleton<KugouQrLoginService>();
                 services.AddSingleton<IPlaylistLoginWindowFactory, PlaylistLoginWindowFactory>();
                 services.AddSingleton<IQualityCandidateSource>(sp => sp.GetRequiredService<MusicSourceService>());
-                services.AddSingleton<IQualityProbeWorkflow, QualityProbeWorkflow>();
+                services.AddSingleton<IQualityProbeWorkflow>(sp =>
+                {
+                    var probe = new QualityProbeWorkflow(
+                        sp.GetRequiredService<IQualityCandidateSource>(),
+                        sp.GetRequiredService<HttpClient>());
+                    // 播放/下载音质子菜单跟随默认音源：音源变化后必须丢弃旧探测结果。
+                    sp.GetRequiredService<IMusicSourceService>().SourcesChanged += (_, _) => probe.InvalidateAll();
+                    return probe;
+                });
                 services.AddSingleton<ApplicationWindowFactory>();
                 services.AddSingleton<AnnouncementToggleService>();
                 services.AddSingleton<ApplicationShutdownRequest>();

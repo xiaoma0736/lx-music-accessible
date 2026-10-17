@@ -1243,6 +1243,30 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         FrameworkCompatibility.ThrowIfNull(music);
         cancellationToken.ThrowIfCancellationRequested();
         var platform = music.Source.Trim().ToLowerInvariant();
+        var candidates = BuildCandidates(platform);
+
+        // The play/download quality menus describe what the source the user will actually hear can
+        // serve, so they follow the default source. A default source that cannot serve this song's
+        // platform (or contributes nothing) falls back to every interface for that platform, which
+        // keeps the menus useful instead of empty.
+        var defaultSource = _sources.FirstOrDefault(source => source.IsDefault && source.IsEnabled);
+        if (defaultSource is not null)
+        {
+            var preferred = candidates
+                .Where(candidate => string.Equals(
+                    candidate.InterfaceId,
+                    defaultSource.Id,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (preferred.Length > 0)
+                return Task.FromResult<IReadOnlyList<SourceQualityCandidate>>(preferred);
+        }
+
+        return Task.FromResult<IReadOnlyList<SourceQualityCandidate>>(candidates);
+    }
+
+    private List<SourceQualityCandidate> BuildCandidates(string platform)
+    {
         var candidates = new List<SourceQualityCandidate>();
         foreach (var source in _sources.Where(source => source.IsEnabled).OrderBy(source => source.Priority))
         {
@@ -1277,7 +1301,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
                 quality)));
         }
 
-        return Task.FromResult<IReadOnlyList<SourceQualityCandidate>>(candidates);
+        return candidates;
     }
 
     public async Task<string?> ResolveAsync(
