@@ -1269,7 +1269,6 @@ public partial class WinFormsShell
     private sealed class QualityMenuState
     {
         public int Generation { get; set; }
-        public List<(string Quality, MenuItem Item)> Options { get; } = [];
     }
 
     private enum QualityMenuKind
@@ -1297,71 +1296,33 @@ public partial class WinFormsShell
         var generation = ++state.Generation;
         if (song is null)
         {
-            state.Options.Clear();
             parent.Text = parentLabel + "（无歌曲）";
-            parent.MenuItems.Clear();
-            parent.MenuItems.Add(new MenuItem("暂无可探测歌曲", (_, _) => { }) { Enabled = false });
+            ShowQualityMessage(parent, "暂无可探测歌曲");
             return;
         }
 
         parent.Text = parentLabel;
-        parent.MenuItems.Clear();
-        state.Options.Clear();
-        foreach (var quality in QualityCatalog.KnownQualities)
-        {
-            var capturedSong = song;
-            var item = new MenuItem(QualityCatalog.Label(quality) + "，音质探测中", (_, _) =>
-            {
-                if (!IsDisposed)
-                    _ = activate(new QualityMenuChoice { Song = capturedSong, Quality = quality });
-            })
-            {
-                Enabled = false
-            };
-            parent.MenuItems.Add(item);
-            state.Options.Add((quality, item));
-        }
-
         var probe = _services.QualityProbe;
         if (probe is null)
         {
-            foreach (var (quality, item) in state.Options)
-                item.Text = QualityCatalog.Label(quality) + "，音质探测不可用";
+            ShowQualityMessage(parent, "音质探测不可用");
             Announce("音质探测不可用", activityId, AnnouncementKind.Error);
             return;
         }
+
+        // Only the qualities the interface actually declares belong in the menu. A cached round can
+        // render synchronously here, which makes every later opening show the real list immediately.
+        var cached = probe.GetCached(song);
+        if (cached.Options.Count > 0)
+            RenderQualityOptions(parent, song, cached.Options, activate, kind);
+        else
+            ShowQualityMessage(parent, "正在探测音质，请稍候…");
 
         try
         {
             var result = await probe.ProbeAsync(song);
             if (generation != state.Generation || ownerControl.IsDisposed || IsDisposed) return;
-            foreach (var (quality, item) in state.Options)
-            {
-                var normalized = QualityCatalog.Normalize(quality);
-                var option = result.Options.FirstOrDefault(value =>
-                    string.Equals(QualityCatalog.Normalize(value.Quality), normalized, StringComparison.Ordinal));
-                ApplyQualityOption(item, option, quality, kind);
-            }
-
-            // A script may declare qualities the static list does not know (spatial, hifi, plugin
-            // ids). They belong in the menu too, otherwise the probe result silently loses entries.
-            foreach (var option in result.Options.Where(option => !state.Options.Any(entry =>
-                         string.Equals(
-                             QualityCatalog.Normalize(entry.Quality),
-                             QualityCatalog.Normalize(option.Quality),
-                             StringComparison.Ordinal))))
-            {
-                var capturedSong = song;
-                var capturedQuality = option.Quality;
-                var item = new MenuItem(string.Empty, (_, _) =>
-                {
-                    if (!IsDisposed)
-                        _ = activate(new QualityMenuChoice { Song = capturedSong, Quality = capturedQuality });
-                });
-                ApplyQualityOption(item, option, option.Quality, kind);
-                parent.MenuItems.Add(item);
-                state.Options.Add((option.Quality, item));
-            }
+            RenderQualityOptions(parent, song, result.Options, activate, kind);
 
             if (kind == QualityMenuKind.Play
                 && result.Options.All(option => option.Status != QualityAvailability.Playable))
@@ -1370,10 +1331,42 @@ public partial class WinFormsShell
         catch (Exception exception)
         {
             if (generation != state.Generation || ownerControl.IsDisposed || IsDisposed) return;
-            foreach (var (quality, item) in state.Options)
-                item.Text = QualityCatalog.Label(quality) + "，探测失败，请重新打开菜单";
+            ShowQualityMessage(parent, "探测失败，请重新打开菜单");
             Announce($"音质探测失败：{exception.GetType().Name}", activityId, AnnouncementKind.Error);
         }
+    }
+
+    private void RenderQualityOptions(
+        MenuItem parent,
+        MusicInfo song,
+        IReadOnlyList<QualityOption> options,
+        Func<QualityMenuChoice, Task> activate,
+        QualityMenuKind kind)
+    {
+        parent.MenuItems.Clear();
+        if (options.Count == 0)
+        {
+            ShowQualityMessage(parent, "当前音源没有声明可用的音质");
+            return;
+        }
+
+        foreach (var option in options)
+        {
+            var quality = option.Quality;
+            var item = new MenuItem(string.Empty, (_, _) =>
+            {
+                if (!IsDisposed)
+                    _ = activate(new QualityMenuChoice { Song = song, Quality = quality });
+            });
+            ApplyQualityOption(item, option, quality, kind);
+            parent.MenuItems.Add(item);
+        }
+    }
+
+    private static void ShowQualityMessage(MenuItem parent, string text)
+    {
+        parent.MenuItems.Clear();
+        parent.MenuItems.Add(new MenuItem(text, (_, _) => { }) { Enabled = false });
     }
 
     private static void ApplyQualityOption(
