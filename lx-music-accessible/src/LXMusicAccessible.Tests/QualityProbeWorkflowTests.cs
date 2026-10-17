@@ -36,7 +36,7 @@ public sealed class QualityProbeWorkflowTests
         var second = await workflow.ProbeAsync(song);
 
         Assert.Equal(QualityAvailability.Playable, first.Options.Single(item => item.Quality == "320k").Status);
-        Assert.True(first.Options.Single(item => item.Quality == "320k").Downloadable);
+        Assert.Equal("320k", first.Options.Single(item => item.Quality == "320k").DownloadQuality);
         Assert.Equal(QualityAvailability.Playable, first.Options.Single(item => item.Quality == "flac24bit").Status);
         Assert.Equal("接口 A", first.Options.Single(item => item.Quality == "320k").InterfaceName);
         Assert.Equal(first.Options.Single(item => item.Quality == "320k").Status, second.Options.Single(item => item.Quality == "320k").Status);
@@ -101,7 +101,7 @@ public sealed class QualityProbeWorkflowTests
     }
 
     [Fact]
-    public async Task Probe_reports_a_lossless_fallback_as_playable_but_not_downloadable()
+    public async Task Probe_reports_a_lossless_fallback_with_its_verified_download_quality()
     {
         var handler = new FakeQualityHttpHandler();
         handler.Bodies["hires"] = FlacBytes(bitsPerSample: 16, sampleRate: 44_100);
@@ -116,7 +116,8 @@ public sealed class QualityProbeWorkflowTests
         var option = Assert.Single(result.Options);
         Assert.Equal(QualityAvailability.Playable, option.Status);
         Assert.Equal("flac", option.ActualQuality);
-        Assert.False(option.Downloadable);
+        // A lossless fallback is downloaded at the quality that was actually verified.
+        Assert.Equal("flac", option.DownloadQuality);
     }
 
     [Fact]

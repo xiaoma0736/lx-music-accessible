@@ -21,7 +21,7 @@ public sealed record QualityOption(
     QualityAvailability Status,
     string? InterfaceName,
     string? ActualQuality,
-    bool Downloadable = false);
+    string? DownloadQuality = null);
 
 public sealed record QualityProbeResult(
     string CacheKey,
@@ -341,7 +341,10 @@ public sealed class QualityProbeWorkflow(
                 QualityAvailability.Playable,
                 candidate.InterfaceName,
                 actual,
-                MusicQuality.AcceptsDownload(quality, actual));
+                // Downloading uses the requested quality when the media is at least that good, and
+                // the verified lossless fallback otherwise. The menu then offers the same rows as
+                // playback and the download does not have to fetch a file it will reject.
+                MusicQuality.AcceptsDownload(quality, actual) ? quality : actual);
         }
 
         if (!attempted) return Incomplete(quality);

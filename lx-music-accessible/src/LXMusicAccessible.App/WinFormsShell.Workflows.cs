@@ -1353,10 +1353,13 @@ public partial class WinFormsShell
         foreach (var option in options)
         {
             var quality = option.Quality;
+            var chosen = kind == QualityMenuKind.Download
+                ? option.DownloadQuality ?? option.Quality
+                : option.Quality;
             var item = new MenuItem(string.Empty, (_, _) =>
             {
                 if (!IsDisposed)
-                    _ = activate(new QualityMenuChoice { Song = song, Quality = quality });
+                    _ = activate(new QualityMenuChoice { Song = song, Quality = chosen });
             });
             ApplyQualityOption(item, option, quality, kind);
             parent.MenuItems.Add(item);
@@ -1404,18 +1407,12 @@ public partial class WinFormsShell
         var actual = actualDiffers
             ? $"实际 {QualityCatalog.Label(option.ActualQuality)}"
             : null;
-        if (kind == QualityMenuKind.Download)
-        {
-            item.Text = option.Downloadable
-                ? $"{label}，可下载，{option.InterfaceName ?? "当前接口"}"
-                : $"{label}，{actual ?? "达不到所选音质"}，低于所选音质";
-            item.Enabled = option.Downloadable;
-            return;
-        }
-
+        // Play and download offer the same rows: anything the interface can serve is offered, and a
+        // lossless fallback is downloaded at the quality that was actually verified.
+        var verb = kind == QualityMenuKind.Download ? "可下载" : "可播放";
         item.Text = actual is null
-            ? $"{label}，可播放，{option.InterfaceName ?? "当前接口"}"
-            : $"{label}，可播放（{actual}），{option.InterfaceName ?? "当前接口"}";
+            ? $"{label}，{verb}，{option.InterfaceName ?? "当前接口"}"
+            : $"{label}，{verb}（{actual}），{option.InterfaceName ?? "当前接口"}";
         item.Enabled = true;
     }
     private async Task PlayQualityAsync(
