@@ -40,7 +40,7 @@ public sealed record ManualSourceOption(
         FrameworkCompatibility.ThrowIfNull(candidate);
         FrameworkCompatibility.ThrowIfNullOrWhiteSpace(quality);
         var label = string.IsNullOrWhiteSpace(displayLabel)
-            ? $"{sourceName}，{quality}，{candidate.Title}，{candidate.Artist}"
+            ? $"{sourceName}，{QualityCatalog.Label(quality)}，{candidate.Title}，{candidate.Artist}"
             : displayLabel.Trim();
         return new(sourceId, sourceName, platform, candidate, quality, label);
     }
@@ -99,13 +99,22 @@ public sealed record ManualSourceDiscoveryResult(
     IReadOnlyList<ManualSourceOption> Options,
     string Message = "")
 {
-    public static ManualSourceDiscoveryResult Success(IReadOnlyList<ManualSourceOption> options) =>
-        new(ManualSourceDiscoveryStatus.Success, options);
+    public static ManualSourceDiscoveryResult Success(IReadOnlyList<ManualSourceOption> options)
+    {
+        var playable = options.Count(option => option.IsPlayable);
+        var hidden = options.Count - playable;
+        var message = playable == 0
+            ? "没有找到可播放音源"
+            : hidden == 0
+                ? $"找到 {playable} 个可播放音源"
+                : $"找到 {playable} 个可播放音源，已隐藏 {hidden} 个不可用项";
+        return new(ManualSourceDiscoveryStatus.Success, options, message);
+    }
 
     public static ManualSourceDiscoveryResult Partial(IReadOnlyList<ManualSourceOption> options) => new(
         ManualSourceDiscoveryStatus.Success,
         options,
-        "换源查询超时，仅列出已完成的可播放项");
+        $"换源查询超时，仅列出已完成的可播放项（{options.Count} 个）");
 
     public static ManualSourceDiscoveryResult Timeout() => new(
         ManualSourceDiscoveryStatus.Timeout,
@@ -397,7 +406,7 @@ public sealed class ManualSourceDiscoveryWorkflow(
                     source.Platform,
                     candidate,
                     quality,
-                    $"{source.DisplayName}，{TranslateQuality(quality)}，{candidate.Title}，{candidate.Artist}");
+                    $"{source.DisplayName}，{QualityCatalog.Label(quality)}，{candidate.Title}，{candidate.Artist}");
                 completed.Add(playable);
                 return playable;
             }
@@ -435,13 +444,4 @@ public sealed class ManualSourceDiscoveryWorkflow(
         }
     }
 
-    private static string TranslateQuality(string quality) => quality switch
-    {
-        "128k" => "标准",
-        "192k" => "较高",
-        "320k" => "高品",
-        "flac" => "无损",
-        "flac24bit" => "Hi-Res",
-        _ => quality
-    };
 }

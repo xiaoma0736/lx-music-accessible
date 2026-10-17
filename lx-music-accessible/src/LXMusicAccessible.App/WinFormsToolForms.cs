@@ -1125,11 +1125,18 @@ public class ManualSourceSwitchForm : Form
 
     private void RenderResult(ManualSourceDiscoveryResult result)
     {
+        // Unavailable candidates used to sit in the list as disabled rows. They only repeated the
+        // same "解析失败" line and pushed the actually playable sources out of the reading position,
+        // so the list now carries playable results only and the status reports how many were hidden.
+        var playable = result.Options.Where(option => option.IsPlayable).ToArray();
         _options.Items.Clear();
-        foreach (var option in result.Options)
+        foreach (var option in playable)
             _options.Items.Add(new ObjectBox<ManualSourceOption>($"{option.DisplayLabel}，{option.Platform}", option));
         _status.Text = result.Message;
-        Announce(result.Message, "manual-source-query:" + Guid.NewGuid().ToString("N"), result.Status == ManualSourceDiscoveryStatus.Success ? AnnouncementKind.Success : AnnouncementKind.Error);
+        var kind = result.Status == ManualSourceDiscoveryStatus.Success && playable.Length > 0
+            ? AnnouncementKind.Success
+            : AnnouncementKind.Error;
+        Announce(result.Message, "manual-source-query:" + Guid.NewGuid().ToString("N"), kind);
         if (_options.Items.Count > 0)
         {
             _options.SelectedIndex = 0;

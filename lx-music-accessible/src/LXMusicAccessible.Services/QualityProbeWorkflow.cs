@@ -20,7 +20,8 @@ public sealed record QualityOption(
     string Label,
     QualityAvailability Status,
     string? InterfaceName,
-    string? ActualQuality);
+    string? ActualQuality,
+    bool Downloadable = false);
 
 public sealed record QualityProbeResult(
     string CacheKey,
@@ -325,7 +326,8 @@ public sealed class QualityProbeWorkflow(
                 QualityCatalog.Label(quality),
                 QualityAvailability.Playable,
                 candidate.InterfaceName,
-                actual);
+                actual,
+                MusicQuality.AcceptsDownload(quality, actual));
         }
 
         if (!attempted) return Incomplete(quality);
@@ -372,7 +374,9 @@ public sealed class QualityProbeWorkflow(
                     || bytes.Length > RecognizedPayloadThreshold))
                 actual = requestedQuality;
             if (actual is null) return null;
-            return MusicQuality.AcceptsDownload(requestedQuality, actual) ? actual : null;
+            // The submenu must answer the same question the player answers: would this stream play
+            // when the user picks this quality? Downloads keep their stricter rule via Downloadable.
+            return MusicQuality.AcceptsPlayback(requestedQuality, actual) ? actual : null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

@@ -36,6 +36,7 @@ public sealed class QualityProbeWorkflowTests
         var second = await workflow.ProbeAsync(song);
 
         Assert.Equal(QualityAvailability.Playable, first.Options.Single(item => item.Quality == "320k").Status);
+        Assert.True(first.Options.Single(item => item.Quality == "320k").Downloadable);
         Assert.Equal(QualityAvailability.Playable, first.Options.Single(item => item.Quality == "flac24bit").Status);
         Assert.Equal("接口 A", first.Options.Single(item => item.Quality == "320k").InterfaceName);
         Assert.Equal(first.Options.Single(item => item.Quality == "320k").Status, second.Options.Single(item => item.Quality == "320k").Status);
@@ -97,6 +98,25 @@ public sealed class QualityProbeWorkflowTests
         Assert.Equal("viper", option.Quality);
         Assert.Equal("蝰蛇音质", option.Label);
         Assert.Equal(QualityAvailability.Playable, option.Status);
+    }
+
+    [Fact]
+    public async Task Probe_reports_a_lossless_fallback_as_playable_but_not_downloadable()
+    {
+        var handler = new FakeQualityHttpHandler();
+        handler.Bodies["hires"] = FlacBytes(bitsPerSample: 16, sampleRate: 44_100);
+        using var httpClient = new HttpClient(handler);
+        var source = new FakeCandidateSource(
+            [new("interface", "接口", 1, "hires")],
+            _ => Task.FromResult<string?>("https://quality.test/hires"));
+        var workflow = new QualityProbeWorkflow(source, httpClient);
+
+        var result = await workflow.ProbeAsync(Song());
+
+        var option = Assert.Single(result.Options);
+        Assert.Equal(QualityAvailability.Playable, option.Status);
+        Assert.Equal("flac", option.ActualQuality);
+        Assert.False(option.Downloadable);
     }
 
     [Fact]

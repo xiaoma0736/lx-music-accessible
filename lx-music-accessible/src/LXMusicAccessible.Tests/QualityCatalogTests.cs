@@ -20,6 +20,13 @@ public sealed class QualityCatalogTests
     [InlineData("dolby", "杜比")]
     [InlineData("jymaster", "珍品/超清母带")]
     [InlineData("viper", "蝰蛇音质")]
+    [InlineData("spatial", "空间音频")]
+    [InlineData("hifi", "Hi-Fi 无损")]
+    [InlineData("ape", "无损 APE")]
+    [InlineData("alac", "无损 ALAC")]
+    [InlineData("wav", "无损 WAV")]
+    [InlineData("aac", "AAC")]
+    [InlineData("m4a", "AAC/M4A")]
     [InlineData("  FLAC ", "无损 FLAC")]
     public void Label_maps_known_quality_ids(string quality, string expected)
     {
@@ -54,6 +61,9 @@ public sealed class QualityCatalogTests
     [InlineData("master", 12)]
     [InlineData("jymaster", 13)]
     [InlineData("viper", 14)]
+    [InlineData("spatial", 10)]
+    [InlineData("hifi", 5)]
+    [InlineData("ape", 4)]
     public void Rank_orders_extended_qualities(string quality, int expected)
     {
         Assert.Equal(expected, QualityCatalog.Rank(quality));
