@@ -25,6 +25,26 @@ namespace LXMusicAccessible.Tests;
 public sealed class SettingsSpeechPreferenceTests
 {
     [Fact]
+    public void Quality_combos_show_the_catalog_labels()
+    {
+        WinFormsTestRunner.Run(() =>
+        {
+            var settings = LoadSettings(new UserSettings());
+            using var form = new SettingsForm(
+                new RecordingAnnouncer(), settings, new ListVoicesTts(), new IdleDownloads(), _ => false);
+            form.Show();
+            Application.DoEvents();
+
+            var expected = new[] { "标准", "较高", "极高", "无损 FLAC", "Hi-Res" };
+            var play = Assert.IsType<ComboBox>(form.Controls.Find("默认播放音质", true).Single());
+            var download = Assert.IsType<ComboBox>(form.Controls.Find("默认下载音质", true).Single());
+
+            Assert.Equal(expected, play.Items.Cast<object>().Select(item => item.ToString()).ToArray());
+            Assert.Equal(expected, download.Items.Cast<object>().Select(item => item.ToString()).ToArray());
+        });
+    }
+
+    [Fact]
     public void Voice_row_matches_the_stored_identifier_and_survives_reopening_settings()
     {
         WinFormsTestRunner.Run(() =>

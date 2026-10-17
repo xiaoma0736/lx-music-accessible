@@ -40,7 +40,7 @@ public sealed record ManualSourceOption(
         FrameworkCompatibility.ThrowIfNull(candidate);
         FrameworkCompatibility.ThrowIfNullOrWhiteSpace(quality);
         var label = string.IsNullOrWhiteSpace(displayLabel)
-            ? $"{sourceName}，{quality}，{candidate.Title}，{candidate.Artist}"
+            ? $"{sourceName}，{QualityCatalog.Label(quality)}，{candidate.Title}，{candidate.Artist}"
             : displayLabel.Trim();
         return new(sourceId, sourceName, platform, candidate, quality, label);
     }
@@ -397,7 +397,7 @@ public sealed class ManualSourceDiscoveryWorkflow(
                     source.Platform,
                     candidate,
                     quality,
-                    $"{source.DisplayName}，{TranslateQuality(quality)}，{candidate.Title}，{candidate.Artist}");
+                    $"{source.DisplayName}，{QualityCatalog.Label(quality)}，{candidate.Title}，{candidate.Artist}");
                 completed.Add(playable);
                 return playable;
             }
@@ -435,13 +435,4 @@ public sealed class ManualSourceDiscoveryWorkflow(
         }
     }
 
-    private static string TranslateQuality(string quality) => quality switch
-    {
-        "128k" => "标准",
-        "192k" => "较高",
-        "320k" => "高品",
-        "flac" => "无损",
-        "flac24bit" => "Hi-Res",
-        _ => quality
-    };
 }

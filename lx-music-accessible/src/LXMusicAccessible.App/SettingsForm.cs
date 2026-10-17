@@ -27,13 +27,16 @@ public class SettingsForm : Form
 
     private readonly ListBox _hotkeys = WinFormsUi.ListBox("快捷键", 2);
     private readonly ComboBox _closeBehavior = WinFormsUi.Combo("关闭行为", 1, "关闭应用", "隐藏到托盘");
-    private readonly ComboBox _quality = WinFormsUi.Combo("默认播放音质", 2, "标准", "较高", "极高", "无损", "Hi-Res");
+    private static readonly string[] DefaultQualityIds = ["128k", "192k", "320k", "flac", "hires"];
+    private static readonly string[] DefaultQualityLabels = DefaultQualityIds.Select(QualityCatalog.Label).ToArray();
+
+    private readonly ComboBox _quality = WinFormsUi.Combo("默认播放音质", 2, DefaultQualityLabels);
     private readonly ComboBox _playMode = WinFormsUi.Combo("默认播放模式", 3, "顺序播放", "列表循环", "单曲循环", "随机播放");
     private readonly TextBox _playerPath = new();
     private readonly CheckBox _lyricAnnounce = new() { Text = "自动播报歌词" };
     private readonly CheckBox _lyricScroll = new() { Text = "自动滚动歌词" };
     private readonly TextBox _downloadPath = new();
-    private readonly ComboBox _downloadQuality = WinFormsUi.Combo("默认下载音质", 7, "标准", "较高", "极高", "无损", "Hi-Res");
+    private readonly ComboBox _downloadQuality = WinFormsUi.Combo("默认下载音质", 7, DefaultQualityLabels);
     private readonly CheckBox _downloadLyric = new() { Text = "同时下载歌词" };
     private readonly CheckBox _nameQuality = new() { Text = "文件名包含音质" };
     private readonly ComboBox _nameOrder = WinFormsUi.Combo("文件名顺序", 10, "歌手 - 标题", "标题 - 歌手");
@@ -450,23 +453,19 @@ public class SettingsForm : Form
         _ => PlayMode.Sequential
     };
 
-    private static int QualityIndex(string? quality) => quality switch
+    private static int QualityIndex(string? quality)
     {
-        "192k" => 1,
-        "320k" => 2,
-        "flac" => 3,
-        "flac24bit" or "hires" => 4,
-        _ => 0
-    };
+        var id = QualityCatalog.Normalize(quality);
+        var index = Array.IndexOf(DefaultQualityIds, id);
+        if (index >= 0) return index;
+        return id is "flac24bit" ? Array.IndexOf(DefaultQualityIds, "hires") : 0;
+    }
 
-    private static string QualityId(string display, string fallback) => display switch
+    private static string QualityId(string display, string fallback)
     {
-        "较高" => "192k",
-        "极高" => "320k",
-        "无损" => "flac",
-        "Hi-Res" => "hires",
-        _ => fallback
-    };
+        var index = Array.IndexOf(DefaultQualityLabels, display);
+        return index >= 0 ? DefaultQualityIds[index] : fallback;
+    }
 
     private bool Apply(Action<UserSettings> edit)
     {

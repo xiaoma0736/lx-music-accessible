@@ -222,7 +222,8 @@ public partial class WinFormsShell : Form
             _current,
             "当前歌曲音质",
             choice => PlayQualityAsync(choice.Song, choice.Quality, PlaybackQueueOrigin.Search),
-            "play-quality");
+            "play-quality",
+            QualityMenuKind.Play);
         play.MenuItems.Add(_playQualityMenu);
         var navigate = new MenuItem("导航(&D)");
         navigate.MenuItems.Add(new MenuItem("搜索(&1)", (_, _) => SelectTab(0), Shortcut.Ctrl1));
@@ -577,24 +578,6 @@ public partial class WinFormsShell : Form
         _ => "all"
     };
 
-    protected static string TranslateQuality(string? quality) => quality switch
-    {
-        "128k" => "标准",
-        "192k" => "较高",
-        "320k" => "极高",
-        "flac" => "无损",
-        "flac24bit" => "Hi-Res 无损",
-        "hires" => "Hi-Res",
-        "atmos" => "杜比全景声",
-        "atmos_plus" => "杜比全景声+",
-        "master" => "超清母带",
-        "jyeffect" => "高清环绕声",
-        "sky" => "沉浸环绕声",
-        "dolby" => "杜比",
-        "jymaster" => "超清母带",
-        _ => string.IsNullOrWhiteSpace(quality) ? "未知" : quality
-    };
-
     protected static string FormatTime(TimeSpan value)
     {
         if (value < TimeSpan.Zero) value = TimeSpan.Zero;
@@ -635,7 +618,7 @@ public partial class WinFormsShell : Form
         var actual = _services.Audio?.ActualQuality;
         return string.IsNullOrWhiteSpace(actual)
             ? TranslateQualityLevel(music.Quality)
-            : TranslateQuality(actual);
+            : QualityCatalog.Label(actual);
     }
 
     private string BuildPlaybackStatusText()

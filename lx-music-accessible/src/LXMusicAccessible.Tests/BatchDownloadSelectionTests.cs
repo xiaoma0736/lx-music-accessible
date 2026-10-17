@@ -309,7 +309,9 @@ public sealed class BatchDownloadSelectionTests
         var probe = new StaticQualityProbe(new QualityProbeResult(
             "qq|song-1",
             [
-                new("320k", "极高", QualityAvailability.Playable, "Interface A", "320k"),
+                new("320k", "极高", QualityAvailability.Playable, "Interface A", "320k", Downloadable: true),
+                new("hires", "Hi-Res", QualityAvailability.Playable, "Interface B", "flac"),
+                new("provider_gold", "provider_gold", QualityAvailability.Unavailable, null, null),
                 new("flac24bit", "Hi-Res 无损", QualityAvailability.Unavailable, null, null)
             ],
             "done"));
@@ -324,7 +326,11 @@ public sealed class BatchDownloadSelectionTests
         RaisePopup(download);
         var downloadCount = download.MenuItems.Count;
         Assert.True(downloadCount > 0);
-        var downloadItem = Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可播放，Interface A");
+        var downloadItem = Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可下载，Interface A");
+        var lowerQualityItem = Assert.Single(
+            download.MenuItems.Cast<MenuItem>(),
+            item => item.Text == "Hi-Res，实际 无损 FLAC，低于所选音质");
+        Assert.False(lowerQualityItem.Enabled);
         var unavailableItem = Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res 无损，不可用");
         Assert.Equal(1, probe.ProbeCalls);
 
@@ -333,9 +339,12 @@ public sealed class BatchDownloadSelectionTests
         var playCount = play.MenuItems.Count;
         Assert.Equal(downloadCount, playCount);
         Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可播放，Interface A");
+        Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res，可播放（实际 无损 FLAC），Interface B");
         Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res 无损，不可用");
-        Assert.Equal(1, play.MenuItems.Cast<MenuItem>().Count(item => item.Enabled));
-        Assert.Same(downloadItem, Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可播放，Interface A"));
+        // A quality id the static catalog does not know must still reach the menu instead of vanishing.
+        Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Text == "provider_gold，不可用");
+        Assert.Equal(2, play.MenuItems.Cast<MenuItem>().Count(item => item.Enabled));
+        Assert.Same(downloadItem, Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可下载，Interface A"));
         Assert.Same(unavailableItem, Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res 无损，不可用"));
         Assert.Equal(downloadCount, download.MenuItems.Count);
 
@@ -361,7 +370,6 @@ public sealed class BatchDownloadSelectionTests
             // The outer popup must synchronously prepare both child menus. A child popup that only starts
             // network work after the user reaches it cannot reliably become a native submenu on first Entry.
             InvokePopup(list.ContextMenu);
-            System.IO.File.WriteAllLines("batch-menu-debug.txt", list.ContextMenu!.MenuItems.Cast<MenuItem>().Select(item => item.Text ?? "<null>"));
             var download = RequiredMenuItem(list.ContextMenu!, "下载单曲音质");
             var play = RequiredMenuItem(list.ContextMenu!, "播放音质");
             Assert.True(download.MenuItems.Count > 0, "Download quality submenu was not ready when the context menu opened.");
@@ -374,7 +382,7 @@ public sealed class BatchDownloadSelectionTests
             probe.Complete(new QualityProbeResult(
                 "test|song-1",
                 [
-                    new("320k", "极高", QualityAvailability.Playable, "Interface A", "320k"),
+                    new("320k", "极高", QualityAvailability.Playable, "Interface A", "320k", Downloadable: true),
                     new("flac24bit", "Hi-Res 无损", QualityAvailability.Unavailable, null, null)
                 ],
                 "done"));
