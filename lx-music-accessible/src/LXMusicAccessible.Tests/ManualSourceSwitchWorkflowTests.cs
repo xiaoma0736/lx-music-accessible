@@ -88,6 +88,7 @@ public sealed class ManualSourceSwitchWorkflowTests
                 ("source-b", "128k", false)
             ],
             result.Options.Select(option => (option.SourceId, option.Quality, option.IsPlayable)).ToArray());
+        Assert.Equal("找到 1 个可播放音源，已隐藏 3 个不可用项", result.Message);
         Assert.Contains("不可用", Assert.Single(result.Options, option => option is { SourceId: "source-a", Quality: "128k" }).DisplayLabel, StringComparison.Ordinal);
     }
 
@@ -343,13 +344,23 @@ public sealed class ManualSourceSwitchWorkflowTests
     }
 
     [Fact]
-    public void Manual_source_window_shows_unavailable_state_and_blocks_exact_playback()
+    public void Manual_source_window_hides_unavailable_candidates_and_blocks_exact_playback()
     {
-        var option = ManualSourceOption.Unavailable(
-            "source-a", "音源A", "a", Candidate("a-1", "a"), "flac", "解析失败");
         var announcer = new RecordingAnnouncer();
-        var workflow = new StaticManualWorkflow(ManualSourceDiscoveryResult.Success([option]));
+        var gateway = new RecordingGateway
+        {
+            Interfaces =
+            [
+                ManualSourceInterface.BuiltIn("source-a", "音源A", "a", ["flac"]),
+                ManualSourceInterface.BuiltIn("source-b", "音源B", "a", ["320k"])
+            ]
+        };
+        gateway.AddCandidate("source-a", Candidate("a-1", "a"));
+        gateway.AddCandidate("source-b", Candidate("b-1", "a"));
+        gateway.Resolve = (_, sourceId, quality, _) => Task.FromResult<string?>(
+            sourceId == "source-b" && quality == "320k" ? "https://fixture.test/320k" : null);
         var exact = new RecordingExactPlayback();
+        var workflow = CreateWorkflow(gateway, exact);
         WinFormsTestRunner.RunStaAsync(async () =>
         {
             using var form = new ManualSourceSwitchForm(announcer, workflow, Target, _ => false);
@@ -357,15 +368,45 @@ public sealed class ManualSourceSwitchWorkflowTests
             Application.DoEvents();
             var list = Assert.IsType<ListBox>(Assert.Single(form.Controls.Find("可用音源", true)));
             await WaitFor(() => list.Items.Count > 0);
+            var status = Assert.IsType<Label>(Assert.Single(form.Controls.Find("ManualSwitchStatus", true)));
 
-            Assert.Equal("音源A，无损 FLAC，不可用，解析失败，同一首歌，同一位歌手，a", list.Items[0].ToString());
+            Assert.Single(list.Items);
+            Assert.Equal("音源B，极高，同一首歌，同一位歌手，a", list.Items[0].ToString());
+            Assert.Equal("找到 1 个可播放音源，已隐藏 1 个不可用项", status.Text);
+            Assert.DoesNotContain(
+                list.Items.Cast<object>().Select(item => item.ToString()),
+                text => text!.Contains("不可用", StringComparison.Ordinal));
+
             list.SelectedIndex = 0;
             var method = typeof(ManualSourceSwitchForm).GetMethod("PlayAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
             Assert.NotNull(method);
             await (Task)method!.Invoke(form, Array.Empty<object?>())!;
             await Task.Delay(25);
 
-            Assert.Empty(exact.Requests);
+            // The playable row plays exactly what the user selected.
+            Assert.Single(exact.Requests);
+            Assert.Equal("source-b", exact.Requests[0].Option.SourceId);
+            Assert.Equal("320k", exact.Requests[0].Request.Quality);
+        });
+    }
+
+    [Fact]
+    public void Manual_source_window_reports_when_nothing_is_playable()
+    {
+        var option = ManualSourceOption.Unavailable(
+            "source-a", "音源A", "a", Candidate("a-1", "a"), "flac", "解析失败");
+        var announcer = new RecordingAnnouncer();
+        var workflow = new StaticManualWorkflow(ManualSourceDiscoveryResult.Success([option]));
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            using var form = new ManualSourceSwitchForm(announcer, workflow, Target, _ => false);
+            form.Show();
+            Application.DoEvents();
+            var list = Assert.IsType<ListBox>(Assert.Single(form.Controls.Find("可用音源", true)));
+            var status = Assert.IsType<Label>(Assert.Single(form.Controls.Find("ManualSwitchStatus", true)));
+            await WaitFor(() => status.Text == "没有找到可播放音源");
+
+            Assert.Empty(list.Items);
         });
     }
 

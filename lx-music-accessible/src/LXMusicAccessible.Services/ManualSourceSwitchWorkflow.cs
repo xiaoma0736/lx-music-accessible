@@ -99,13 +99,22 @@ public sealed record ManualSourceDiscoveryResult(
     IReadOnlyList<ManualSourceOption> Options,
     string Message = "")
 {
-    public static ManualSourceDiscoveryResult Success(IReadOnlyList<ManualSourceOption> options) =>
-        new(ManualSourceDiscoveryStatus.Success, options);
+    public static ManualSourceDiscoveryResult Success(IReadOnlyList<ManualSourceOption> options)
+    {
+        var playable = options.Count(option => option.IsPlayable);
+        var hidden = options.Count - playable;
+        var message = playable == 0
+            ? "没有找到可播放音源"
+            : hidden == 0
+                ? $"找到 {playable} 个可播放音源"
+                : $"找到 {playable} 个可播放音源，已隐藏 {hidden} 个不可用项";
+        return new(ManualSourceDiscoveryStatus.Success, options, message);
+    }
 
     public static ManualSourceDiscoveryResult Partial(IReadOnlyList<ManualSourceOption> options) => new(
         ManualSourceDiscoveryStatus.Success,
         options,
-        "换源查询超时，仅列出已完成的可播放项");
+        $"换源查询超时，仅列出已完成的可播放项（{options.Count} 个）");
 
     public static ManualSourceDiscoveryResult Timeout() => new(
         ManualSourceDiscoveryStatus.Timeout,
