@@ -6,6 +6,8 @@ internal static class AudioQualityInspector
     {
         if (bytes.Length < 64) return null;
         if (StartsWith(bytes, "fLaC"u8)) return IdentifyFlac(bytes);
+        // ISO base media container (m4a/aac): size[4] + "ftyp" + brand.
+        if (bytes.Length >= 12 && StartsWith(bytes.AsSpan(4), "ftyp"u8)) return "m4a";
         if (StartsWith(bytes, "ID3"u8)) return IdentifyMp3(bytes);
         if (bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0) return IdentifyMp3(bytes);
         if (StartsWith(bytes, "RIFF"u8) && StartsWith(bytes.AsSpan(8), "WAVE"u8)) return "wav";
@@ -43,6 +45,8 @@ internal static class AudioQualityInspector
             var version = (bytes[index + 1] >> 3) & 0x03;
             var layer = (bytes[index + 1] >> 1) & 0x03;
             var bitrateIndex = (bytes[index + 2] >> 4) & 0x0F;
+            // ADTS AAC frames share the MPEG sync word but declare layer 0.
+            if (layer == 0) return "aac";
             if (layer != 1 || bitrateIndex is 0 or 15) continue;
             var table = version == 3
                 ? new[] { 0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320 }

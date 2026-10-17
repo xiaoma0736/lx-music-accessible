@@ -122,6 +122,99 @@ public sealed class ManualSourceSwitchWorkflowTests
         Assert.All(started, item => Assert.True(item.Task.IsCompleted));
         Assert.Equal(["flac", "320k", "128k"], result.Options.Select(option => option.Quality).ToArray());
     }
+
+    [Fact]
+    public async Task Discovery_bounds_concurrent_quality_resolutions()
+    {
+        var qualities = new[]
+        {
+            "jymaster", "master", "atmos_plus", "atmos", "dolby", "sky",
+            "jyeffect", "hires", "flac24bit", "flac", "320k", "192k"
+        };
+        var gateway = new RecordingGateway
+        {
+            Interfaces = [ManualSourceInterface.BuiltIn("source-a", "音源A", "a", qualities)]
+        };
+        gateway.AddCandidate("source-a", Candidate("a-1", "a"));
+        var active = 0;
+        var peak = 0;
+        gateway.Resolve = async (_, _, _, _) =>
+        {
+            var current = Interlocked.Increment(ref active);
+            UpdatePeak(ref peak, current);
+            await Task.Delay(30);
+            Interlocked.Decrement(ref active);
+            return null;
+        };
+        var workflow = CreateWorkflow(gateway, new RecordingExactPlayback());
+
+        var result = await workflow.DiscoverAsync(Target);
+
+        Assert.Equal(ManualSourceDiscoveryStatus.Success, result.Status);
+        Assert.Equal(qualities.Length, result.Options.Count);
+        Assert.InRange(peak, 2, 8);
+    }
+
+    [Fact]
+    public async Task Timeout_keeps_playable_options_found_before_the_budget_expires()
+    {
+        var gateway = new RecordingGateway
+        {
+            Interfaces = [ManualSourceInterface.BuiltIn("source-a", "音源A", "a", ["320k", "flac"])]
+        };
+        gateway.AddCandidate("source-a", Candidate("a-1", "a"));
+        gateway.Resolve = async (_, _, quality, cancellationToken) =>
+        {
+            if (quality == "320k") return "https://fixture.test/320k";
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+            return null;
+        };
+        var workflow = CreateWorkflow(gateway, new RecordingExactPlayback(), budget: TimeSpan.FromMilliseconds(150));
+
+        var result = await workflow.DiscoverAsync(Target);
+
+        Assert.Equal(ManualSourceDiscoveryStatus.Success, result.Status);
+        var option = Assert.Single(result.Options);
+        Assert.Equal("320k", option.Quality);
+        Assert.True(option.IsPlayable);
+        Assert.Contains("超时", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Manual_source_window_cancels_the_previous_search_when_restarted()
+    {
+        var announcer = new RecordingAnnouncer();
+        var workflow = new BlockingManualWorkflow();
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            using var form = new ManualSourceSwitchForm(announcer, workflow, Target, _ => false);
+            form.Show();
+            Application.DoEvents();
+            var search = Assert.IsType<Button>(Assert.Single(form.Controls.Find("搜索可用音源", true)));
+            await WaitFor(() => workflow.Starts == 1);
+            var first = workflow.TokenAt(0);
+
+            search.PerformClick();
+            await WaitFor(() => workflow.Starts == 2);
+
+            Assert.True(first.IsCancellationRequested);
+            Assert.False(workflow.TokenAt(1).IsCancellationRequested);
+
+            form.Close();
+            await WaitFor(() => workflow.TokenAt(1).IsCancellationRequested);
+        });
+    }
+
+    private static void UpdatePeak(ref int peak, int value)
+    {
+        var current = Volatile.Read(ref peak);
+        while (value > current)
+        {
+            var observed = Interlocked.CompareExchange(ref peak, value, current);
+            if (observed == current) return;
+            current = observed;
+        }
+    }
     [Fact]
     public async Task Unavailable_option_is_never_sent_to_exact_playback()
     {
@@ -315,6 +408,40 @@ public sealed class ManualSourceSwitchWorkflowTests
 
         public Task<PlaybackResult> PlayAsync(ManualSourcePlaybackRequest request, CancellationToken cancellationToken = default) =>
             Task.FromResult(new PlaybackResult(PlaybackResultStatus.Playing, request.Option.Candidate, request.Origin, "playing"));
+
+        public void Dispose() { }
+    }
+
+    private sealed class BlockingManualWorkflow : IManualSourceDiscoveryWorkflow
+    {
+        private readonly List<CancellationToken> _tokens = new();
+        private int _starts;
+
+        public int Starts => Volatile.Read(ref _starts);
+
+        public CancellationToken TokenAt(int index)
+        {
+            lock (_tokens)
+                return _tokens[index];
+        }
+
+        public Task<ManualSourceDiscoveryResult> DiscoverAsync(
+            MusicInfo target,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _starts);
+            lock (_tokens)
+                _tokens.Add(cancellationToken);
+            var completion = new TaskCompletionSource<ManualSourceDiscoveryResult>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken));
+            return completion.Task;
+        }
+
+        public Task<PlaybackResult> PlayAsync(
+            ManualSourcePlaybackRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new PlaybackResult(PlaybackResultStatus.Failed, null, request.Origin, "not used"));
 
         public void Dispose() { }
     }
