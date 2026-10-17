@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -309,7 +309,7 @@ public sealed class BatchDownloadSelectionTests
         var probe = new StaticQualityProbe(new QualityProbeResult(
             "qq|song-1",
             [
-                new("320k", "极高", QualityAvailability.Playable, "Interface A", "320k", Downloadable: true),
+                new("320k", "极高", QualityAvailability.Playable, "Interface A", "320k"),
                 new("hires", "Hi-Res", QualityAvailability.Playable, "Interface B", "flac"),
                 new("provider_gold", "provider_gold", QualityAvailability.Unavailable, null, null),
                 new("flac24bit", "Hi-Res 无损", QualityAvailability.Unavailable, null, null)
@@ -327,10 +327,10 @@ public sealed class BatchDownloadSelectionTests
         var downloadCount = download.MenuItems.Count;
         Assert.True(downloadCount > 0);
         var downloadItem = Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可下载，Interface A");
-        var lowerQualityItem = Assert.Single(
+        var losslessFallback = Assert.Single(
             download.MenuItems.Cast<MenuItem>(),
-            item => item.Text == "Hi-Res，实际 无损 FLAC，低于所选音质");
-        Assert.False(lowerQualityItem.Enabled);
+            item => item.Text == "Hi-Res，可下载（实际 无损 FLAC），Interface B");
+        Assert.True(losslessFallback.Enabled);
         var unavailableItem = Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res 无损，不可用");
         Assert.Equal(1, probe.ProbeCalls);
 
@@ -344,6 +344,9 @@ public sealed class BatchDownloadSelectionTests
         // A quality id the static catalog does not know must still reach the menu instead of vanishing.
         Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Text == "provider_gold，不可用");
         Assert.Equal(2, play.MenuItems.Cast<MenuItem>().Count(item => item.Enabled));
+        Assert.Equal(
+            play.MenuItems.Cast<MenuItem>().Select(item => item.Enabled),
+            download.MenuItems.Cast<MenuItem>().Select(item => item.Enabled));
         Assert.Same(downloadItem, Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可下载，Interface A"));
         Assert.Same(unavailableItem, Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res 无损，不可用"));
         Assert.Equal(downloadCount, download.MenuItems.Count);
@@ -353,13 +356,41 @@ public sealed class BatchDownloadSelectionTests
     }
 
     [Fact]
+    public void Download_menu_uses_the_verified_quality_for_a_lossless_fallback()
+    {
+        var downloads = new RecordingBatchDownloads();
+        var probe = new StaticQualityProbe(new QualityProbeResult(
+            "qq|song-1",
+            [
+                new("hires", "Hi-Res", QualityAvailability.Playable, "聆澜音源", "flac", DownloadQuality: "flac")
+            ],
+            "done"));
+        using var shell = CreateShell(downloads, qualityProbe: probe);
+        var list = RequiredListBox(shell, "SearchResults");
+        FillSongs(list, 2);
+        list.SelectedIndex = 1;
+        _ = list.Handle;
+        SendMessage(list.Handle, 0x019E, (IntPtr)1, IntPtr.Zero);
+
+        var download = RequiredMenuItem(list.ContextMenu!, "下载单曲音质");
+        RaisePopup(download);
+
+        var item = Assert.Single(download.MenuItems.Cast<MenuItem>());
+        Assert.True(item.Enabled);
+        Assert.Equal("Hi-Res，可下载（实际 无损 FLAC），聆澜音源", item.Text);
+        item.PerformClick();
+        WaitForUi(() => downloads.SingleRequests.Count == 1);
+        Assert.Equal("flac", downloads.SingleRequests.Single().Quality);
+    }
+
+    [Fact]
     public void Quality_menus_only_list_qualities_the_interface_declares()
     {
         var probe = new StaticQualityProbe(new QualityProbeResult(
             "qq|song-1",
             [
-                new("128k", "标准", QualityAvailability.Playable, "聆澜音源", "128k", Downloadable: true),
-                new("320k", "极高", QualityAvailability.Playable, "聆澜音源", "320k", Downloadable: true)
+                new("128k", "标准", QualityAvailability.Playable, "聆澜音源", "128k"),
+                new("320k", "极高", QualityAvailability.Playable, "聆澜音源", "320k")
             ],
             "找到 2 个可播放音质"));
         using var shell = CreateShell(new RecordingBatchDownloads(), qualityProbe: probe);
@@ -414,7 +445,7 @@ public sealed class BatchDownloadSelectionTests
             probe.Complete(new QualityProbeResult(
                 "test|song-1",
                 [
-                    new("320k", "极高", QualityAvailability.Playable, "Interface A", "320k", Downloadable: true),
+                    new("320k", "极高", QualityAvailability.Playable, "Interface A", "320k"),
                     new("flac24bit", "Hi-Res 无损", QualityAvailability.Unavailable, null, null)
                 ],
                 "done"));
