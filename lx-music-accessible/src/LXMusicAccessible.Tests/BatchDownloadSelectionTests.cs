@@ -353,6 +353,38 @@ public sealed class BatchDownloadSelectionTests
     }
 
     [Fact]
+    public void Quality_menus_only_list_qualities_the_interface_declares()
+    {
+        var probe = new StaticQualityProbe(new QualityProbeResult(
+            "qq|song-1",
+            [
+                new("128k", "标准", QualityAvailability.Playable, "聆澜音源", "128k", Downloadable: true),
+                new("320k", "极高", QualityAvailability.Playable, "聆澜音源", "320k", Downloadable: true)
+            ],
+            "找到 2 个可播放音质"));
+        using var shell = CreateShell(new RecordingBatchDownloads(), qualityProbe: probe);
+        var list = RequiredListBox(shell, "SearchResults");
+        FillSongs(list, 2);
+        list.SelectedIndex = 1;
+        _ = list.Handle;
+        SendMessage(list.Handle, 0x019E, (IntPtr)1, IntPtr.Zero);
+
+        var download = RequiredMenuItem(list.ContextMenu!, "下载单曲音质");
+        RaisePopup(download);
+
+        Assert.Equal(2, download.MenuItems.Count);
+        Assert.DoesNotContain(download.MenuItems.Cast<MenuItem>(), item => item.Text.Contains("母带", StringComparison.Ordinal));
+        Assert.DoesNotContain(download.MenuItems.Cast<MenuItem>(), item => item.Text.Contains("Hi-Res", StringComparison.Ordinal));
+        Assert.All(download.MenuItems.Cast<MenuItem>(), item => Assert.True(item.Enabled));
+
+        var play = RequiredMenuItem(list.ContextMenu!, "播放音质");
+        RaisePopup(play);
+
+        Assert.Equal(2, play.MenuItems.Count);
+        Assert.All(play.MenuItems.Cast<MenuItem>(), item => Assert.True(item.Enabled));
+    }
+
+    [Fact]
     public void Context_menu_provides_stable_quality_submenus_and_enter_activates_selected_quality()
     {
         WinFormsTestRunner.Run(() =>
@@ -388,8 +420,11 @@ public sealed class BatchDownloadSelectionTests
                 "done"));
             WaitForUi(() => download.MenuItems.Cast<MenuItem>().Any(item => item.Enabled));
             WaitForUi(() => play.MenuItems.Cast<MenuItem>().Any(item => item.Enabled));
-            Assert.Equal(downloadCount, download.MenuItems.Count);
-            Assert.Equal(playCount, play.MenuItems.Count);
+            // The placeholder row is replaced by the qualities the interface actually declares.
+            Assert.Equal(2, download.MenuItems.Count);
+            Assert.Equal(2, play.MenuItems.Count);
+            Assert.Equal(1, downloadCount);
+            Assert.Equal(1, playCount);
 
             var downloadOption = Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Enabled);
             var playOption = Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Enabled);
