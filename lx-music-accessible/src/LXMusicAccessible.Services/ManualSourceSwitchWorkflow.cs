@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using LXMusicAccessible.Models;
 using Microsoft.Extensions.Logging;
 
@@ -101,6 +102,11 @@ public sealed record ManualSourceDiscoveryResult(
     public static ManualSourceDiscoveryResult Success(IReadOnlyList<ManualSourceOption> options) =>
         new(ManualSourceDiscoveryStatus.Success, options);
 
+    public static ManualSourceDiscoveryResult Partial(IReadOnlyList<ManualSourceOption> options) => new(
+        ManualSourceDiscoveryStatus.Success,
+        options,
+        "换源查询超时，仅列出已完成的可播放项");
+
     public static ManualSourceDiscoveryResult Timeout() => new(
         ManualSourceDiscoveryStatus.Timeout,
         [],
@@ -161,6 +167,12 @@ public sealed class ManualSourceDiscoveryWorkflow(
 {
     private static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan CancellationPropagationGrace = TimeSpan.FromMilliseconds(250);
+    // Every script candidate can create its own ClearScript V8 engine and block a thread-pool
+    // thread. Sixteen enabled scripts with eight declared qualities each used to start well over a
+    // hundred of them at once, which starved the whole process. Eight keeps one interface's whole
+    // quality list in flight while bounding the engines globally.
+    private const int MaxConcurrentQualityProbes = 8;
+    private readonly SemaphoreSlim _probeGate = new(MaxConcurrentQualityProbes, MaxConcurrentQualityProbes);
 
     public async Task<ManualSourceDiscoveryResult> DiscoverAsync(
         MusicInfo target,
@@ -172,7 +184,8 @@ public sealed class ManualSourceDiscoveryWorkflow(
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             timeout.Token);
-        var discovery = DiscoverCoreAsync(target, linked.Token);
+        var completed = new ConcurrentBag<ManualSourceOption>();
+        var discovery = DiscoverCoreAsync(target, linked.Token, completed);
 
         try
         {
@@ -184,7 +197,10 @@ public sealed class ManualSourceDiscoveryWorkflow(
             && !cancellationToken.IsCancellationRequested)
         {
             await WaitForCancellationPropagationAsync(discovery);
-            return ManualSourceDiscoveryResult.Timeout();
+            var partial = OrderOptions(completed.ToArray(), includeUnavailable: false);
+            return partial.Count > 0
+                ? ManualSourceDiscoveryResult.Partial(partial)
+                : ManualSourceDiscoveryResult.Timeout();
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -262,7 +278,8 @@ public sealed class ManualSourceDiscoveryWorkflow(
 
     private async Task<IReadOnlyList<ManualSourceOption>> DiscoverCoreAsync(
         MusicInfo target,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ConcurrentBag<ManualSourceOption> completed)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var interfaces = gateway.GetPlaybackInterfaces(target)
@@ -280,18 +297,24 @@ public sealed class ManualSourceDiscoveryWorkflow(
                 target,
                 source,
                 candidates[index],
+                completed,
                 cancellationToken))
             .ToArray();
         var discovered = await Task.WhenAll(optionTasks);
-        return discovered
-            .SelectMany(options => options)
+        return OrderOptions(discovered.SelectMany(options => options), includeUnavailable: true);
+    }
+
+    private static IReadOnlyList<ManualSourceOption> OrderOptions(
+        IEnumerable<ManualSourceOption> options,
+        bool includeUnavailable) =>
+        options
+            .Where(option => includeUnavailable || option.IsPlayable)
             .GroupBy(option => option.DeduplicationKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .OrderBy(option => option.SourceId, StringComparer.OrdinalIgnoreCase)
             .ThenByDescending(option => QualityCatalog.Rank(option.Quality))
             .ThenBy(option => option.Quality, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-    }
 
     private async Task<MusicInfo?> SearchBestCandidateAsync(
         MusicInfo target,
@@ -330,6 +353,7 @@ public sealed class ManualSourceDiscoveryWorkflow(
         MusicInfo target,
         ManualSourceInterface source,
         MusicInfo? candidate,
+        ConcurrentBag<ManualSourceOption> completed,
         CancellationToken cancellationToken)
     {
         if (candidate is null || !MusicSearchMatcher.IsSameSong(candidate, target))
@@ -343,6 +367,7 @@ public sealed class ManualSourceDiscoveryWorkflow(
             candidate,
             source,
             quality,
+            completed,
             cancellationToken)).ToArray();
         var options = await Task.WhenAll(probes);
         return options;
@@ -352,10 +377,13 @@ public sealed class ManualSourceDiscoveryWorkflow(
         MusicInfo candidate,
         ManualSourceInterface source,
         string quality,
+        ConcurrentBag<ManualSourceOption> completed,
         CancellationToken cancellationToken)
     {
+        await _probeGate.WaitAsync(cancellationToken);
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var url = await gateway.ResolveExactAsync(
                 candidate,
                 source.Id,
@@ -363,13 +391,15 @@ public sealed class ManualSourceDiscoveryWorkflow(
                 cancellationToken);
             if (!string.IsNullOrWhiteSpace(url))
             {
-                return ManualSourceOption.Create(
+                var playable = ManualSourceOption.Create(
                     source.Id,
                     source.DisplayName,
                     source.Platform,
                     candidate,
                     quality,
                     $"{source.DisplayName}，{TranslateQuality(quality)}，{candidate.Title}，{candidate.Artist}");
+                completed.Add(playable);
+                return playable;
             }
 
             return ManualSourceOption.Unavailable(
@@ -398,6 +428,10 @@ public sealed class ManualSourceDiscoveryWorkflow(
                 candidate,
                 quality,
                 string.IsNullOrWhiteSpace(exception.Message) ? "解析失败" : exception.Message);
+        }
+        finally
+        {
+            _probeGate.Release();
         }
     }
 

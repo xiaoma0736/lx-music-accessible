@@ -1052,6 +1052,8 @@ public class ManualSourceSwitchForm : Form
     private readonly ListBox _options = WinFormsUi.ListBox("可用音源", 1);
     private readonly Label _targetLabel = new() { AutoSize = true, TabStop = false, Name = "ManualTargetSong" };
     private readonly Label _status = new() { Text = "按 Enter 搜索可用音源。", AutoSize = true, TabStop = false, Name = "ManualSwitchStatus" };
+    private CancellationTokenSource? _searchCancellation;
+    private int _searchGeneration;
 
     public ManualSourceSwitchForm(
         IAccessibleAnnouncer announcer,
@@ -1077,6 +1079,7 @@ public class ManualSourceSwitchForm : Form
         Controls.AddRange(new Control[] { _targetLabel, search, play, _status, _options });
         _options.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = true; _ = PlayAsync(); } };
         Shown += (_, _) => { search.Focus(); if (_target is not null) _ = SearchAsync(); };
+        FormClosed += (_, _) => CancelSearch();
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -1087,24 +1090,61 @@ public class ManualSourceSwitchForm : Form
     }
     private async Task SearchAsync()
     {
-        if (_target is null) return;
+        if (_target is null || IsDisposed) return;
+        var target = _target;
+        var generation = ++_searchGeneration;
+        var cancellation = new CancellationTokenSource();
+        var previous = _searchCancellation;
+        _searchCancellation = cancellation;
+        previous?.Cancel();
+        const string searching = "正在查询可用的音源，请稍候。";
+        _status.Text = searching;
+        Announce(searching, "manual-source-busy:" + generation, AnnouncementKind.Busy);
         try
         {
-            var result = await _workflow.DiscoverAsync(_target);
-            _options.Items.Clear();
-            foreach (var option in result.Options)
-                _options.Items.Add(new ObjectBox<ManualSourceOption>($"{option.DisplayLabel}，{option.Platform}", option));
-            _status.Text = result.Message;
-            Announce(result.Message, "manual-source-query:" + Guid.NewGuid().ToString("N"), result.Status == ManualSourceDiscoveryStatus.Success ? AnnouncementKind.Success : AnnouncementKind.Error);
-            if (_options.Items.Count > 0)
-            {
-                _options.SelectedIndex = 0;
-                // The results are the point of the command, so the reading position moves to the first one
-                // instead of staying on the button that was just pressed.
-                _options.Focus();
-            }
+            var result = await _workflow.DiscoverAsync(target, cancellation.Token);
+            if (generation != _searchGeneration || IsDisposed) return;
+            RenderResult(result);
         }
-        catch (Exception ex) { WinFormsUi.Error(this, ex, "搜索音源"); }
+        catch (OperationCanceledException) when (generation != _searchGeneration || IsDisposed)
+        {
+            // A newer search (or closing the window) superseded this one; its own result wins.
+        }
+        catch (Exception ex)
+        {
+            if (generation != _searchGeneration || IsDisposed) return;
+            WinFormsUi.Error(this, ex, "搜索音源");
+        }
+        finally
+        {
+            if (ReferenceEquals(_searchCancellation, cancellation))
+                _searchCancellation = null;
+            cancellation.Dispose();
+        }
+    }
+
+    private void RenderResult(ManualSourceDiscoveryResult result)
+    {
+        _options.Items.Clear();
+        foreach (var option in result.Options)
+            _options.Items.Add(new ObjectBox<ManualSourceOption>($"{option.DisplayLabel}，{option.Platform}", option));
+        _status.Text = result.Message;
+        Announce(result.Message, "manual-source-query:" + Guid.NewGuid().ToString("N"), result.Status == ManualSourceDiscoveryStatus.Success ? AnnouncementKind.Success : AnnouncementKind.Error);
+        if (_options.Items.Count > 0)
+        {
+            _options.SelectedIndex = 0;
+            // The results are the point of the command, so the reading position moves to the first one
+            // instead of staying on the button that was just pressed.
+            _options.Focus();
+        }
+    }
+
+    private void CancelSearch()
+    {
+        _searchGeneration++;
+        var cancellation = _searchCancellation;
+        _searchCancellation = null;
+        cancellation?.Cancel();
     }
 
     private void DescribeTarget() => _targetLabel.Text = _target is null
@@ -1123,6 +1163,7 @@ public class ManualSourceSwitchForm : Form
         _options.Items.Clear();
         _status.Text = "按 Enter 搜索可用音源。";
         if (_target is not null) _ = SearchAsync();
+        else CancelSearch();
     }
 
     private async Task PlayAsync()
