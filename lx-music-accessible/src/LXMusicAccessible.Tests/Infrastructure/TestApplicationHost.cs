@@ -95,6 +95,15 @@ internal sealed class TestApplicationHost : IAsyncDisposable, IDisposable
                     services.AddSingleton<IManualSourceDiscoveryWorkflow, ManualSourceDiscoveryWorkflow>();
                     services.AddSingleton<IMusicSourceService>(sp => sp.GetRequiredService<MusicSourceService>());
                     services.AddSingleton<IMusicBrowseSource>(sp => sp.GetRequiredService<MusicSourceService>());
+                    services.AddSingleton<IQualityCandidateSource>(sp => sp.GetRequiredService<MusicSourceService>());
+                    services.AddSingleton<IQualityProbeWorkflow>(sp =>
+                    {
+                        var probe = new QualityProbeWorkflow(
+                            sp.GetRequiredService<IQualityCandidateSource>(),
+                            sp.GetRequiredService<HttpClient>());
+                        sp.GetRequiredService<IMusicSourceService>().SourcesChanged += (_, _) => probe.InvalidateAll();
+                        return probe;
+                    });
                     services.AddSingleton(_ => new LocalSearchHistoryStore(Path.Combine(dataDirectory, "file-storage")));
                     services.AddSingleton<MusicBrowseWorkflow>();
                     services.AddSingleton<SavedPlaylistWorkflow>();

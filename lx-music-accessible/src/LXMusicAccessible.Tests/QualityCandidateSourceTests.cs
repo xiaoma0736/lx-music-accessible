@@ -92,6 +92,73 @@ public sealed class QualityCandidateSourceTests
             request => request.Item2 == LowAudio.AbsoluteUri);
     }
 
+    [Fact]
+    public async Task Default_source_restricts_the_menu_candidates_to_that_interface()
+    {
+        using var host = await TestApplicationHost.StartAsync();
+        RegisterScripts(host);
+        await SaveScriptsAsync(host);
+        var service = host.Services.GetRequiredService<MusicSourceService>();
+        await service.InitializeScriptSourcesAsync();
+        var source = (IQualityCandidateSource)service;
+
+        var before = await source.GetCandidatesAsync(QualitySong());
+        Assert.Contains(before, candidate => candidate.InterfaceId == "low");
+        Assert.Contains(before, candidate => candidate.InterfaceId == "high");
+
+        Assert.True(await service.SetDefaultSourceAsync("high"));
+        var after = await source.GetCandidatesAsync(QualitySong());
+
+        Assert.All(after, candidate => Assert.Equal("high", candidate.InterfaceId));
+        Assert.Equal(["128k", "320k"], after.Select(candidate => candidate.Quality).ToArray());
+    }
+
+    [Fact]
+    public async Task Default_source_that_cannot_serve_the_song_platform_falls_back_to_all_interfaces()
+    {
+        using var host = await TestApplicationHost.StartAsync();
+        RegisterScripts(host);
+        await host.Services.GetRequiredService<IDataService>().SaveMusicSourcesAsync([
+            TrustedScript("low", "https://quality-candidates.test/low", ["128k"], 1),
+            TrustedScript("high", "https://quality-candidates.test/high", ["128k", "320k"], 2),
+            TrustedScript("other-platform", "https://quality-candidates.test/other", ["128k"], 3, platform: "wy")
+        ]);
+        var service = host.Services.GetRequiredService<MusicSourceService>();
+        await service.InitializeScriptSourcesAsync();
+        Assert.True(await service.SetDefaultSourceAsync("other-platform"));
+
+        var candidates = await ((IQualityCandidateSource)service).GetCandidatesAsync(QualitySong());
+
+        Assert.Contains(candidates, candidate => candidate.InterfaceId == "low");
+        Assert.Contains(candidates, candidate => candidate.InterfaceId == "high");
+        Assert.DoesNotContain(candidates, candidate => candidate.InterfaceId == "other-platform");
+    }
+
+    [Fact]
+    public async Task Changing_the_default_source_switches_the_probed_interface()
+    {
+        using var host = await TestApplicationHost.StartAsync();
+        RegisterScripts(host);
+        await SaveScriptsAsync(host);
+        var service = host.Services.GetRequiredService<MusicSourceService>();
+        await service.InitializeScriptSourcesAsync();
+        var probe = host.Services.GetRequiredService<IQualityProbeWorkflow>();
+        var song = QualitySong();
+
+        var before = await probe.ProbeAsync(song);
+        Assert.Equal("low", Assert.Single(before.Options, option => option.Quality == "128k").InterfaceName);
+        Assert.Equal("high", Assert.Single(before.Options, option => option.Quality == "320k").InterfaceName);
+
+        Assert.True(await service.SetDefaultSourceAsync("high"));
+        var after = await probe.ProbeAsync(song);
+
+        var high320 = Assert.Single(after.Options, option => option.Quality == "320k");
+        Assert.Equal(QualityAvailability.Playable, high320.Status);
+        Assert.Equal("high", high320.InterfaceName);
+        // The previously cached round listed 128k through the other script and must not survive.
+        Assert.Equal(QualityAvailability.Unavailable, Assert.Single(after.Options, option => option.Quality == "128k").Status);
+    }
+
     private static MusicInfo QualitySong() => new()
     {
         Id = "quality-song",
@@ -121,13 +188,14 @@ public sealed class QualityCandidateSourceTests
         string id,
         string apiUrl,
         IReadOnlyList<string> qualities,
-        int priority)
+        int priority,
+        string platform = "tx")
     {
         var qualityList = string.Join(",", qualities.Select(quality => $"'{quality}'"));
         var script = $$"""
             /** @name {{id}} @version 1.0.0 */
             const API_URL = '{{apiUrl}}';
-            const MUSIC_QUALITY = { tx: [{{qualityList}}] };
+            const MUSIC_QUALITY = { {{platform}}: [{{qualityList}}] };
             function handleGetMusicUrl(source, musicInfo, quality) {
               return `${API_URL}/url?source=${source}&songId=${musicInfo.songmid}&quality=${quality}`;
             }

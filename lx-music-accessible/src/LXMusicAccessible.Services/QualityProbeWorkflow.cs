@@ -164,6 +164,20 @@ public sealed class QualityProbeWorkflow(
         }
     }
 
+    /// <summary>
+    /// Drops every cached round. Source changes (new default, enable/disable, import, delete) change
+    /// which interfaces the menus describe, so cached results would otherwise show the old source.
+    /// </summary>
+    public void InvalidateAll()
+    {
+        foreach (var key in _cache.Keys.ToArray())
+        {
+            if (!_cache.TryRemove(key, out var entry)) continue;
+            entry.Cancellation.Cancel();
+            entry.Cancellation.Dispose();
+        }
+    }
+
     private void Discard(string key, CacheEntry entry) =>
         ((ICollection<KeyValuePair<string, CacheEntry>>)_cache)
             .Remove(new KeyValuePair<string, CacheEntry>(key, entry));

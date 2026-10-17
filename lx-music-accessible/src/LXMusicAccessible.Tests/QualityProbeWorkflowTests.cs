@@ -246,6 +246,25 @@ public sealed class QualityProbeWorkflowTests
         Assert.InRange(peak, 2, 4);
     }
 
+    [Fact]
+    public async Task Invalidating_all_forces_a_fresh_round_after_a_source_change()
+    {
+        var handler = new FakeQualityHttpHandler();
+        handler.Bodies["320k"] = new byte[70_000];
+        using var httpClient = new HttpClient(handler);
+        var source = new FakeCandidateSource([new("interface", "接口", 1, "320k")]);
+        var workflow = new QualityProbeWorkflow(source, httpClient);
+
+        await workflow.ProbeAsync(Song());
+        await workflow.ProbeAsync(Song());
+        Assert.Equal(1, source.ResolveCalls);
+
+        workflow.InvalidateAll();
+        await workflow.ProbeAsync(Song());
+
+        Assert.Equal(2, source.ResolveCalls);
+    }
+
     private static void UpdatePeak(ref int peak, int value)
     {
         var current = Volatile.Read(ref peak);
