@@ -82,32 +82,43 @@ public sealed class CurrentSongQualityMenuTests
     }
 
     [Fact]
-    public void F2_does_not_download_the_current_song()
+    public void F2_downloads_the_current_playing_song_at_its_playback_quality()
     {
         WinFormsTestRunner.Run(() =>
         {
             var downloads = new RecordingDownloads();
             using var shell = CreateShell(downloads);
-            shell.Show();
-            Application.DoEvents();
+            var playing = new MusicInfo
+            {
+                Id = "playing-song",
+                Source = "test",
+                Title = "Playing Song",
+                Artist = "Artist"
+            };
+            typeof(WinFormsShell)
+                .GetField("_current", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(shell, playing);
+            typeof(WinFormsShell)
+                .GetField("_currentPlaybackQuality", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(shell, "flac");
             var list = RequiredListBox(shell, "SearchResults");
             FillSongs(list, 2);
-            list.SelectedIndex = 1;
-            list.Focus();
-            Application.DoEvents();
+            list.SelectedIndex = 0;
 
             var method = typeof(WinFormsShell).GetMethod(
                 "ExecuteLocalHotkey",
                 BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.NotNull(method);
             var handled = Assert.IsType<bool>(method!.Invoke(shell, [Keys.F2]));
+            Application.DoEvents();
 
-            Assert.False(handled);
-            Assert.Empty(downloads.SingleRequests);
+            Assert.True(handled);
+            var request = Assert.Single(downloads.SingleRequests);
+            Assert.Equal("playing-song", request.Music.Id);
+            Assert.Equal("flac", request.Quality);
             Assert.Empty(downloads.ListRequests);
         });
     }
-
     private static WinFormsShell CreateShell(
         RecordingDownloads downloads,
         IQualityProbeWorkflow? probe = null) => new(new WinFormsShellServices

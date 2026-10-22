@@ -281,14 +281,19 @@ public partial class WinFormsShell
         if (_services.Playback is null) return;
         var queue = source is null ? new List<MusicInfo> { music } : source.Items.Cast<object>().OfType<ObjectBox<MusicInfo>>().Select(item => item.Value).ToList();
         if (queue.All(item => item.Id != music.Id)) queue.Add(music);
+        var playbackQuality = QualityCatalog.Normalize(
+            _services.Settings?.Current.Settings.DefaultPlayQuality ?? _services.Playback.DefaultQuality);
         var result = await _services.Playback.PlayAsync(new PlaybackRequest(
             queue,
             music,
-            _services.Settings?.Current.Settings.DefaultPlayQuality ?? _services.Playback.DefaultQuality,
+            playbackQuality,
             origin,
             Trigger: PlaybackTrigger.UserInitiated));
         if (result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted)
+        {
+            _currentPlaybackQuality = playbackQuality;
             ShowPlayback(music);
+        }
         Announce(result.Status == PlaybackResultStatus.Playing ? $"正在播放：{music.Artist}，{music.Title}" : $"播放失败：{result.Message}", "playback-song", result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
@@ -1398,8 +1403,11 @@ public partial class WinFormsShell
         if (_services.Playback is null) return;
         try
         {
+            var playbackQuality = QualityCatalog.Normalize(quality);
             var result = await _services.Playback.PlayAsync(new PlaybackRequest(
-                [song], song, quality, origin, ForceResolve: true));
+                [song], song, playbackQuality, origin, ForceResolve: true));
+            if (result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted)
+                _currentPlaybackQuality = playbackQuality;
             Announce(
                 result.Status == PlaybackResultStatus.Playing
                     ? $"正在按{QualityCatalog.Label(quality)}播放：{song.Title}"
@@ -1416,6 +1424,32 @@ public partial class WinFormsShell
         }
     }
 
+    private bool DownloadCurrentPlayingQuality()
+    {
+        if (_current is null)
+        {
+            Announce("当前没有正在播放的歌曲", "f2-download", AnnouncementKind.Status);
+            return false;
+        }
+        if (_services.Downloads is null)
+        {
+            Announce("下载功能不可用", "f2-download", AnnouncementKind.Error);
+            return false;
+        }
+
+        var quality = QualityCatalog.Normalize(
+            string.IsNullOrWhiteSpace(_currentPlaybackQuality)
+                ? _services.Playback?.DefaultQuality
+                : _currentPlaybackQuality);
+        if (string.IsNullOrWhiteSpace(quality))
+        {
+            Announce("当前播放音质未知", "f2-download:" + _current.Id, AnnouncementKind.Error);
+            return false;
+        }
+
+        _ = DownloadQualityAsync(_current, quality);
+        return true;
+    }
     private PlaybackQueueOrigin OriginForList(ListBox list) => list switch
     {
         var value when ReferenceEquals(value, CategorySongs) => PlaybackQueueOrigin.Category,
@@ -1563,6 +1597,7 @@ public partial class WinFormsShell
             case HotkeyActions.LyricDelay: _services.Lyrics?.AdjustOffset(500); break;
             case HotkeyActions.LyricAdvance: _services.Lyrics?.AdjustOffset(-500); break;
             case HotkeyActions.TogglePlayMode: TogglePlayMode(); break;
+            case HotkeyActions.Download: DownloadCurrentPlayingQuality(); break;
             case HotkeyActions.SwitchPreviousOutputDevice: SwitchDevice(-1); break;
             case HotkeyActions.SwitchNextOutputDevice: SwitchDevice(1); break;
             case HotkeyActions.ToggleWindow: ToggleVisibility(); break;
@@ -1634,6 +1669,7 @@ public partial class WinFormsShell
             case Keys.F11: SwitchDevice(-1); return true;
             case Keys.F12: SwitchDevice(1); return true;
             case Keys.F1: TogglePlayMode(); return true;
+            case Keys.F2: return DownloadCurrentPlayingQuality();
             case Keys.Up when ModifierKeys == Keys.Control: ChangeTabPage(Math.Max(0, MainTabs.SelectedIndex - 1)); return true;
             case Keys.Down when ModifierKeys == Keys.Control: ChangeTabPage(Math.Min(MainTabs.TabPages.Count - 1, MainTabs.SelectedIndex + 1)); return true;
             default: return false;
