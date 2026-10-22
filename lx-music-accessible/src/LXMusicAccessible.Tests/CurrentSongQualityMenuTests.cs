@@ -138,7 +138,7 @@ public sealed class CurrentSongQualityMenuTests
                 Title = "自动歌曲",
                 Artist = "自动歌手"
             };
-            playback.RaisePlaying(music, PlaybackTrigger.AutoContinuation);
+            playback.RaisePlaying(music, PlaybackTrigger.AutoContinuation, requestedQuality: "flac", actualQuality: "flac24bit", interfaceId: "test-interface", interfaceName: "测试接口");
             Application.DoEvents();
 
             Assert.Contains("自动歌曲", shell.Text, StringComparison.Ordinal);
@@ -147,6 +147,10 @@ public sealed class CurrentSongQualityMenuTests
                 .GetField("_current", BindingFlags.NonPublic | BindingFlags.Instance)!
                 .GetValue(shell));
             Assert.Equal("auto-song", current.Id);
+            Assert.Equal("flac", typeof(WinFormsShell).GetField("_currentPlaybackQuality", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(shell));
+            Assert.Equal("flac24bit", typeof(WinFormsShell).GetField("_currentPlaybackActualQuality", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(shell));
+            Assert.Equal("test-interface", typeof(WinFormsShell).GetField("_currentPlaybackInterfaceId", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(shell));
+            Assert.Equal("测试接口", typeof(WinFormsShell).GetField("_currentPlaybackInterfaceName", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(shell));
             Assert.Contains(announcer.Announcements, item =>
                 item.Text.Contains("正在播放：自动歌手，自动歌曲", StringComparison.Ordinal)
                 && item.ActivityId?.StartsWith("playback-track:auto:", StringComparison.Ordinal) == true);
@@ -178,7 +182,13 @@ public sealed class CurrentSongQualityMenuTests
         public PlayMode Mode { get; set; }
         public string DefaultQuality { get; set; } = "128k";
 
-        public void RaisePlaying(MusicInfo music, PlaybackTrigger trigger)
+        public void RaisePlaying(
+            MusicInfo music,
+            PlaybackTrigger trigger,
+            string? requestedQuality = null,
+            string? actualQuality = null,
+            string? interfaceId = null,
+            string? interfaceName = null)
         {
             CurrentMusic = music;
             StateChanged?.Invoke(this, new PlayerStateChangedEventArgs
@@ -186,7 +196,11 @@ public sealed class CurrentSongQualityMenuTests
                 OldState = PlayerState.Paused,
                 NewState = PlayerState.Playing,
                 CurrentMusic = music,
-                Trigger = trigger
+                Trigger = trigger,
+                RequestedQuality = requestedQuality ?? "128k",
+                ActualQuality = actualQuality,
+                InterfaceId = interfaceId,
+                InterfaceName = interfaceName
             });
         }
 

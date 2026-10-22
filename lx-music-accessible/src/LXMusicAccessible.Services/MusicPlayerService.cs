@@ -46,6 +46,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
     private TimeSpan _resumePosition;
     private double _volume = 0.8;
     private string _defaultQuality = "128k";
+    private PlaybackSourceResolution? _lastPlaybackResolution;
 
     public MusicPlayerService(
         ILogger<MusicPlayerService> logger,
@@ -230,12 +231,13 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
 
         try
         {
-            var url = await TryResolveExactWithinBudgetAsync(
+                        var resolution = await TryResolveExactWithinBudgetAsync(
                 music,
                 sourceId,
                 quality,
                 generationToken,
                 budget);
+            var url = resolution?.Url;
             if (string.IsNullOrWhiteSpace(url)
                 || !await TryLoadWithinBudgetAsync(
                     music,
@@ -248,7 +250,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                     $"选定接口播放失败：{music.Title}（{sourceId}，{quality}）");
             }
 
-            return CommitPlaying(context, revision, index, music, url!, trigger);
+            return CommitPlaying(context, revision, index, music, url!, quality, trigger);
         }
         catch (OperationCanceledException) when (generationToken.IsCancellationRequested)
         {
@@ -263,7 +265,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         }
     }
 
-    private async Task<string?> TryResolveExactWithinBudgetAsync(
+    private async Task<PlaybackSourceResolution?> TryResolveExactWithinBudgetAsync(
         MusicInfo music,
         string sourceId,
         string quality,
@@ -272,11 +274,14 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
     {
         try
         {
-            return await _sources.ResolveExactAsync(
+            var resolution = await _sources.ResolveExactAsync(
                 music,
                 sourceId,
                 quality,
-                budgetSource.Token);
+                budgetSource.Token);;
+        if (resolution is null) return null;
+        lock (_gate) _lastPlaybackResolution = resolution;
+        return resolution;
         }
         catch (OperationCanceledException) when (
             budgetSource.IsCancellationRequested
@@ -469,7 +474,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                 generationToken,
                 requestedBudget);
             if (started && !string.IsNullOrWhiteSpace(playedUrl))
-                return CommitPlaying(context, revision, index, requestedMusic, playedUrl, trigger);
+                return CommitPlaying(context, revision, index, requestedMusic, playedUrl, quality, trigger);
 
             var downgradeQuality = GetDowngradeQuality(quality);
             if (!string.IsNullOrWhiteSpace(downgradeQuality))
@@ -484,7 +489,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                     generationToken,
                     downgradeBudget);
                 if (started && !string.IsNullOrWhiteSpace(playedUrl))
-                    return CommitPlaying(context, revision, index, requestedMusic, playedUrl, trigger);
+                    return CommitPlaying(context, revision, index, requestedMusic, playedUrl, quality, trigger);
             }
 
             if (!IsLocal(requestedMusic))
@@ -536,6 +541,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                 generationToken,
                 budgetSource))
         {
+            lock (_gate) _lastPlaybackResolution = new(directUrl, music.Source, music.Source, quality);
             return (true, directUrl);
         }
 
@@ -613,6 +619,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                     index,
                     candidate,
                     url,
+                    quality,
                     trigger);
                 if (switched.Status == PlaybackResultStatus.Playing)
                 {
@@ -642,12 +649,20 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         string quality,
         CancellationToken cancellationToken)
     {
-        if (IsLocal(music)) return music.PlayUrl;
+        if (IsLocal(music))
+        {
+            lock (_gate) _lastPlaybackResolution = new(music.PlayUrl ?? string.Empty, music.Source, music.Source, quality);
+            return music.PlayUrl;
+        }
+
         try
         {
-            return await _sources.ResolveAsync(music, quality, cancellationToken);
+            var resolution = await _sources.ResolveAsync(music, quality, cancellationToken);
+            if (resolution is null) return null;
+            lock (_gate) _lastPlaybackResolution = resolution;
+            return resolution.Url;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
@@ -820,8 +835,11 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         int index,
         MusicInfo music,
         string url,
+        string requestedQuality,
         PlaybackTrigger trigger)
     {
+        PlaybackSourceResolution? resolution;
+        lock (_gate) resolution = _lastPlaybackResolution;
         PlaybackQueueOrigin origin = PlaybackQueueOrigin.Static;
         var applied = false;
         context.TryCommit(() =>
@@ -843,7 +861,11 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                     OldState = oldState,
                     NewState = _state,
                     CurrentMusic = music,
-                    Trigger = trigger
+                    Trigger = trigger,
+                    RequestedQuality = requestedQuality,
+                    ActualQuality = _audioPlayer.GetActualQuality(),
+                    InterfaceId = resolution?.InterfaceId,
+                    InterfaceName = resolution?.InterfaceName
                 });
             }
         });

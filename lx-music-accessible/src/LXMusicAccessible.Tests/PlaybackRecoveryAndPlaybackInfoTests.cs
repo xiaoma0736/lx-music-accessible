@@ -305,7 +305,7 @@ public sealed class PlaybackRecoveryAndPlaybackInfoTests
                 .Where(sourceId => !string.Equals(sourceId, currentSource, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
 
-        public Task<string?> ResolveAsync(
+        public Task<PlaybackSourceResolution?> ResolveAsync(
             MusicInfo music,
             string quality,
             CancellationToken cancellationToken = default)
@@ -330,7 +330,7 @@ public sealed class PlaybackRecoveryAndPlaybackInfoTests
             return Task.FromResult(result);
         }
 
-        public Task<string?> ResolveExactAsync(
+        public Task<PlaybackSourceResolution?> ResolveExactAsync(
             MusicInfo music,
             string sourceId,
             string quality,

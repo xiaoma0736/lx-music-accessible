@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http;
 using LXMusicAccessible.Audio;
 using LXMusicAccessible.Models;
@@ -238,20 +238,20 @@ public sealed class PlaybackOrderStateAuditTests
     private sealed class NullPlaybackSources : IPlaybackSourceAdapter
     {
         public IReadOnlyList<string> GetAlternativeSourceIds(string currentSource) => [];
-        public Task<string?> ResolveAsync(
+        public Task<PlaybackSourceResolution?> ResolveAsync(
             MusicInfo music,
             string quality,
-            CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+            CancellationToken cancellationToken) => Task.FromResult<PlaybackSourceResolution?>(null);
         public Task<IReadOnlyList<MusicInfo>> FindAlternativesAsync(
             MusicInfo music,
             string sourceId,
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<MusicInfo>>([]);
-        public Task<string?> ResolveExactAsync(
+        public Task<PlaybackSourceResolution?> ResolveExactAsync(
             MusicInfo music,
             string sourceId,
             string quality,
-            CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+            CancellationToken cancellationToken) => Task.FromResult<PlaybackSourceResolution?>(null);
     }
 
     private sealed class CompletedEventAudioPlayer : IAudioPlayer

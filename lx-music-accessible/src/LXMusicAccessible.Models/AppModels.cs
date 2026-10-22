@@ -76,6 +76,10 @@ public class PlayerStateChangedEventArgs : EventArgs
     public MusicInfo? CurrentMusic { get; set; }
     public string? ErrorMessage { get; set; }
     public PlaybackTrigger Trigger { get; set; }
+    public string? RequestedQuality { get; set; }
+    public string? ActualQuality { get; set; }
+    public string? InterfaceId { get; set; }
+    public string? InterfaceName { get; set; }
 }
 
 /// <summary>

@@ -358,7 +358,7 @@ public sealed class MusicPlayerBackgroundTests
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<MusicInfo>>([]);
 
-        public Task<string?> ResolveExactAsync(
+        public Task<PlaybackSourceResolution?> ResolveExactAsync(
             MusicInfo music,
             string sourceId,
             string quality,
@@ -379,7 +379,7 @@ public sealed class MusicPlayerBackgroundTests
 
         public IReadOnlyList<string> GetAlternativeSourceIds(string currentSource) => sourceIds;
 
-        public Task<string?> ResolveAsync(
+        public Task<PlaybackSourceResolution?> ResolveAsync(
             MusicInfo music,
             string quality,
             CancellationToken cancellationToken)
@@ -404,7 +404,7 @@ public sealed class MusicPlayerBackgroundTests
             return Task.FromResult(result);
         }
 
-        public Task<string?> ResolveExactAsync(
+        public Task<PlaybackSourceResolution?> ResolveExactAsync(
             MusicInfo music,
             string sourceId,
             string quality,
@@ -441,7 +441,7 @@ public sealed class MusicPlayerBackgroundTests
             return [NetworkSong($"match-{sourceId}", sourceId)];
         }
 
-        public Task<string?> ResolveExactAsync(
+        public Task<PlaybackSourceResolution?> ResolveExactAsync(
             MusicInfo music,
             string sourceId,
             string quality,

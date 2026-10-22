@@ -300,6 +300,10 @@ public partial class WinFormsShell
     private void OnPlaybackStateChanged(PlayerStateChangedEventArgs e)
     {
         if (e.NewState != PlayerState.Playing || e.CurrentMusic is null) return;
+        _currentPlaybackQuality = QualityCatalog.Normalize(string.IsNullOrWhiteSpace(e.RequestedQuality) ? _currentPlaybackQuality : e.RequestedQuality);
+        _currentPlaybackActualQuality = e.ActualQuality;
+        _currentPlaybackInterfaceId = e.InterfaceId;
+        _currentPlaybackInterfaceName = e.InterfaceName;
         ShowPlayback(e.CurrentMusic);
         if (e.Trigger != PlaybackTrigger.AutoContinuation) return;
         var song = e.CurrentMusic;

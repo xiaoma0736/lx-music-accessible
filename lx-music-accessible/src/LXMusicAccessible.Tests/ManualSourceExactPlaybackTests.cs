@@ -138,13 +138,13 @@ public sealed class ManualSourceExactPlaybackTests
             return ["fallback"];
         }
 
-        public Task<string?> ResolveAsync(
+        public Task<PlaybackSourceResolution?> ResolveAsync(
             MusicInfo music,
             string quality,
             CancellationToken cancellationToken = default)
         {
             ResolvedQualities.Enqueue(quality);
-            return Task.FromResult<string?>(null);
+            return Task.FromResult<PlaybackSourceResolution?>(null);
         }
 
         public Task<IReadOnlyList<MusicInfo>> FindAlternativesAsync(
@@ -156,7 +156,7 @@ public sealed class ManualSourceExactPlaybackTests
             return Task.FromResult(result);
         }
 
-        public Task<string?> ResolveExactAsync(
+        public Task<PlaybackSourceResolution?> ResolveExactAsync(
             MusicInfo music,
             string sourceId,
             string quality,
@@ -165,7 +165,7 @@ public sealed class ManualSourceExactPlaybackTests
             cancellationToken.ThrowIfCancellationRequested();
             LastQuality = quality;
             ExactSourceIds.Enqueue(sourceId);
-            return Task.FromResult(Url);
+            return Task.FromResult(Url.ToResolution(sourceId, quality));
         }
     }
 

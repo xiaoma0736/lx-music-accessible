@@ -48,6 +48,9 @@ public partial class WinFormsShell : Form
     private string? _appliedAnnouncementVoiceId;
     private MusicInfo? _current;
     private string? _currentPlaybackQuality;
+    private string? _currentPlaybackActualQuality;
+    private string? _currentPlaybackInterfaceId;
+    private string? _currentPlaybackInterfaceName;
     private bool _searchLoading;
     private bool _pageLoadRequested;
     private bool _categoryPlaylistsLoading;

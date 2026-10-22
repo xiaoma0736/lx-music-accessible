@@ -654,9 +654,9 @@ public sealed class PlaybackHotkeyStatusRegressionTests
     private sealed class FixedSourceAdapter : IPlaybackSourceAdapter
     {
         public IReadOnlyList<string> GetAlternativeSourceIds(string currentSource) => Array.Empty<string>();
-        public Task<string?> ResolveAsync(MusicInfo music, string quality, CancellationToken cancellationToken) =>
-            Task.FromResult<string?>(null);
-        public Task<string?> ResolveExactAsync(MusicInfo music, string sourceId, string quality, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+        public Task<PlaybackSourceResolution?> ResolveAsync(MusicInfo music, string quality, CancellationToken cancellationToken) =>
+            Task.FromResult<PlaybackSourceResolution?>(null);
+        public Task<PlaybackSourceResolution?> ResolveExactAsync(MusicInfo music, string sourceId, string quality, CancellationToken cancellationToken) => Task.FromResult<PlaybackSourceResolution?>(null);
         public Task<IReadOnlyList<MusicInfo>> FindAlternativesAsync(MusicInfo music, string sourceId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<MusicInfo>>(Array.Empty<MusicInfo>());
     }

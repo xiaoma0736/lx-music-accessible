@@ -3,11 +3,17 @@ using LXMusicAccessible.Models;
 namespace LXMusicAccessible.Services;
 
 /// <summary>播放协调模块内部的来源接缝；生产和测试适配器遵守同一顺序与取消语义。</summary>
+public sealed record PlaybackSourceResolution(
+    string Url,
+    string InterfaceId,
+    string InterfaceName,
+    string Quality);
+
 public interface IPlaybackSourceAdapter
 {
     IReadOnlyList<string> GetAlternativeSourceIds(string currentSource);
 
-    Task<string?> ResolveAsync(
+    Task<PlaybackSourceResolution?> ResolveAsync(
         MusicInfo music,
         string quality,
         CancellationToken cancellationToken);
@@ -17,7 +23,7 @@ public interface IPlaybackSourceAdapter
         string sourceId,
         CancellationToken cancellationToken);
 
-    Task<string?> ResolveExactAsync(
+    Task<PlaybackSourceResolution?> ResolveExactAsync(
         MusicInfo music,
         string sourceId,
         string quality,
@@ -38,7 +44,7 @@ public sealed class MusicPlaybackSourceAdapter(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-    public async Task<string?> ResolveAsync(
+    public async Task<PlaybackSourceResolution?> ResolveAsync(
         MusicInfo music,
         string quality,
         CancellationToken cancellationToken)
@@ -47,7 +53,7 @@ public sealed class MusicPlaybackSourceAdapter(
         attempt.CancelAfter(ResolutionBudget);
         try
         {
-            return await sources.GetPlayUrlAsync(
+            return await sources.ResolvePlaybackAsync(
                 music,
                 music.Source,
                 quality,
@@ -59,7 +65,7 @@ public sealed class MusicPlaybackSourceAdapter(
         }
     }
 
-    public async Task<string?> ResolveExactAsync(
+    public async Task<PlaybackSourceResolution?> ResolveExactAsync(
         MusicInfo music,
         string sourceId,
         string quality,
@@ -69,7 +75,7 @@ public sealed class MusicPlaybackSourceAdapter(
         attempt.CancelAfter(ResolutionBudget);
         try
         {
-            return await sources.ResolveExactAsync(
+            return await sources.ResolveExactPlaybackAsync(
                 music,
                 sourceId,
                 quality,

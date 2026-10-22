@@ -612,21 +612,27 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
     //  播放 URL — 脚本源(JS)优先 → 当前源内置 → 跨源
     // ================================================================
 
-    public Task<string?> GetPlayUrlAsync(
+    public async Task<string?> GetPlayUrlAsync(
         string musicId,
         string source,
         string quality = "128k",
         CancellationToken cancellationToken = default)
-        => GetPlayUrlCoreAsync(musicId, source, quality, null, cancellationToken);
+        => (await GetPlayUrlCoreAsync(musicId, source, quality, null, cancellationToken))?.Url;
 
-    public Task<string?> GetPlayUrlAsync(
+    public async Task<string?> GetPlayUrlAsync(
         MusicInfo music,
         string source,
         string quality = "128k",
         CancellationToken cancellationToken = default)
-        => GetPlayUrlCoreAsync(music.Id, source, quality, music, cancellationToken);
+        => (await GetPlayUrlCoreAsync(music.Id, source, quality, music, cancellationToken))?.Url;
 
-    private async Task<string?> GetPlayUrlCoreAsync(
+    public Task<PlaybackSourceResolution?> ResolvePlaybackAsync(
+        MusicInfo music,
+        string source,
+        string quality,
+        CancellationToken cancellationToken = default)
+        => GetPlayUrlCoreAsync(music.Id, source, quality, music, cancellationToken);
+    private async Task<PlaybackSourceResolution?> GetPlayUrlCoreAsync(
         string musicId,
         string source,
         string quality,
@@ -635,6 +641,10 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
     {
         cancellationToken.ThrowIfCancellationRequested();
         _logger.LogInformation("获取播放URL: {MusicId}, 来源: {Source}, 音质: {Quality}", musicId, source, quality);
+        PlaybackSourceResolution? Result(string? url, string id, string name) => string.IsNullOrWhiteSpace(url)
+            ? null
+            : new(url, id, name, quality);
+
 
         // 解析顺序：默认源 → 其余已启用脚本源（按优先级，超时保护） → 官方API（当前源优先，再跨源）
         var defaultSource = _sources.FirstOrDefault(s => s.IsDefault && s.IsEnabled);
@@ -664,7 +674,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
                     if (!string.IsNullOrEmpty(url))
                     {
                         _logger.LogInformation("默认脚本源 [{Script}] 获取播放URL成功: {Source}", defaultScript.Name, source);
-                        return url;
+                        return Result(url, defaultScript.Id, defaultSource?.Name ?? defaultScript.Name);
                     }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -707,7 +717,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
                 if (!string.IsNullOrEmpty(url))
                 {
                     _logger.LogInformation("脚本源 [{Script}] 获取播放URL成功: {Source}", script.Name, source);
-                    return url;
+                    return Result(url, script.Id, src.Name ?? script.Name);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -727,7 +737,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             try
             {
                 var url = await api.GetPlayUrlAsync(musicId, quality, cancellationToken);
-                if (!string.IsNullOrEmpty(url)) return url;
+                if (!string.IsNullOrEmpty(url)) return Result(url, source, api.SourceName);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception exception)
@@ -1194,7 +1204,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             .ToArray();
     }
 
-    public async Task<string?> ResolveExactAsync(
+    public async Task<PlaybackSourceResolution?> ResolveExactPlaybackAsync(
         MusicInfo candidate,
         string sourceId,
         string quality,
@@ -1212,7 +1222,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             var url = await api.GetPlayUrlAsync(candidate.Id, quality, attempt.Token);
             return string.IsNullOrWhiteSpace(url) || !await IsPlayableAsync(url, attempt.Token)
                 ? null
-                : url;
+                : new(url, sourceId, api.SourceName, quality);
         }
 
         var source = _sources.FirstOrDefault(item =>
@@ -1227,15 +1237,24 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
 
         using var scriptAttempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         scriptAttempt.CancelAfter(TimeSpan.FromSeconds(10));
-        return await TryResolveScriptUrlAsync(
+        var resolvedUrl = await TryResolveScriptUrlAsync(
             script,
             candidate.Id,
             candidate.Source,
             quality,
             candidate,
             scriptAttempt.Token);
+        return string.IsNullOrWhiteSpace(resolvedUrl)
+            ? null
+            : new(resolvedUrl, sourceId, source?.Name ?? script.Name, quality);
     }
 
+    public async Task<string?> ResolveExactAsync(
+        MusicInfo candidate,
+        string sourceId,
+        string quality,
+        CancellationToken cancellationToken = default)
+        => (await ResolveExactPlaybackAsync(candidate, sourceId, quality, cancellationToken))?.Url;
     public Task<IReadOnlyList<SourceQualityCandidate>> GetCandidatesAsync(
         MusicInfo music,
         CancellationToken cancellationToken = default)

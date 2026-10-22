@@ -460,12 +460,12 @@ public sealed class Issue77StoragePathTests
     private sealed class FixedPlaybackSource(string url) : IPlaybackSourceAdapter
     {
         public IReadOnlyList<string> GetAlternativeSourceIds(string currentSource) => [];
-        public Task<string?> ResolveAsync(MusicInfo music, string quality, CancellationToken cancellationToken) =>
-            Task.FromResult<string?>(url);
+        public Task<PlaybackSourceResolution?> ResolveAsync(MusicInfo music, string quality, CancellationToken cancellationToken) =>
+            Task.FromResult(url.ToResolution(music.Source, quality));
         public Task<IReadOnlyList<MusicInfo>> FindAlternativesAsync(MusicInfo music, string sourceId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<MusicInfo>>([]);
-        public Task<string?> ResolveExactAsync(MusicInfo music, string sourceId, string quality, CancellationToken cancellationToken) =>
-            Task.FromResult<string?>(url);
+        public Task<PlaybackSourceResolution?> ResolveExactAsync(MusicInfo music, string sourceId, string quality, CancellationToken cancellationToken) =>
+            Task.FromResult(url.ToResolution(music.Source, quality));
     }
 
     private sealed class RejectAllHandler : HttpMessageHandler
