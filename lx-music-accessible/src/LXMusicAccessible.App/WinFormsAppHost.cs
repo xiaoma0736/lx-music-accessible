@@ -439,6 +439,7 @@ public static class ApplicationHost
                     Tts = sp.GetRequiredService<ITtsService>(),
                     Sources = sp.GetRequiredService<IMusicSourceService>(),
                     QualityProbe = sp.GetRequiredService<IQualityProbeWorkflow>(),
+                    QualityCandidates = sp.GetRequiredService<IQualityCandidateSource>(),
                     ManualSources = sp.GetRequiredService<IManualSourceDiscoveryWorkflow>(),
                     Windows = sp.GetRequiredService<ApplicationWindowFactory>(),
                     Desktop = sp.GetRequiredService<DesktopLifecycleWorkflow>(),

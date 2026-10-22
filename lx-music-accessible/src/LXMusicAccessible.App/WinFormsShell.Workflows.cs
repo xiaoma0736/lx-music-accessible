@@ -1075,7 +1075,7 @@ public partial class WinFormsShell
         var menu = new ContextMenu();
         menu.MenuItems.Add(new MenuItem("播放", (_, _) => _ = ActivateSong(list)));
         menu.MenuItems.Add(new MenuItem("查看歌词", (_, _) => OpenLyrics(WinFormsUi.Selected<MusicInfo>(list))));
-        menu.MenuItems.Add(new MenuItem("查看详情", (_, _) => ShowSongDetails(list)));
+        menu.MenuItems.Add(new MenuItem("查看详情", (_, _) => _ = ShowSongDetails(list)));
         menu.MenuItems.Add(new MenuItem("收藏歌曲", (_, _) => _ = AddFavorites(WinFormsUi.Songs(list))));
         var focused = FocusedItem<MusicInfo>(list);
         var qualityDownload = new MenuItem("下载单曲音质");
@@ -1149,15 +1149,16 @@ public partial class WinFormsShell
         list.ContextMenu = BuildSongContextMenu(list);
     }
 
-    private void ShowSongDetails(ListBox list)
+    private async Task ShowSongDetails(ListBox list)
     {
         var song = WinFormsUi.Selected<MusicInfo>(list);
         if (song is null) return;
-        using var dialog = new SongDetailForm(song.Title, BuildSongDetailLines(song));
+        var lines = await BuildSongDetailLinesAsync(song);
+        using var dialog = new SongDetailForm(song.Title, lines);
         dialog.ShowDialog(this);
     }
 
-    private string[] BuildSongDetailLines(MusicInfo song)
+    private async Task<IReadOnlyList<string>> BuildSongDetailLinesAsync(MusicInfo song)
     {
         var lines = new List<string>
         {
@@ -1168,20 +1169,51 @@ public partial class WinFormsShell
             $"音质：{TranslateQualityLevel(song.Quality)}"
         };
 
-        // Detail windows can also be opened from the queue for the active song. The stream may have fallen
-        // back from the source-advertised quality, so surface the actually detected media quality separately.
-        var actual = _services.Audio?.ActualQuality;
-        if (!string.IsNullOrWhiteSpace(actual)
-            && string.Equals(_current?.Id, song.Id, StringComparison.Ordinal)
-            && string.Equals(_current?.Source, song.Source, StringComparison.OrdinalIgnoreCase))
+        var isCurrent = string.Equals(_current?.Id, song.Id, StringComparison.Ordinal)
+            && string.Equals(_current?.Source, song.Source, StringComparison.OrdinalIgnoreCase);
+        var actual = isCurrent
+            ? _currentPlaybackActualQuality ?? _services.Audio?.ActualQuality
+            : null;
+        if (!string.IsNullOrWhiteSpace(actual))
+            lines.Add($"当前实际播放音质：{QualityCatalog.Label(actual)}");
+
+        var requested = isCurrent ? _currentPlaybackQuality : null;
+        if (!string.IsNullOrWhiteSpace(requested))
+            lines.Add($"当前请求播放音质：{QualityCatalog.Label(requested)}");
+
+        if (isCurrent && !string.IsNullOrWhiteSpace(_currentPlaybackInterfaceName))
+            lines.Add($"当前音源接口：{_currentPlaybackInterfaceName}");
+
+        if (_services.QualityCandidates is not null)
         {
-            lines.Add($"当前播放音质：{QualityCatalog.Label(actual)}");
+            var candidates = await _services.QualityCandidates.GetCandidatesAsync(song);
+            foreach (var group in candidates
+                .GroupBy(item => item.InterfaceId, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(group =>
+                {
+                    var first = group.First();
+                    return (string.Equals(first.InterfaceId, _currentPlaybackInterfaceId, StringComparison.Ordinal) ? 0 : 1, first.Priority, first.InterfaceName);
+                }))
+            {
+                var first = group.First();
+                var qualities = QualityCatalog.Order(group.Select(item => item.Quality))
+                    .Select(QualityCatalog.Label);
+                if (isCurrent
+                    && string.Equals(first.InterfaceId, _currentPlaybackInterfaceId, StringComparison.Ordinal)
+                    && !string.IsNullOrWhiteSpace(_currentPlaybackInterfaceName))
+                {
+                    lines.Add($"当前接口可提供音质：{string.Join("、", qualities)}");
+                }
+                else
+                {
+                    lines.Add($"接口：{first.InterfaceName}；可提供音质：{string.Join("、", qualities)}");
+                }
+            }
         }
 
         lines.Add($"音源：{TranslateSource(song.Source)}");
-        return lines.ToArray();
+        return lines;
     }
-
     private async Task AddFavorites(IReadOnlyList<MusicInfo> songs)
     {
         if (_services.SavedPlaylists is null || songs.Count == 0) return;

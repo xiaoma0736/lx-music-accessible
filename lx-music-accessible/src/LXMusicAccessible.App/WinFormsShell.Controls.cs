@@ -25,6 +25,7 @@ public sealed class WinFormsShellServices
     public ITtsService? Tts { get; init; }
     public IMusicSourceService? Sources { get; init; }
     public IQualityProbeWorkflow? QualityProbe { get; init; }
+    public IQualityCandidateSource? QualityCandidates { get; init; }
     public IManualSourceDiscoveryWorkflow? ManualSources { get; init; }
     public ApplicationWindowFactory? Windows { get; init; }
     public DesktopLifecycleWorkflow? Desktop { get; init; }

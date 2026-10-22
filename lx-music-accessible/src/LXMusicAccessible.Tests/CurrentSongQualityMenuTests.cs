@@ -156,20 +156,65 @@ public sealed class CurrentSongQualityMenuTests
                 && item.ActivityId?.StartsWith("playback-track:auto:", StringComparison.Ordinal) == true);
         });
     }
+    [Fact]
+    public void Song_details_show_interface_qualities_and_current_playback_state()
+    {
+        WinFormsTestRunner.Run(() =>
+        {
+            var downloads = new RecordingDownloads();
+            var candidates = new DetailCandidateSource();
+            using var shell = CreateShell(downloads, qualityCandidates: candidates);
+            var playing = new MusicInfo { Id = "playing", Source = "qq", Title = "Playing", Artist = "Artist" };
+            typeof(WinFormsShell).GetField("_current", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(shell, playing);
+            typeof(WinFormsShell).GetField("_currentPlaybackQuality", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(shell, "flac");
+            typeof(WinFormsShell).GetField("_currentPlaybackActualQuality", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(shell, "flac24bit");
+            typeof(WinFormsShell).GetField("_currentPlaybackInterfaceId", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(shell, "current");
+            typeof(WinFormsShell).GetField("_currentPlaybackInterfaceName", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(shell, "当前接口");
+
+            var method = typeof(WinFormsShell).GetMethod(
+                "BuildSongDetailLinesAsync",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(method);
+            var result = Assert.IsType<Task<IReadOnlyList<string>>>(method!.Invoke(shell, [playing]));
+            var lines = result.GetAwaiter().GetResult();
+
+            Assert.Contains(lines, line => line == "当前音源接口：当前接口");
+            Assert.Contains(lines, line => line == "当前请求播放音质：无损 FLAC");
+            Assert.Contains(lines, line => line == "当前实际播放音质：Hi-Res 无损");
+            Assert.Contains(lines, line => line == "当前接口可提供音质：无损 FLAC、极高");
+        });
+    }
     private static WinFormsShell CreateShell(
         RecordingDownloads downloads,
         IQualityProbeWorkflow? probe = null,
         IPlaybackCoordinator? playback = null,
-        RecordingAnnouncer? announcer = null) => new(new WinFormsShellServices
+        RecordingAnnouncer? announcer = null,
+        IQualityCandidateSource? qualityCandidates = null) => new(new WinFormsShellServices
     {
         Announcer = announcer ?? new RecordingAnnouncer(),
         BrowseSource = new FakeBrowseSource(),
         Playback = playback ?? new RecordingPlayback(),
         Downloads = downloads,
         QualityProbe = probe,
+        QualityCandidates = qualityCandidates,
         TemporaryDirectory = Path.Combine(Path.GetTempPath(), "lx-current-quality-" + Guid.NewGuid().ToString("N"))
     });
 
+    private sealed class DetailCandidateSource : IQualityCandidateSource
+    {
+        public Task<IReadOnlyList<SourceQualityCandidate>> GetCandidatesAsync(
+            MusicInfo music,
+            CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SourceQualityCandidate>>([
+            new("current", "当前接口", 1, "flac"),
+            new("current", "当前接口", 1, "320k"),
+            new("other", "其他接口", 2, "128k")
+        ]);
+
+        public Task<string?> ResolveAsync(
+            MusicInfo music,
+            SourceQualityCandidate candidate,
+            CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+    }
     private sealed class StatefulPlayback : IPlaybackCoordinator
     {
         public event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
