@@ -297,6 +297,18 @@ public partial class WinFormsShell
         Announce(result.Status == PlaybackResultStatus.Playing ? $"正在播放：{music.Artist}，{music.Title}" : $"播放失败：{result.Message}", "playback-song", result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted ? AnnouncementKind.Success : AnnouncementKind.Error);
     }
 
+    private void OnPlaybackStateChanged(PlayerStateChangedEventArgs e)
+    {
+        if (e.NewState != PlayerState.Playing || e.CurrentMusic is null) return;
+        ShowPlayback(e.CurrentMusic);
+        if (e.Trigger != PlaybackTrigger.AutoContinuation) return;
+        var song = e.CurrentMusic;
+        Announce(
+            "正在播放：" + song.Artist + "，" + song.Title,
+            "playback-track:auto:" + Guid.NewGuid().ToString("N"),
+            AnnouncementKind.Success);
+    }
+
     private void ShowPlayback(MusicInfo music)
     {
         _current = music;

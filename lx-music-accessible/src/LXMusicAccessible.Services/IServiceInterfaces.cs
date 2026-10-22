@@ -66,13 +66,6 @@ public enum PlaybackResultStatus
     NoChange
 }
 
-/// <summary>播放请求的触发方式。</summary>
-public enum PlaybackTrigger
-{
-    UserInitiated,
-    AutoContinuation
-}
-
 public sealed record PlaybackRequest(
     IReadOnlyList<MusicInfo> Queue,
     MusicInfo Selection,

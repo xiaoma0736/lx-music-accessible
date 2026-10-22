@@ -838,7 +838,13 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
                 _resumePosition = TimeSpan.Zero;
                 origin = _queueOrigin;
                 applied = true;
-                RaiseStateChanged(StateChange(oldState, _state, music));
+                RaiseStateChanged(new PlayerStateChangedEventArgs
+                {
+                    OldState = oldState,
+                    NewState = _state,
+                    CurrentMusic = music,
+                    Trigger = trigger
+                });
             }
         });
 

@@ -661,10 +661,14 @@ public partial class WinFormsShell : Form
             AnnounceRegistrationFailures(_services.Settings.LastRegistrationFailures);
         }
         if (_services.Playback is not null)
+        {
+            _services.Playback.StateChanged += (_, e) => BeginInvoke(() => OnPlaybackStateChanged(e));
             _services.Playback.QueueCompleted += (_, e) => BeginInvoke(() =>
             {
                 Announce("播放队列已完成", "playback-queue");
             });
+        }
+
     }
 
     /// <summary>

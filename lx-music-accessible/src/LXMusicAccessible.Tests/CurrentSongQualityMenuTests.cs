@@ -119,17 +119,89 @@ public sealed class CurrentSongQualityMenuTests
             Assert.Empty(downloads.ListRequests);
         });
     }
+    [Fact]
+    public void Automatic_track_change_refreshes_title_and_announces_song()
+    {
+        WinFormsTestRunner.Run(() =>
+        {
+            var downloads = new RecordingDownloads();
+            var playback = new StatefulPlayback();
+            var announcer = new RecordingAnnouncer();
+            using var shell = CreateShell(downloads, playback: playback, announcer: announcer);
+            shell.Show();
+            Application.DoEvents();
+
+            var music = new MusicInfo
+            {
+                Id = "auto-song",
+                Source = "test",
+                Title = "自动歌曲",
+                Artist = "自动歌手"
+            };
+            playback.RaisePlaying(music, PlaybackTrigger.AutoContinuation);
+            Application.DoEvents();
+
+            Assert.Contains("自动歌曲", shell.Text, StringComparison.Ordinal);
+            Assert.Contains("自动歌手", shell.Text, StringComparison.Ordinal);
+            var current = Assert.IsType<MusicInfo>(typeof(WinFormsShell)
+                .GetField("_current", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .GetValue(shell));
+            Assert.Equal("auto-song", current.Id);
+            Assert.Contains(announcer.Announcements, item =>
+                item.Text.Contains("正在播放：自动歌手，自动歌曲", StringComparison.Ordinal)
+                && item.ActivityId?.StartsWith("playback-track:auto:", StringComparison.Ordinal) == true);
+        });
+    }
     private static WinFormsShell CreateShell(
         RecordingDownloads downloads,
-        IQualityProbeWorkflow? probe = null) => new(new WinFormsShellServices
+        IQualityProbeWorkflow? probe = null,
+        IPlaybackCoordinator? playback = null,
+        RecordingAnnouncer? announcer = null) => new(new WinFormsShellServices
     {
-        Announcer = new RecordingAnnouncer(),
+        Announcer = announcer ?? new RecordingAnnouncer(),
         BrowseSource = new FakeBrowseSource(),
-        Playback = new RecordingPlayback(),
+        Playback = playback ?? new RecordingPlayback(),
         Downloads = downloads,
         QualityProbe = probe,
         TemporaryDirectory = Path.Combine(Path.GetTempPath(), "lx-current-quality-" + Guid.NewGuid().ToString("N"))
     });
+
+    private sealed class StatefulPlayback : IPlaybackCoordinator
+    {
+        public event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
+#pragma warning disable 67
+        public event EventHandler<PlaybackQueueCompletedEventArgs>? QueueCompleted;
+#pragma warning restore 67
+        public bool IsPlaying => true;
+        public bool IsPaused => false;
+        public MusicInfo? CurrentMusic { get; private set; }
+        public PlayMode Mode { get; set; }
+        public string DefaultQuality { get; set; } = "128k";
+
+        public void RaisePlaying(MusicInfo music, PlaybackTrigger trigger)
+        {
+            CurrentMusic = music;
+            StateChanged?.Invoke(this, new PlayerStateChangedEventArgs
+            {
+                OldState = PlayerState.Paused,
+                NewState = PlayerState.Playing,
+                CurrentMusic = music,
+                Trigger = trigger
+            });
+        }
+
+        public Task<PlaybackResult> PlayAsync(PlaybackRequest request) =>
+            Task.FromResult(new PlaybackResult(PlaybackResultStatus.Playing, request.Selection, request.Origin, "playing"));
+        public Task<PlaybackResult> ReplayAsync() =>
+            Task.FromResult(new PlaybackResult(PlaybackResultStatus.NoChange, CurrentMusic, PlaybackQueueOrigin.Static, "no change"));
+        public void Pause() { }
+        public void Stop() { }
+        public Task<PlaybackResult> NextAsync() =>
+            Task.FromResult(new PlaybackResult(PlaybackResultStatus.NoChange, CurrentMusic, PlaybackQueueOrigin.Static, "no change"));
+        public Task<PlaybackResult> PreviousAsync() =>
+            Task.FromResult(new PlaybackResult(PlaybackResultStatus.NoChange, CurrentMusic, PlaybackQueueOrigin.Static, "no change"));
+        public Task ResumeAsync() => Task.CompletedTask;
+    }
 
     private static ListBox RequiredListBox(Control root, string name) =>
         Assert.IsType<ListBox>(root.Controls.Find(name, true).Single());

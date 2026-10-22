@@ -62,12 +62,20 @@ public class AccessibilitySettings
 /// <summary>
 /// 播放器状态变化事件参数
 /// </summary>
+/// <summary>播放请求的触发方式。</summary>
+public enum PlaybackTrigger
+{
+    UserInitiated,
+    AutoContinuation
+}
+
 public class PlayerStateChangedEventArgs : EventArgs
 {
     public PlayerState OldState { get; set; }
     public PlayerState NewState { get; set; }
     public MusicInfo? CurrentMusic { get; set; }
     public string? ErrorMessage { get; set; }
+    public PlaybackTrigger Trigger { get; set; }
 }
 
 /// <summary>
