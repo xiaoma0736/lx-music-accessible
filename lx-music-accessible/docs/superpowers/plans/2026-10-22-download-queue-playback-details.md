@@ -1,6 +1,6 @@
-﻿# Download Queue And Playback Details Implementation Plan
+# Download Queue And Playback Details Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Serialize all download tasks, refresh title and speech on automatic track changes, and show playback/source-interface details in song details.
 
@@ -30,11 +30,11 @@
 - Produces: global serialization for `DownloadAsync`, `DownloadListAsync`, and retry operations.
 - Produces: cancellation while queued sets `DownloadTaskStatus.Cancelled`.
 
-- [ ] Step 1: Add failing tests for queued cancellation and serial execution.
-- [ ] Step 2: Run focused tests and verify RED.
-- [ ] Step 3: Add a download gate around task execution and queued-cancellation handling.
-- [ ] Step 4: Run focused tests and verify GREEN.
-- [ ] Step 5: Commit.
+- [x] Step 1: Add failing tests for queued cancellation and serial execution.
+- [x] Step 2: Run focused tests and verify RED.
+- [x] Step 3: Add a download gate around task execution and queued-cancellation handling.
+- [x] Step 4: Run focused tests and verify GREEN.
+- [x] Step 5: Commit.
 
 ### Task 2: Automatic Track Title And Speech
 
@@ -50,11 +50,11 @@
 - Produces: `PlayerStateChangedEventArgs.Trigger`.
 - Produces: shell playing-state handler that refreshes current song/title and announces auto-continuation once.
 
-- [ ] Step 1: Add failing shell tests for automatic state changes refreshing title and announcing artist/title.
-- [ ] Step 2: Run focused tests and verify RED.
-- [ ] Step 3: Add trigger metadata and shell playing-state handler.
-- [ ] Step 4: Run focused tests and verify GREEN.
-- [ ] Step 5: Commit.
+- [x] Step 1: Add failing shell tests for automatic state changes refreshing title and announcing artist/title.
+- [x] Step 2: Run focused tests and verify RED.
+- [x] Step 3: Add trigger metadata and shell playing-state handler.
+- [x] Step 4: Run focused tests and verify GREEN.
+- [x] Step 5: Commit.
 
 ### Task 3: Playback Interface Metadata
 
@@ -70,11 +70,11 @@
 - Produces: state event fields `RequestedQuality`, `ActualQuality`, `InterfaceId`, `InterfaceName`.
 - Produces: shell fields for current playback quality and interface.
 
-- [ ] Step 1: Add failing tests that state metadata reaches the shell.
-- [ ] Step 2: Run focused tests and verify RED.
-- [ ] Step 3: Return source metadata from playback resolution and publish it with playing state.
-- [ ] Step 4: Run focused tests and verify GREEN.
-- [ ] Step 5: Commit.
+- [x] Step 1: Add failing tests that state metadata reaches the shell.
+- [x] Step 2: Run focused tests and verify RED.
+- [x] Step 3: Return source metadata from playback resolution and publish it with playing state.
+- [x] Step 4: Run focused tests and verify GREEN.
+- [x] Step 5: Commit.
 
 ### Task 4: Song Details Source Information
 
@@ -89,15 +89,15 @@
 - Consumes: current playing state metadata.
 - Produces: asynchronous song-detail lines including current interface, requested/actual quality, and per-interface declared qualities.
 
-- [ ] Step 1: Add failing song-detail tests for current and non-current songs.
-- [ ] Step 2: Run focused tests and verify RED.
-- [ ] Step 3: Inject candidate source and build asynchronous detail lines.
-- [ ] Step 4: Run focused tests and verify GREEN.
-- [ ] Step 5: Commit.
+- [x] Step 1: Add failing song-detail tests for current and non-current songs.
+- [x] Step 2: Run focused tests and verify RED.
+- [x] Step 3: Inject candidate source and build asynchronous detail lines.
+- [x] Step 4: Run focused tests and verify GREEN.
+- [x] Step 5: Commit.
 
 ### Task 5: Regression Verification
 
-- [ ] Run download, playback, shell, and accessibility focused suites.
-- [ ] Run full test suite.
-- [ ] Run release verification.
-- [ ] Commit documentation/plan status updates.
+- [x] Run download, playback, shell, and accessibility focused suites.
+- [x] Run full test suite.
+- [x] Run release verification.
+- [x] Commit documentation/plan status updates.

@@ -113,11 +113,12 @@ public sealed class PlaybackHotkeyStatusRegressionTests
                 Quality = 320
             };
             var method = typeof(WinFormsShell).GetMethod(
-                "BuildSongDetailLines",
+                "BuildSongDetailLinesAsync",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             Assert.NotNull(method);
 
-            var lines = Assert.IsType<string[]>(method!.Invoke(shell, new object?[] { song }));
+            var task = Assert.IsAssignableFrom<Task<IReadOnlyList<string>>>(method!.Invoke(shell, new object?[] { song }));
+            var lines = task.GetAwaiter().GetResult();
 
             Assert.Contains("音质：极高", lines);
             Assert.DoesNotContain(lines, line => line.StartsWith("当前播放音质：", StringComparison.Ordinal));

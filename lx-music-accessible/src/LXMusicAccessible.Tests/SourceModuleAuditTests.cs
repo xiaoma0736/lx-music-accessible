@@ -52,10 +52,10 @@ public sealed class SourceModuleAuditTests
             "GetPlayUrlCoreAsync",
             BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(method);
-        var task = Assert.IsAssignableFrom<Task<string?>>(method!.Invoke(
+        var task = Assert.IsAssignableFrom<Task<PlaybackSourceResolution?>>(method!.Invoke(
             sources,
             ["audit-id", "custom", "128k", null, CancellationToken.None]));
-        var url = await task;
+        var url = (await task)?.Url;
 
         Assert.Null(url);
         Assert.Empty(host.HttpHandler.Requests);
@@ -196,10 +196,10 @@ public sealed class SourceModuleAuditTests
             "GetPlayUrlCoreAsync",
             BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(method);
-        var task = Assert.IsAssignableFrom<Task<string?>>(method!.Invoke(
+        var task = Assert.IsAssignableFrom<Task<PlaybackSourceResolution?>>(method!.Invoke(
             sources,
             ["audit-id", "custom", "128k", null, CancellationToken.None]));
-        var result = await task;
+        var result = (await task)?.Url;
 
         Assert.Contains(
             (HttpMethod.Get.Method, "https://fixture.invalid/audio.mp3"),
