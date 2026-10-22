@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -97,6 +98,40 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
     }
 
     [Fact]
+    public async Task Album_waits_for_active_single_and_queued_cancel_does_not_remain_waiting()
+    {
+        _source.Qualities = ["128k"];
+        var releaseFirst = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _source.HoldUrl("active-single", releaseFirst.Task);
+        Http.Responses["https://download.invalid/active-single-128k"] = new(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 1, 2 })
+        };
+
+        var singlePending = Workflow.DownloadAsync(new(Song("active-single"), "128k", Target));
+        var first = await WaitForTaskAsync("active-single", DownloadTaskStatus.Downloading);
+
+        var albumPending = Workflow.DownloadListAsync(new(
+            [Song("queued-1"), Song("queued-2")],
+            "album",
+            "128k",
+            TargetDirectory: Target));
+        var queued = await WaitForTaskAsync("queued-1", DownloadTaskStatus.Pending);
+
+        Assert.Equal(DownloadTaskStatus.Downloading, first.Status);
+        Assert.Equal(DownloadTaskStatus.Pending, queued.Status);
+        Workflow.Cancel(queued);
+
+        releaseFirst.TrySetResult(null);
+        await singlePending;
+        var albumResult = await albumPending;
+
+        Assert.Equal(DownloadTaskStatus.Completed, first.Status);
+        Assert.Equal(DownloadTaskStatus.Cancelled, queued.Status);
+        Assert.Equal((2, 0, 1, 1, 0),
+            (albumResult.Requested, albumResult.Completed, albumResult.Failed, albumResult.Cancelled, albumResult.Skipped));
+    }
+    [Fact]
     public async Task External_playback_materializes_a_declared_quality_without_authenticity_check()
     {
         _source.Qualities = ["128k", "flac"];
@@ -137,6 +172,22 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 
+    private Task<DownloadTask> WaitForTaskAsync(string songId, DownloadTaskStatus status) =>
+        WaitForTaskAsync(Workflow.Tasks, songId, status);
+
+    private static async Task<DownloadTask> WaitForTaskAsync(
+        ReadOnlyObservableCollection<DownloadTask> tasks,
+        string songId,
+        DownloadTaskStatus status)
+    {
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            var task = tasks.FirstOrDefault(item => item.Music.Id == songId);
+            if (task is not null && task.Status == status) return task;
+            await Task.Delay(25);
+        }
+        throw new TimeoutException($"Task {songId} did not reach {status}.");
+    }
     private static MusicInfo Song(string id) => new()
     {
         Id = id,
@@ -168,6 +219,7 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
         public IReadOnlyList<string> Qualities { get; set; } = ["128k"];
         private int _qualityCalls; public int QualityCalls => _qualityCalls;
         private int _urlCalls; public int UrlCalls => _urlCalls;
+        private readonly Dictionary<string, Task> _heldUrls = new(StringComparer.Ordinal);
 
         public Task<IReadOnlyList<string>> GetQualitiesAsync(
             MusicInfo music,
@@ -177,13 +229,23 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
             return Task.FromResult(Qualities);
         }
 
-        public Task<string?> GetUrlAsync(
+        public void HoldUrl(string songId, Task wait)
+        {
+            _heldUrls[songId] = wait;
+        }
+
+        public async Task<string?> GetUrlAsync(
             MusicInfo music,
             string quality,
             CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _urlCalls);
-            return Task.FromResult<string?>($"https://download.invalid/{music.Id}-{quality}");
+            if (_heldUrls.TryGetValue(music.Id, out var wait))
+            {
+                await wait;
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            return $"https://download.invalid/{music.Id}-{quality}";
         }
 
         public Task<LyricResult?> GetLyricAsync(

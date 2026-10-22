@@ -199,6 +199,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     private readonly ObservableCollection<DownloadTask> _tasks = [];
     private DownloadPreferences _preferences = new(true, DownloadNameOrder.ArtistTitle, true);
     private readonly DownloadThrottle _throttle = new();
+    private readonly SemaphoreSlim _downloadGate = new(1, 1);
     private bool _disposed;
 
     public DownloadWorkflow(
@@ -751,14 +752,33 @@ catch (Exception exception)
             await _backgroundWork.RunLatestAsync(DownloadSlot(task), async context =>
             {
                 using var contextRegistration = context.CancellationToken.Register(operation.Cancel);
-                await RunTaskAsync(
-                    task,
-                    targetDirectory,
-                    preferences,
-                    announce,
-                    activityId,
-                    operation,
-                    context.CancellationToken);
+                var acquired = false;
+                try
+                {
+                    // Singles, albums, batch lists and retries share one process-wide gate, so an
+                    // album started after a single never issues concurrent anti-ban-sensitive requests.
+                    await _downloadGate.WaitAsync(context.CancellationToken);
+                    acquired = true;
+                    await RunTaskAsync(
+                        task,
+                        targetDirectory,
+                        preferences,
+                        announce,
+                        activityId,
+                        operation,
+                        context.CancellationToken);
+                }
+                catch (OperationCanceledException) when (
+                    context.CancellationToken.IsCancellationRequested
+                    && task.Status == DownloadTaskStatus.Pending)
+                {
+                    task.Status = DownloadTaskStatus.Cancelled;
+                    task.ErrorMessage = "下载已取消";
+                }
+                finally
+                {
+                    if (acquired) _downloadGate.Release();
+                }
             });
         }
         finally
@@ -1364,6 +1384,7 @@ catch (Exception exception)
         string[] temporaryFiles;
         lock (_gate) temporaryFiles = _externalTemporaryFiles.ToArray();
         foreach (var file in temporaryFiles) DeleteExternalTemporaryFile(file);
+        _downloadGate.Dispose();
         GC.SuppressFinalize(this);
     }
 
