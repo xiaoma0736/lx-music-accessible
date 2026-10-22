@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -98,9 +98,7 @@ internal sealed class TestApplicationHost : IAsyncDisposable, IDisposable
                     services.AddSingleton<IQualityCandidateSource>(sp => sp.GetRequiredService<MusicSourceService>());
                     services.AddSingleton<IQualityProbeWorkflow>(sp =>
                     {
-                        var probe = new QualityProbeWorkflow(
-                            sp.GetRequiredService<IQualityCandidateSource>(),
-                            sp.GetRequiredService<HttpClient>());
+                        var probe = new QualityProbeWorkflow(sp.GetRequiredService<IQualityCandidateSource>());
                         sp.GetRequiredService<IMusicSourceService>().SourcesChanged += (_, _) => probe.InvalidateAll();
                         return probe;
                     });

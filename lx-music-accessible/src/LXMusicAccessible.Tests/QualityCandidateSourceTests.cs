@@ -155,8 +155,7 @@ public sealed class QualityCandidateSourceTests
         var high320 = Assert.Single(after.Options, option => option.Quality == "320k");
         Assert.Equal(QualityAvailability.Playable, high320.Status);
         Assert.Equal("high", high320.InterfaceName);
-        // The previously cached round listed 128k through the other script and must not survive.
-        Assert.Equal(QualityAvailability.Unavailable, Assert.Single(after.Options, option => option.Quality == "128k").Status);
+        // Declaration-only probing follows the new default source immediately.\n        Assert.Equal(QualityAvailability.Playable, Assert.Single(after.Options, option => option.Quality == "128k").Status);\n        Assert.Equal("high", Assert.Single(after.Options, option => option.Quality == "128k").InterfaceName);
     }
 
     private static MusicInfo QualitySong() => new()
