@@ -818,7 +818,7 @@ catch (Exception exception)
                     cancellationToken);
                 audioTemporary = download.Path;
                 extension = download.Actual.Extension;
-                task.ActualQuality = download.Actual.Label;
+                task.ActualQuality = download.Actual.QualityToken ?? download.Actual.Label;
                 task.Quality = download.Quality;
             }
 

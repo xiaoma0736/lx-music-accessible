@@ -58,7 +58,7 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
 
         Assert.Equal(DownloadTaskStatus.Completed, task.Status);
         Assert.Equal("flac", task.Quality);
-        Assert.Equal(QualityCatalog.Label("flac"), task.ActualQuality);
+        Assert.Equal("flac", task.ActualQuality);
         Assert.Null(task.QualityFallback);
         Assert.Equal(1, _source.QualityCalls);
         Assert.Equal(1, _source.UrlCalls);
