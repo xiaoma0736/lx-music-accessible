@@ -514,6 +514,52 @@ public sealed class BatchDownloadSelectionTests
     }
 
     [Fact]
+    public async Task Whole_album_download_merges_pages_submits_once_and_ignores_duplicate_activation()
+    {
+        var source = new GatedTwoPageAlbumSource();
+        var downloads = new RecordingBatchDownloads();
+        using var shell = new WinFormsShell(new WinFormsShellServices
+        {
+            Announcer = new RecordingAnnouncer(),
+            BrowseSource = source,
+            Playback = new PlaybackSpy(),
+            Downloads = downloads,
+            TemporaryDirectory = Path.Combine(Path.GetTempPath(), "lx-album-pages-" + Guid.NewGuid().ToString("N"))
+        });
+        shell.Show();
+        Application.DoEvents();
+        var list = RequiredListBox(shell, "SearchResults");
+        list.Items.Add(new ObjectBox<MusicInfo>(source.Album.AccessibleName, source.Album));
+        _ = list.Handle;
+        SendMessage(list.Handle, 0x019E, IntPtr.Zero, IntPtr.Zero);
+
+        var browseField = typeof(WinFormsShell).GetField("_browse", BindingFlags.NonPublic | BindingFlags.Instance);
+        var albumField = typeof(WinFormsShell).GetField("_openAlbum", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(browseField);
+        Assert.NotNull(albumField);
+        var browse = Assert.IsType<MusicBrowseWorkflow>(browseField!.GetValue(shell));
+        await browse.ActivateAlbumAsync(source.Album);
+        albumField!.SetValue(shell, source.Album);
+        Application.DoEvents();
+
+        var album = RequiredMenuItem(list.ContextMenu!, "下载整张专辑");
+        RaisePopup(album);
+        Assert.True(album.Enabled);
+
+        album.PerformClick();
+        await WaitFor(() => source.DetailCalls >= 2);
+        album.PerformClick();
+        source.ReleaseSecondPage();
+        await WaitFor(() => downloads.ListRequests.Count == 1);
+
+        var request = Assert.Single(downloads.ListRequests);
+        Assert.Equal("Test Album", request.Label);
+        Assert.Equal("Test Album", request.Subdirectory);
+        Assert.Equal(["album-song-1", "album-song-2"], request.Songs.Select(song => song.Id).ToArray());
+        Assert.Empty(downloads.SingleRequests);
+        Assert.True(source.DetailCalls >= 2);
+    }
+    [Fact]
     public void Whole_album_command_is_present_and_disabled_outside_album_context()
     {
         using var shell = CreateShell(new RecordingBatchDownloads());
@@ -700,6 +746,62 @@ public sealed class BatchDownloadSelectionTests
         public void Complete(QualityProbeResult result) => _completion.TrySetResult(result);
     }
 
+    private sealed class GatedTwoPageAlbumSource : IMusicBrowseSource
+    {
+        private readonly TaskCompletionSource<object?> _secondPage = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public MusicInfo Album { get; } = new()
+        {
+            Id = "album-1", Source = "test", Title = "Test Album", Artist = "Artist", IsAlbum = true
+        };
+        public int DetailCalls { get; private set; }
+
+        public Task<PagedResult<MusicInfo>> SearchAsync(
+            string query, int page, int pageSize, string searchType, string sourceId,
+            CancellationToken cancellationToken) => Task.FromResult(new PagedResult<MusicInfo>());
+
+        public async Task<PagedResult<MusicInfo>> GetAlbumDetailAsync(
+            MusicInfo album, int page, int pageSize, CancellationToken cancellationToken)
+        {
+            DetailCalls++;
+            if (page == 1)
+            {
+                return new PagedResult<MusicInfo>
+                {
+                    Items = [Song("album-song-1")], CurrentPage = 1, TotalItems = 2, HasMore = true
+                };
+            }
+
+            await _secondPage.Task.WaitAsync(cancellationToken);
+            return new PagedResult<MusicInfo>
+            {
+                Items = [Song("album-song-2")], CurrentPage = 2, TotalItems = 2, HasMore = false
+            };
+        }
+
+        public Task<List<PlaylistCategory>> GetPlaylistCategoriesAsync(string sourceId, CancellationToken cancellationToken) =>
+            Task.FromResult(new List<PlaylistCategory>());
+        public Task<PagedResult<Playlist>> GetPlaylistsAsync(string sourceId, string categoryId, int page, int pageSize, CancellationToken cancellationToken) =>
+            Task.FromResult(new PagedResult<Playlist>());
+        public Task<PagedResult<Playlist>> GetPlaylistsByCategoryAsync(string sourceId, int page, int pageSize, string categoryId, CancellationToken cancellationToken) =>
+            Task.FromResult(new PagedResult<Playlist>());
+        public Task<PagedResult<MusicInfo>> GetPlaylistSongsAsync(string sourceId, string playlistId, int page, int pageSize, CancellationToken cancellationToken) =>
+            Task.FromResult(new PagedResult<MusicInfo>());
+        public Task<PagedResult<MusicInfo>> GetPlaylistDetailAsync(string playlistId, int page, int pageSize, CancellationToken cancellationToken) =>
+            Task.FromResult(new PagedResult<MusicInfo>());
+        public Task<List<Ranking>> GetRankingsAsync(string sourceId, CancellationToken cancellationToken) =>
+            Task.FromResult(new List<Ranking>());
+        public Task<PagedResult<MusicInfo>> GetRankingSongsAsync(string sourceId, string rankingId, int page, int pageSize, CancellationToken cancellationToken) =>
+            Task.FromResult(new PagedResult<MusicInfo>());
+        public Task<PagedResult<MusicInfo>> GetRankingDetailAsync(string sourceId, int page, int pageSize, CancellationToken cancellationToken) =>
+            Task.FromResult(new PagedResult<MusicInfo>());
+
+        public void ReleaseSecondPage() => _secondPage.TrySetResult(null);
+
+        private static MusicInfo Song(string id) => new()
+        {
+            Id = id, Source = "test", Title = "Song", Artist = "Artist", Album = "Test Album"
+        };
+    }
     private sealed class SinglePageAlbumSource : IMusicBrowseSource
     {
         public MusicInfo Album { get; } = new()
