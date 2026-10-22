@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -929,24 +929,6 @@ public partial class WinFormsShell
         Announce("设置保存失败，将在退出时重试。", "settings", AnnouncementKind.Error);
     }
 
-    private async void DownloadSelected()
-    {
-        var song = _current ?? WinFormsUi.Selected<MusicInfo>(CurrentSongList());
-        if (song is null || _services.Downloads is null) return;
-        try
-        {
-            // The download workflow owns the spoken feedback for a task: it reports the start and then the
-            // result. The shell used to add 已加入下载 after the transfer had already finished, which both
-            // repeated a state the user could hear and arrived too late to describe it.
-            await _services.Downloads.DownloadAsync(new DownloadRequest(song, _services.Settings?.Current.Settings.DefaultDownloadQuality ?? "128k"));
-        }
-        catch (Exception ex)
-        {
-            Announce("下载任务创建失败", "download:" + song.Id, AnnouncementKind.Error);
-            WinFormsUi.Error(this, ex, "创建下载");
-        }
-    }
-
     private ListBox? CurrentSongList()
     {
         return MainTabs.SelectedIndex switch
@@ -1067,14 +1049,13 @@ public partial class WinFormsShell
     private static void SetListCaretIndex(ListBox list, int index) =>
         SendMessage(list.Handle, LB_SETCARETINDEX, (IntPtr)index, IntPtr.Zero);
 
-    private void AssignSongContextMenu(ListBox list)
+    internal ContextMenu BuildSongContextMenu(ListBox list)
     {
         var menu = new ContextMenu();
         menu.MenuItems.Add(new MenuItem("播放", (_, _) => _ = ActivateSong(list)));
         menu.MenuItems.Add(new MenuItem("查看歌词", (_, _) => OpenLyrics(WinFormsUi.Selected<MusicInfo>(list))));
         menu.MenuItems.Add(new MenuItem("查看详情", (_, _) => ShowSongDetails(list)));
         menu.MenuItems.Add(new MenuItem("收藏歌曲", (_, _) => _ = AddFavorites(WinFormsUi.Songs(list))));
-        menu.MenuItems.Add(new MenuItem("下载当前歌曲", (_, _) => DownloadList(WinFormsUi.Songs(list))));
         var focused = FocusedItem<MusicInfo>(list);
         var qualityDownload = new MenuItem("下载单曲音质");
         qualityDownload.Popup += (_, _) =>
@@ -1139,7 +1120,12 @@ public partial class WinFormsShell
         menu.MenuItems.Add(new MenuItem("切换音源播放", (_, _) => OpenManualSource(WinFormsUi.Selected<MusicInfo>(list))));
         var localMenu = new MenuItem("用第三方播放器播放", (_, _) => PlayExternally(WinFormsUi.Selected<MusicInfo>(list)));
         menu.MenuItems.Add(localMenu);
-        list.ContextMenu = menu;
+        return menu;
+    }
+
+    internal void AssignSongContextMenu(ListBox list)
+    {
+        list.ContextMenu = BuildSongContextMenu(list);
     }
 
     private void ShowSongDetails(ListBox list)
@@ -1400,19 +1386,8 @@ public partial class WinFormsShell
             return;
         }
 
-        var actualDiffers = !string.Equals(
-            QualityCatalog.Normalize(option.ActualQuality),
-            QualityCatalog.Normalize(option.Quality),
-            StringComparison.Ordinal);
-        var actual = actualDiffers
-            ? $"实际 {QualityCatalog.Label(option.ActualQuality)}"
-            : null;
-        // Play and download offer the same rows: anything the interface can serve is offered, and a
-        // lossless fallback is downloaded at the quality that was actually verified.
         var verb = kind == QualityMenuKind.Download ? "可下载" : "可播放";
-        item.Text = actual is null
-            ? $"{label}，{verb}，{option.InterfaceName ?? "当前接口"}"
-            : $"{label}，{verb}（{actual}），{option.InterfaceName ?? "当前接口"}";
+        item.Text = $"{label}，{verb}，{option.InterfaceName ?? "当前接口"}";
         item.Enabled = true;
     }
     private async Task PlayQualityAsync(
@@ -1588,7 +1563,6 @@ public partial class WinFormsShell
             case HotkeyActions.LyricDelay: _services.Lyrics?.AdjustOffset(500); break;
             case HotkeyActions.LyricAdvance: _services.Lyrics?.AdjustOffset(-500); break;
             case HotkeyActions.TogglePlayMode: TogglePlayMode(); break;
-            case HotkeyActions.Download: DownloadSelected(); break;
             case HotkeyActions.SwitchPreviousOutputDevice: SwitchDevice(-1); break;
             case HotkeyActions.SwitchNextOutputDevice: SwitchDevice(1); break;
             case HotkeyActions.ToggleWindow: ToggleVisibility(); break;
@@ -1660,7 +1634,6 @@ public partial class WinFormsShell
             case Keys.F11: SwitchDevice(-1); return true;
             case Keys.F12: SwitchDevice(1); return true;
             case Keys.F1: TogglePlayMode(); return true;
-            case Keys.F2: DownloadSelected(); return true;
             case Keys.Up when ModifierKeys == Keys.Control: ChangeTabPage(Math.Max(0, MainTabs.SelectedIndex - 1)); return true;
             case Keys.Down when ModifierKeys == Keys.Control: ChangeTabPage(Math.Min(MainTabs.TabPages.Count - 1, MainTabs.SelectedIndex + 1)); return true;
             default: return false;

@@ -458,7 +458,7 @@ internal sealed class HotkeyManagerService
             (HotkeyActions.LyricDelay, "歌词延后", PlatformKey.F7, PlatformModifiers.Shift),
             (HotkeyActions.LyricAdvance, "歌词提前", PlatformKey.F8, PlatformModifiers.Shift),
             (HotkeyActions.TogglePlayMode, "播放模式", PlatformKey.F1, PlatformModifiers.None),
-            (HotkeyActions.Download, "下载", PlatformKey.F2, PlatformModifiers.None),
+            (HotkeyActions.Download, "下载", PlatformKey.None, PlatformModifiers.None),
             (HotkeyActions.ToggleVoiceAnnouncement, "语音朗读提示开关", PlatformKey.F5, PlatformModifiers.Shift),
             (HotkeyActions.ToggleLyricAnnouncement, "语音朗读歌词开关", PlatformKey.F6, PlatformModifiers.Shift)
         };

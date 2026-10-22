@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
@@ -214,7 +214,6 @@ public partial class WinFormsShell : Form
         play.MenuItems.Add(new MenuItem("上一个播放设备(&E)", (_, _) => SwitchDevice(-1), Shortcut.F11));
         play.MenuItems.Add(new MenuItem("下一个播放设备(&X)", (_, _) => SwitchDevice(1), Shortcut.F12));
         play.MenuItems.Add(new MenuItem("切换播放模式(&M)", (_, _) => TogglePlayMode(), Shortcut.F1));
-        play.MenuItems.Add(new MenuItem("下载当前歌曲(&W)", (_, _) => DownloadSelected(), Shortcut.F2));
         _playQualityMenu = new MenuItem("当前歌曲音质(&Q)");
         _playQualityMenu.Popup += (_, _) => _ = RefreshQualitySubmenuAsync(
             _playQualityMenu,

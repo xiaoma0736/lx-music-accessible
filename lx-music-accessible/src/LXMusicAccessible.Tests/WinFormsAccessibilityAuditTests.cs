@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -482,47 +482,6 @@ public sealed class WinFormsAccessibilityAuditTests
                 RaiseKeyDown(results, Keys.Enter);
                 WaitUntil(() => shell.PlaybackInfoForTests.Text.Contains("Song", StringComparison.Ordinal) && announcer.Announcements.Any(item => item.Text.StartsWith("正在播放：", StringComparison.Ordinal)));
                 Assert.Equal(1, playback.PlayCalls);
-            }
-            finally
-            {
-                shell.Dispose();
-            }
-        });
-    }
-
-    /// <summary>
-    /// The download hotkey queues exactly the selected song and stays quiet about it: the download
-    /// workflow reports the start and the outcome of the task, so a second echo from the shell would
-    /// repeat the same state and arrive after the transfer instead of confirming the key press.
-    /// </summary>
-    [Fact]
-    public void Shell_download_hotkey_queues_the_selected_song_without_a_second_spoken_echo()
-    {
-        WinFormsTestRunner.Run(() =>
-        {
-            var announcer = new RecordingAnnouncer();
-            var downloads = new MutableDownloadWorkflow();
-            var shell = new WinFormsShell(new WinFormsShellServices
-            {
-                Announcer = announcer,
-                BrowseSource = new FakeBrowseSource(),
-                Playback = new RecordingPlayback(),
-                Downloads = downloads,
-                TemporaryDirectory = TempDirectory()
-            });
-            try
-            {
-                shell.Show();
-                Application.DoEvents();
-                var results = Assert.IsType<ListBox>(Required(shell, "SearchResults"));
-                WinFormsUi.FillSongs(results, new[] { Song() });
-                results.SelectedIndex = 0;
-                results.Focus();
-
-                InvokeProcessCmdKey(shell, Keys.F2);
-                WaitUntil(() => downloads.LastRequest is not null);
-                Assert.Equal("Song", downloads.LastRequest!.Music.Title);
-                Assert.DoesNotContain(announcer.Announcements, item => item.Text.StartsWith("已加入下载", StringComparison.Ordinal));
             }
             finally
             {

@@ -304,17 +304,15 @@ public sealed class BatchDownloadSelectionTests
         });
     }
     [Fact]
-    public void Download_and_play_quality_menus_show_all_playable_states()
+    public void Quality_menus_show_only_declared_options_without_state_noise()
     {
         var probe = new StaticQualityProbe(new QualityProbeResult(
             "qq|song-1",
             [
-                new("320k", "极高", QualityAvailability.Playable, "Interface A", "320k"),
-                new("hires", "Hi-Res", QualityAvailability.Playable, "Interface B", "flac"),
-                new("provider_gold", "provider_gold", QualityAvailability.Unavailable, null, null),
-                new("flac24bit", "Hi-Res 无损", QualityAvailability.Unavailable, null, null)
+                new("320k", "极高", QualityAvailability.Playable, "Interface A", null),
+                new("hires", "Hi-Res", QualityAvailability.Playable, "Interface B", null)
             ],
-            "done"));
+            "音源声明音质已加载"));
         using var shell = CreateShell(new RecordingBatchDownloads(), qualityProbe: probe);
         var list = RequiredListBox(shell, "SearchResults");
         FillSongs(list, 2);
@@ -324,45 +322,25 @@ public sealed class BatchDownloadSelectionTests
 
         var download = RequiredMenuItem(list.ContextMenu!, "下载单曲音质");
         RaisePopup(download);
-        var downloadCount = download.MenuItems.Count;
-        Assert.True(downloadCount > 0);
-        var downloadItem = Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可下载，Interface A");
-        var losslessFallback = Assert.Single(
-            download.MenuItems.Cast<MenuItem>(),
-            item => item.Text == "Hi-Res，可下载（实际 无损 FLAC），Interface B");
-        Assert.True(losslessFallback.Enabled);
-        var unavailableItem = Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res 无损，不可用");
-        Assert.Equal(1, probe.ProbeCalls);
+        Assert.Equal(2, download.MenuItems.Count);
+        Assert.Equal(["极高，可下载，Interface A", "Hi-Res，可下载，Interface B"],
+            download.MenuItems.Cast<MenuItem>().Select(item => item.Text).ToArray());
+        Assert.All(download.MenuItems.Cast<MenuItem>(), item => Assert.True(item.Enabled));
 
         var play = RequiredMenuItem(list.ContextMenu!, "播放音质");
         RaisePopup(play);
-        var playCount = play.MenuItems.Count;
-        Assert.Equal(downloadCount, playCount);
-        Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可播放，Interface A");
-        Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res，可播放（实际 无损 FLAC），Interface B");
-        Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res 无损，不可用");
-        // A quality id the static catalog does not know must still reach the menu instead of vanishing.
-        Assert.Single(play.MenuItems.Cast<MenuItem>(), item => item.Text == "provider_gold，不可用");
-        Assert.Equal(2, play.MenuItems.Cast<MenuItem>().Count(item => item.Enabled));
-        Assert.Equal(
-            play.MenuItems.Cast<MenuItem>().Select(item => item.Enabled),
-            download.MenuItems.Cast<MenuItem>().Select(item => item.Enabled));
-        Assert.Same(downloadItem, Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "极高，可下载，Interface A"));
-        Assert.Same(unavailableItem, Assert.Single(download.MenuItems.Cast<MenuItem>(), item => item.Text == "Hi-Res 无损，不可用"));
-        Assert.Equal(downloadCount, download.MenuItems.Count);
-
-        var items = list.ContextMenu!.MenuItems.Cast<MenuItem>().ToArray();
-        Assert.DoesNotContain(items, item => item.Text == "下载音质");
+        Assert.Equal(["极高，可播放，Interface A", "Hi-Res，可播放，Interface B"],
+            play.MenuItems.Cast<MenuItem>().Select(item => item.Text).ToArray());
+        Assert.All(play.MenuItems.Cast<MenuItem>(), item => Assert.True(item.Enabled));
     }
-
     [Fact]
-    public void Download_menu_uses_the_verified_quality_for_a_lossless_fallback()
+    public void Download_menu_uses_the_declared_quality_without_fallback()
     {
         var downloads = new RecordingBatchDownloads();
         var probe = new StaticQualityProbe(new QualityProbeResult(
             "qq|song-1",
             [
-                new("hires", "Hi-Res", QualityAvailability.Playable, "聆澜音源", "flac", DownloadQuality: "flac")
+                new("hires", "Hi-Res", QualityAvailability.Playable, "聆澜音源", null)
             ],
             "done"));
         using var shell = CreateShell(downloads, qualityProbe: probe);
@@ -377,10 +355,10 @@ public sealed class BatchDownloadSelectionTests
 
         var item = Assert.Single(download.MenuItems.Cast<MenuItem>());
         Assert.True(item.Enabled);
-        Assert.Equal("Hi-Res，可下载（实际 无损 FLAC），聆澜音源", item.Text);
+        Assert.Equal("Hi-Res，可下载，聆澜音源", item.Text);
         item.PerformClick();
         WaitForUi(() => downloads.SingleRequests.Count == 1);
-        Assert.Equal("flac", downloads.SingleRequests.Single().Quality);
+        Assert.Equal("hires", downloads.SingleRequests.Single().Quality);
     }
 
     [Fact]
