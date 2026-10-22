@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Net;
@@ -94,7 +94,7 @@ public sealed class DownloadWorkflowLifecycleTests
     {
         public IReadOnlyList<string> Qualities { get; set; } = ["128k"];
 
-        public Task<IReadOnlyList<string>> GetQualitiesAsync(string source, CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<string>> GetQualitiesAsync(MusicInfo music, CancellationToken cancellationToken) =>
             Task.FromResult(Qualities);
 
         public Task<string?> GetUrlAsync(MusicInfo music, string quality, CancellationToken cancellationToken) =>

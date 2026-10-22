@@ -318,7 +318,7 @@ public sealed class Issue77StoragePathTests
 
     private sealed class NotUsedDownloadSource : IDownloadSource
     {
-        public Task<IReadOnlyList<string>> GetQualitiesAsync(string source, CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<string>> GetQualitiesAsync(MusicInfo music, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<string>>(["128k"]);
         public Task<string?> GetUrlAsync(MusicInfo music, string quality, CancellationToken cancellationToken) =>
             throw new NotSupportedException("Issue 77 path tests use local files.");

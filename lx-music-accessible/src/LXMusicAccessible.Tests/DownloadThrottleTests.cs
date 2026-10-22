@@ -271,9 +271,7 @@ public sealed class DownloadThrottleTests
             return url;
         }
 
-        public Task<IReadOnlyList<string>> GetQualitiesAsync(
-            string source,
-            CancellationToken cancellationToken)
+        public Task<IReadOnlyList<string>> GetQualitiesAsync(MusicInfo music, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(_qualities);
