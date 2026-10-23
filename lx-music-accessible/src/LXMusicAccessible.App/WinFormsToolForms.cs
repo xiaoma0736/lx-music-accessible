@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -328,6 +329,10 @@ public class DownloadManagerForm : Form
     private readonly Button _delete;
     private readonly Button _clearCompleted;
     private readonly ComboBox _filter = new ComboBox { Name = "DownloadTaskFilter", AccessibleName = "下载任务分类", DropDownStyle = ComboBoxStyle.DropDownList, TabIndex = 2 };
+    private readonly NotifyCollectionChangedEventHandler _tasksChanged;
+    private readonly PropertyChangedEventHandler _taskPropertyChanged;
+    private readonly HashSet<DownloadTask> _observedTasks = new();
+    private readonly object _observerGate = new();
     private readonly Func<string, bool> _confirmDelete;
 
     public DownloadManagerForm(
@@ -372,10 +377,13 @@ public class DownloadManagerForm : Form
         // Same as in the source manager: the empty-state label must not be hidden behind the task list.
         _empty.BringToFront();
         Reload();
-        ((INotifyCollectionChanged)_downloads.Tasks).CollectionChanged += (_, _) => BeginInvoke(Reload);
-        foreach (var task in _downloads.Tasks)
-            task.PropertyChanged += TaskPropertyChanged;
+        _taskPropertyChanged = (_, e) => OnTaskPropertyChanged(e);
+        _tasksChanged = (_, e) => OnTasksChanged(e);
+        ((INotifyCollectionChanged)_downloads.Tasks).CollectionChanged += _tasksChanged;
+        AttachTaskObservers();
+        FormClosed += (_, _) => DetachTaskObservers();
         Shown += (_, _) => _tasks.Focus();
+
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -385,6 +393,63 @@ public class DownloadManagerForm : Form
         if (e.KeyCode == Keys.Escape) Close();
     }
 
+    private void AttachTaskObservers()
+    {
+        lock (_observerGate)
+        {
+            foreach (var task in _downloads.Tasks)
+            {
+                if (_observedTasks.Add(task))
+                    task.PropertyChanged += _taskPropertyChanged;
+            }
+        }
+    }
+
+    private void DetachTaskObservers()
+    {
+        lock (_observerGate)
+        {
+            foreach (var task in _observedTasks)
+                task.PropertyChanged -= _taskPropertyChanged;
+            _observedTasks.Clear();
+        }
+    }
+
+    private void SyncTaskObservers()
+    {
+        lock (_observerGate)
+        {
+            foreach (var task in _observedTasks)
+                task.PropertyChanged -= _taskPropertyChanged;
+            _observedTasks.Clear();
+
+            foreach (var task in _downloads.Tasks)
+            {
+                if (_observedTasks.Add(task))
+                    task.PropertyChanged += _taskPropertyChanged;
+            }
+        }
+    }
+
+    private void OnTasksChanged(NotifyCollectionChangedEventArgs e)
+    {
+        SyncTaskObservers();
+        if (IsDisposed || Disposing || !IsHandleCreated) return;
+        BeginInvoke(Reload);
+    }
+
+    private void OnTaskPropertyChanged(System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (IsDisposed || Disposing || !IsHandleCreated) return;
+        if (e.PropertyName is not nameof(DownloadTask.Status)
+            and not nameof(DownloadTask.ProgressText)
+            and not nameof(DownloadTask.AccessibleName))
+        {
+            return;
+        }
+
+        BeginInvoke(Reload);
+    }
     private void Reload()
     {
         var selectedIds = Selected().Select(task => task.Id).ToHashSet(StringComparer.Ordinal);
@@ -503,14 +568,6 @@ public class DownloadManagerForm : Form
         "失败/取消" => task.Status is DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled,
         _ => true
     };
-
-    private void TaskPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName is nameof(DownloadTask.Status)
-            or nameof(DownloadTask.ProgressText)
-            or nameof(DownloadTask.AccessibleName))
-            BeginInvoke(Reload);
-    }
 
     private async Task Retry()
     {

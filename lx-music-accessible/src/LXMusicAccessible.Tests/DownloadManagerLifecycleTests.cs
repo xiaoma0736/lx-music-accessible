@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Threading;
@@ -13,6 +13,51 @@ namespace LXMusicAccessible.Tests;
 
 public sealed class DownloadManagerLifecycleTests
 {
+    [Fact]
+    public void Closing_manager_detaches_from_global_download_events()
+    {
+        WinFormsTestRunner.Run(() =>
+        {
+            var tasks = new ObservableCollection<DownloadTask>();
+            var workflow = new ObservableWorkflow(tasks);
+            var form = new DownloadManagerForm(new RecordingAnnouncer(), workflow);
+            form.Show();
+            Application.DoEvents();
+            Assert.True(form.IsHandleCreated);
+
+            form.Close();
+            Application.DoEvents();
+            Assert.True(form.IsDisposed);
+
+            var exception = Record.Exception(() => tasks.Add(new DownloadTask
+            {
+                Music = new MusicInfo { Id = "new", Source = "test", Title = "New", Artist = "Artist" }
+            }));
+
+            Assert.Null(exception);
+        });
+    }
+    private sealed class ObservableWorkflow : IDownloadWorkflow
+    {
+        public ObservableWorkflow(ObservableCollection<DownloadTask> tasks) => Tasks = new(tasks);
+
+        public ReadOnlyObservableCollection<DownloadTask> Tasks { get; }
+        public void ApplyPreferences(DownloadPreferences preferences) { }
+        public Task<DownloadTask> DownloadAsync(DownloadRequest request, CancellationToken cancellationToken = default) => Task.FromResult(new DownloadTask());
+        public Task<DownloadListResult> DownloadListAsync(DownloadListRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DownloadListResult(0, 0, 0, 0, 0, Array.Empty<DownloadTask>(), "ok"));
+        public Task<bool> RetryAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public void Cancel(DownloadTask task) { }
+        public void Pause(DownloadTask task) { }
+        public void Resume(DownloadTask task) { }
+        public bool Delete(DownloadTask task, bool deleteSourceFile) => true;
+        public void ClearCompleted() { }
+        public string ResolveDownloadDirectory(string? requested = null) => Path.GetTempPath();
+        public ExternalPlaybackResult OpenDownloadDirectory(string? requested = null) => new(true, "ok");
+        public Task<ExternalPlaybackTarget?> PrepareExternalPlaybackAsync(MusicInfo music, string quality, CancellationToken cancellationToken = default) => Task.FromResult<ExternalPlaybackTarget?>(null);
+        public Task<ExternalPlaybackResult> PlayExternallyAsync(ExternalPlaybackRequest request, CancellationToken cancellationToken = default) => Task.FromResult(new ExternalPlaybackResult(true, "ok"));
+        public DownloadCacheCleanupResult ClearTemporaryFiles() => new(0, 0);
+    }
     private sealed class BlockingWorkflow : IDownloadWorkflow
     {
         private readonly TaskCompletionSource<DownloadTask> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
