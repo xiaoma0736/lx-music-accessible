@@ -39,9 +39,23 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
             Path.Combine(_root, "temporary"),
             new RecordingProcessLauncher());
         Workflow.ApplyPreferences(new(true, DownloadNameOrder.ArtistTitle, true));
+        ShortTimeoutWorkflow = new DownloadWorkflow(
+            NullLogger<DownloadWorkflow>.Instance,
+            _source,
+            _client,
+            _background,
+            new RecordingAnnouncer(),
+            Path.Combine(_root, "temporary-short"),
+            new RecordingProcessLauncher(),
+            new DownloadThrottle(),
+            resolutionTimeout: TimeSpan.FromMilliseconds(200),
+            responseHeaderTimeout: TimeSpan.FromMilliseconds(200),
+            readStallTimeout: TimeSpan.FromMilliseconds(200));
+        ShortTimeoutWorkflow.ApplyPreferences(new(true, DownloadNameOrder.ArtistTitle, true, 0));
     }
 
     private DownloadWorkflow Workflow { get; }
+    private DownloadWorkflow ShortTimeoutWorkflow { get; }
     private StubHttpHandler Http => _http;
     private string Target => Path.Combine(_root, "target");
 
@@ -132,6 +146,80 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
             (albumResult.Requested, albumResult.Completed, albumResult.Failed, albumResult.Cancelled, albumResult.Skipped));
     }
     [Fact]
+    public async Task Batch_continues_after_an_active_single_finishes()
+    {
+        _source.Qualities = ["128k"];
+        var releaseSingle = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _source.HoldUrl("active-single", releaseSingle.Task);
+        Http.Responses["https://download.invalid/active-single-128k"] = new(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 1, 2 })
+        };
+        Http.Responses["https://download.invalid/batch-1-128k"] = new(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 3, 4 })
+        };
+        Http.Responses["https://download.invalid/batch-2-128k"] = new(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 5, 6 })
+        };
+
+        var singlePending = Workflow.DownloadAsync(new(Song("active-single"), "128k", Target));
+        var batchPending = Workflow.DownloadListAsync(new(
+            [Song("batch-1"), Song("batch-2")],
+            "batch",
+            "128k",
+            TargetDirectory: Target));
+        var queued = await WaitForTaskAsync("batch-1", DownloadTaskStatus.Pending);
+        Assert.Equal(DownloadTaskStatus.Pending, queued.Status);
+
+        releaseSingle.TrySetResult(null);
+        var single = await singlePending;
+        var batch = await batchPending;
+        var batchOne = Workflow.Tasks.Single(task => task.Music.Id == "batch-1");
+        var batchTwo = Workflow.Tasks.Single(task => task.Music.Id == "batch-2");
+
+        Assert.Equal(DownloadTaskStatus.Completed, single.Status);
+        Assert.Equal(DownloadTaskStatus.Completed, batchOne.Status);
+        Assert.Equal(DownloadTaskStatus.Completed, batchTwo.Status);
+        Assert.Equal((2, 2, 0, 0, 0),
+            (batch.Requested, batch.Completed, batch.Failed, batch.Cancelled, batch.Skipped));
+    }
+    [Fact]
+    public async Task Batch_proceeds_when_the_active_download_resolution_stalls()
+    {
+        _source.Qualities = ["128k"];
+        var stalled = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _source.HoldUrl("stalled-single", stalled.Task);
+        Http.Responses["https://download.invalid/batch-ready-1-128k"] = new(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 1 })
+        };
+        Http.Responses["https://download.invalid/batch-ready-2-128k"] = new(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 2 })
+        };
+
+        var singlePending = ShortTimeoutWorkflow.DownloadAsync(new(Song("stalled-single"), "128k", Target));
+        var first = await WaitForTaskAsync(ShortTimeoutWorkflow.Tasks, "stalled-single", DownloadTaskStatus.Downloading);
+        var batchPending = ShortTimeoutWorkflow.DownloadListAsync(new(
+            [Song("batch-ready-1"), Song("batch-ready-2")],
+            "batch",
+            "128k",
+            TargetDirectory: Target));
+        var queued = await WaitForTaskAsync(ShortTimeoutWorkflow.Tasks, "batch-ready-1", DownloadTaskStatus.Pending);
+
+        var single = await singlePending;
+        var batch = await batchPending;
+
+        Assert.Equal(DownloadTaskStatus.Failed, single.Status);
+        Assert.Contains("超时", single.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(DownloadTaskStatus.Completed, queued.Status);
+        Assert.Equal(DownloadTaskStatus.Completed, ShortTimeoutWorkflow.Tasks.Single(task => task.Music.Id == "batch-ready-2").Status);
+        Assert.Equal((2, 2, 0, 0, 0),
+            (batch.Requested, batch.Completed, batch.Failed, batch.Cancelled, batch.Skipped));
+    }
+    [Fact]
     public async Task External_playback_materializes_a_declared_quality_without_authenticity_check()
     {
         _source.Qualities = ["128k", "flac"];
@@ -166,6 +254,7 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
 
     public void Dispose()
     {
+        ShortTimeoutWorkflow.DisposeAsync().AsTask().GetAwaiter().GetResult();
         Workflow.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _background.Dispose();
         _client.Dispose();
@@ -242,8 +331,7 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
             Interlocked.Increment(ref _urlCalls);
             if (_heldUrls.TryGetValue(music.Id, out var wait))
             {
-                await wait;
-                cancellationToken.ThrowIfCancellationRequested();
+                await wait.WaitAsync(cancellationToken);
             }
             return $"https://download.invalid/{music.Id}-{quality}";
         }

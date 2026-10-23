@@ -200,6 +200,9 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     private DownloadPreferences _preferences = new(true, DownloadNameOrder.ArtistTitle, true);
     private readonly DownloadThrottle _throttle = new();
     private readonly SemaphoreSlim _downloadGate = new(1, 1);
+    private readonly TimeSpan _resolutionTimeout = TimeSpan.FromSeconds(20);
+    private readonly TimeSpan _responseHeaderTimeout = TimeSpan.FromSeconds(30);
+    private readonly TimeSpan _readStallTimeout = TimeSpan.FromSeconds(30);
     private bool _disposed;
 
     public DownloadWorkflow(
@@ -229,10 +232,16 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         IAccessibleAnnouncer announcer,
         string? temporaryRoot,
         IProcessLauncher processLauncher,
-        DownloadThrottle throttle)
+        DownloadThrottle throttle,
+        TimeSpan? resolutionTimeout = null,
+        TimeSpan? responseHeaderTimeout = null,
+        TimeSpan? readStallTimeout = null)
         : this(logger, source, httpClient, backgroundWork, announcer, temporaryRoot, processLauncher)
     {
         _throttle = throttle;
+        if (resolutionTimeout.HasValue) _resolutionTimeout = resolutionTimeout.Value;
+        if (responseHeaderTimeout.HasValue) _responseHeaderTimeout = responseHeaderTimeout.Value;
+        if (readStallTimeout.HasValue) _readStallTimeout = readStallTimeout.Value;
     }
 
     public DownloadWorkflow(
@@ -940,7 +949,19 @@ catch (Exception exception)
                 "音源未声明所选音质：" + QualityCatalog.Label(quality));
         }
 
-        var url = await _source.GetUrlAsync(task.Music, quality, cancellationToken);
+        string? url;
+        using (var resolutionTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            resolutionTimeout.CancelAfter(_resolutionTimeout);
+            try
+            {
+                url = await _source.GetUrlAsync(task.Music, quality, resolutionTimeout.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException("获取下载链接超时。");
+            }
+        }
         if (string.IsNullOrWhiteSpace(url))
         {
             throw new QualityUnavailableException(
@@ -978,12 +999,22 @@ catch (Exception exception)
         Action<long, long>? progress,
         DownloadOperation? operation = null)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromMinutes(10));
-        using var response = await _httpClient.GetAsync(
-            url,
-            HttpCompletionOption.ResponseHeadersRead,
-            timeout.Token);
+        HttpResponseMessage response;
+        using (var headerTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            headerTimeout.CancelAfter(_responseHeaderTimeout);
+            try
+            {
+                response = await _httpClient.GetAsync(
+                    url,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    headerTimeout.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException("连接下载地址超时。");
+            }
+        }
         response.EnsureSuccessStatusCode();
 
         var temporary = CreateTemporaryPath(directory);
@@ -1002,13 +1033,26 @@ catch (Exception exception)
             var clock = Stopwatch.StartNew();
             long read = 0;
             int count;
-            while ((count = await input.ReadAsync(buffer, 0, buffer.Length, timeout.Token)) > 0)
+            while (true)
             {
-                await output.WriteAsync(buffer, 0, count, timeout.Token);
+                using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                readTimeout.CancelAfter(_readStallTimeout);
+                try
+                {
+                    count = await input.ReadAsync(buffer, 0, buffer.Length, readTimeout.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new TimeoutException("下载网络传输超时。");
+                }
+
+                if (count == 0) break;
+
+                await output.WriteAsync(buffer, 0, count, cancellationToken);
                 read += count;
                 if (operation is not null)
-                    await operation.WaitIfPausedAsync(timeout.Token);
-                await _throttle.PaceTransferAsync(preferences, clock.Elapsed, read, timeout.Token);
+                    await operation.WaitIfPausedAsync(cancellationToken);
+                await _throttle.PaceTransferAsync(preferences, clock.Elapsed, read, cancellationToken);
                 progress?.Invoke(read, total);
             }
 
@@ -1016,7 +1060,7 @@ catch (Exception exception)
             // EOF. A request that was cancelled during transfer must surface as cancelled, not fall
             // through to audio sniffing and quality-fallback errors.
             cancellationToken.ThrowIfCancellationRequested();
-            await output.FlushAsync(timeout.Token);
+            await output.FlushAsync(cancellationToken);
             return new(temporary, GetExtension(url, response.Content.Headers.ContentType));
         }
         catch
