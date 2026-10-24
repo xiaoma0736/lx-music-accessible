@@ -203,6 +203,7 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
     private readonly TimeSpan _resolutionTimeout = TimeSpan.FromSeconds(20);
     private readonly TimeSpan _responseHeaderTimeout = TimeSpan.FromSeconds(30);
     private readonly TimeSpan _readStallTimeout = TimeSpan.FromSeconds(30);
+    private readonly TimeSpan _lyricTimeout = TimeSpan.FromSeconds(20);
     private bool _disposed;
 
     public DownloadWorkflow(
@@ -235,13 +236,15 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         DownloadThrottle throttle,
         TimeSpan? resolutionTimeout = null,
         TimeSpan? responseHeaderTimeout = null,
-        TimeSpan? readStallTimeout = null)
+        TimeSpan? readStallTimeout = null,
+        TimeSpan? lyricTimeout = null)
         : this(logger, source, httpClient, backgroundWork, announcer, temporaryRoot, processLauncher)
     {
         _throttle = throttle;
         if (resolutionTimeout.HasValue) _resolutionTimeout = resolutionTimeout.Value;
         if (responseHeaderTimeout.HasValue) _responseHeaderTimeout = responseHeaderTimeout.Value;
         if (readStallTimeout.HasValue) _readStallTimeout = readStallTimeout.Value;
+        if (lyricTimeout.HasValue) _lyricTimeout = lyricTimeout.Value;
     }
 
     public DownloadWorkflow(
@@ -1077,7 +1080,24 @@ catch (Exception exception)
     {
         try
         {
-            var result = await _source.GetLyricAsync(music, cancellationToken);
+            LyricResult? result;
+            using (var lyricTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                lyricTimeout.CancelAfter(_lyricTimeout);
+                try
+                {
+                    result = await _source.GetLyricAsync(music, lyricTimeout.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogWarning(
+                        "Lyric download timed out ({Source}:{Id})",
+                        music.Source,
+                        music.Id);
+                    return null;
+                }
+            }
+
             if (result?.Lyric is not { Lines.Count: > 0 } lyric) return null;
             var temporary = CreateTemporaryPath(directory);
             await Task.Run(() => File.WriteAllText(

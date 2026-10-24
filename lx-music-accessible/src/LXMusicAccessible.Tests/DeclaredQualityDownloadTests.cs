@@ -50,7 +50,8 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
             new DownloadThrottle(),
             resolutionTimeout: TimeSpan.FromMilliseconds(200),
             responseHeaderTimeout: TimeSpan.FromMilliseconds(200),
-            readStallTimeout: TimeSpan.FromMilliseconds(200));
+            readStallTimeout: TimeSpan.FromMilliseconds(200),
+            lyricTimeout: TimeSpan.FromMilliseconds(200));
         ShortTimeoutWorkflow.ApplyPreferences(new(true, DownloadNameOrder.ArtistTitle, true, 0));
     }
 
@@ -220,6 +221,31 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
             (batch.Requested, batch.Completed, batch.Failed, batch.Cancelled, batch.Skipped));
     }
     [Fact]
+    public async Task Batch_completes_when_lyric_lookup_stalls()
+    {
+        _source.Qualities = ["128k"];
+        var stalledLyric = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _source.HoldLyric("lyric-stall", stalledLyric.Task);
+        Http.Responses["https://download.invalid/lyric-stall-128k"] = new(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 1, 2 })
+        };
+
+        var batchPending = ShortTimeoutWorkflow.DownloadListAsync(new(
+            [Song("lyric-stall")],
+            "album",
+            "128k",
+            TargetDirectory: Target));
+
+        var batch = await batchPending;
+        var task = Assert.Single(batch.Tasks);
+
+        Assert.Equal(DownloadTaskStatus.Completed, task.Status);
+        Assert.True(File.Exists(task.SavePath));
+        Assert.Null(task.LyricPath);
+        Assert.DoesNotContain(Directory.EnumerateFiles(Target, "*", SearchOption.AllDirectories), path => path.EndsWith(".download", StringComparison.OrdinalIgnoreCase));
+    }
+    [Fact]
     public async Task External_playback_materializes_a_declared_quality_without_authenticity_check()
     {
         _source.Qualities = ["128k", "flac"];
@@ -309,6 +335,7 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
         private int _qualityCalls; public int QualityCalls => _qualityCalls;
         private int _urlCalls; public int UrlCalls => _urlCalls;
         private readonly Dictionary<string, Task> _heldUrls = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, Task> _heldLyrics = new(StringComparer.Ordinal);
 
         public Task<IReadOnlyList<string>> GetQualitiesAsync(
             MusicInfo music,
@@ -316,6 +343,11 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
         {
             Interlocked.Increment(ref _qualityCalls);
             return Task.FromResult(Qualities);
+        }
+
+        public void HoldLyric(string songId, Task wait)
+        {
+            _heldLyrics[songId] = wait;
         }
 
         public void HoldUrl(string songId, Task wait)
@@ -336,8 +368,13 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
             return $"https://download.invalid/{music.Id}-{quality}";
         }
 
-        public Task<LyricResult?> GetLyricAsync(
+        public async Task<LyricResult?> GetLyricAsync(
             MusicInfo music,
-            CancellationToken cancellationToken) => Task.FromResult<LyricResult?>(null);
+            CancellationToken cancellationToken)
+        {
+            if (_heldLyrics.TryGetValue(music.Id, out var wait))
+                await wait.WaitAsync(cancellationToken);
+            return null;
+        }
     }
 }
