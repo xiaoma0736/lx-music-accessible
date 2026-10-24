@@ -246,6 +246,28 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
         Assert.DoesNotContain(Directory.EnumerateFiles(Target, "*", SearchOption.AllDirectories), path => path.EndsWith(".download", StringComparison.OrdinalIgnoreCase));
     }
     [Fact]
+    public async Task Manual_redownload_replaces_previous_audio_and_lyric()
+    {
+        _source.Qualities = ["128k"];
+        _source.ReturnLyric = true;
+        var url = "https://download.invalid/manual-128k";
+        Http.Responses[url] = new(HttpStatusCode.OK) { Content = new ByteArrayContent("old-audio"u8.ToArray()) };
+
+        var task = await Workflow.DownloadAsync(new(Song("manual"), "128k", Target));
+        Assert.True(File.Exists(task.SavePath), "audio missing");
+        Assert.True(File.Exists(task.LyricPath), "lyric missing");
+        var oldAudio = await Task.Run(() => File.ReadAllText(task.SavePath!));
+        var oldLyric = await Task.Run(() => File.ReadAllText(task.LyricPath!));
+
+        Http.Responses[url] = new(HttpStatusCode.OK) { Content = new ByteArrayContent("new-audio"u8.ToArray()) };
+        Assert.True(await Workflow.RedownloadAsync(task));
+
+        Assert.Equal(DownloadTaskStatus.Completed, task.Status);
+        Assert.True(File.Exists(task.SavePath));
+        Assert.True(File.Exists(task.LyricPath));
+        Assert.DoesNotContain(Directory.EnumerateFiles(Target, "*", SearchOption.AllDirectories), path => path.EndsWith(".download", StringComparison.OrdinalIgnoreCase));
+    }
+    [Fact]
     public async Task External_playback_materializes_a_declared_quality_without_authenticity_check()
     {
         _source.Qualities = ["128k", "flac"];
@@ -321,8 +343,17 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
             CancellationToken cancellationToken)
         {
             Requests.Add(request);
-            if (Responses.TryGetValue(request.RequestUri!.AbsoluteUri, out var response))
+            if (Responses.TryGetValue(request.RequestUri!.AbsoluteUri, out var prototype))
+            {
+                var bytes = await prototype.Content.ReadAsByteArrayAsync();
+                var response = new HttpResponseMessage(prototype.StatusCode)
+                {
+                    Content = new ByteArrayContent(bytes)
+                };
+                foreach (var header in prototype.Content.Headers)
+                    response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
                 return await Task.Run(() => response, cancellationToken);
+            }
             return await Task.Run(
                 () => new HttpResponseMessage(HttpStatusCode.NotFound),
                 cancellationToken);
@@ -336,7 +367,8 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
         private int _urlCalls; public int UrlCalls => _urlCalls;
         private readonly Dictionary<string, Task> _heldUrls = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Task> _heldLyrics = new(StringComparer.Ordinal);
-
+        public bool ReturnLyric { get; set; }
+        public bool FailAudioOnce { get; set; }
         public Task<IReadOnlyList<string>> GetQualitiesAsync(
             MusicInfo music,
             CancellationToken cancellationToken)
@@ -361,11 +393,15 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
             CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _urlCalls);
+            var failAudio = FailAudioOnce;
+            FailAudioOnce = false;
             if (_heldUrls.TryGetValue(music.Id, out var wait))
             {
                 await wait.WaitAsync(cancellationToken);
             }
-            return $"https://download.invalid/{music.Id}-{quality}";
+            return failAudio
+                ? $"https://download.invalid/{music.Id}-{quality}-failed"
+                : $"https://download.invalid/{music.Id}-{quality}";
         }
 
         public async Task<LyricResult?> GetLyricAsync(
@@ -374,7 +410,15 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
         {
             if (_heldLyrics.TryGetValue(music.Id, out var wait))
                 await wait.WaitAsync(cancellationToken);
-            return null;
+            if (!ReturnLyric) return null;
+            return new LyricResult
+            {
+                SourceId = music.Source,
+                Lyric = new Lyric
+                {
+                    Lines = [new LyricLine { Time = TimeSpan.FromSeconds(1), Text = "lyric" }]
+                }
+            };
         }
     }
 }

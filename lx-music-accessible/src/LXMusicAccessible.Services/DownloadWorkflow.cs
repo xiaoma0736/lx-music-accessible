@@ -105,6 +105,10 @@ public interface IDownloadWorkflow
         DownloadTask task,
         string? targetDirectory = null,
         CancellationToken cancellationToken = default);
+    Task<bool> RedownloadAsync(
+        DownloadTask task,
+        string? targetDirectory = null,
+        CancellationToken cancellationToken = default);
     void Cancel(DownloadTask task);
     void Pause(DownloadTask task);
     void Resume(DownloadTask task);
@@ -441,8 +445,9 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             $"批量下载{label}已取消：跳过 {requested} 首");
     }
 
-    public async Task<bool> RetryAsync(
+    private async Task<bool> RestartDownloadAsync(
         DownloadTask task,
+        bool manualRedownload,
         string? targetDirectory = null,
         CancellationToken cancellationToken = default)
     {
@@ -454,6 +459,12 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             if (!_plans.TryGetValue(task.Id, out plan!)) return false;
             if (!string.IsNullOrWhiteSpace(targetDirectory))
                 plan = plan with { TargetDirectory = targetDirectory };
+            plan = plan with
+            {
+                Preferences = plan.Preferences with { DownloadLyric = true },
+                ReplaceAudioPath = task.SavePath,
+                ReplaceLyricPath = task.LyricPath,
+            };
             _plans[task.Id] = plan;
         }
 
@@ -463,13 +474,33 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         task.Progress = 0;
         task.DownloadedBytes = 0;
         task.TotalBytes = 0;
-        task.SavePath = null;
-        task.LyricPath = null;
         task.ErrorMessage = null;
         task.IsBatch = false;
         task.Status = DownloadTaskStatus.Pending;
-        await ExecuteManagedAsync(task, plan.TargetDirectory, plan.Preferences, announce: true, cancellationToken);
+        await ExecuteManagedAsync(
+            task,
+            plan.TargetDirectory,
+            plan.Preferences,
+            announce: true,
+            cancellationToken,
+            plan.ReplaceAudioPath,
+            plan.ReplaceLyricPath);
         return true;
+    }
+    public async Task<bool> RetryAsync(
+        DownloadTask task,
+        string? targetDirectory = null,
+        CancellationToken cancellationToken = default)
+    {
+        return await RestartDownloadAsync(task, manualRedownload: false, targetDirectory, cancellationToken);
+    }
+
+    public async Task<bool> RedownloadAsync(
+        DownloadTask task,
+        string? targetDirectory = null,
+        CancellationToken cancellationToken = default)
+    {
+        return await RestartDownloadAsync(task, manualRedownload: true, targetDirectory, cancellationToken);
     }
 
     public void Cancel(DownloadTask task)
@@ -750,7 +781,9 @@ catch (Exception exception)
         string? targetDirectory,
         DownloadPreferences preferences,
         bool announce,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? replaceAudioPath = null,
+        string? replaceLyricPath = null)
     {
         var activityId = $"download:{task.Id}";
         if (announce)
@@ -807,7 +840,9 @@ catch (Exception exception)
         bool announce,
         string activityId,
         DownloadOperation operation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? replaceAudioPath = null,
+        string? replaceLyricPath = null)
     {
         string? audioTemporary = null;
         string? lyricTemporary = null;
@@ -869,9 +904,30 @@ catch (Exception exception)
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            var finalPath = CommitUnique(audioTemporary, directory, name, extension);
-            audioTemporary = null;
-            task.SavePath = finalPath;
+            string finalPath;
+            string? finalLyricPath = null;
+            if (replaceAudioPath is null)
+            {
+                finalPath = CommitUnique(audioTemporary, directory, name, extension);
+                audioTemporary = null;
+                task.SavePath = finalPath;
+            }
+            else
+            {
+                finalPath = CommitUnique(audioTemporary, directory, name, extension);
+                audioTemporary = null;
+                if (lyricTemporary is not null)
+                {
+                    finalLyricPath = CommitUnique(lyricTemporary, directory, name, ".lrc");
+                    lyricTemporary = null;
+                }
+
+                PromoteReplacement(finalPath, finalLyricPath, replaceAudioPath, replaceLyricPath);
+                finalPath = replaceAudioPath;
+                finalLyricPath = File.Exists(replaceLyricPath) ? replaceLyricPath : null;
+                task.SavePath = finalPath;
+                task.LyricPath = finalLyricPath;
+            }
 
             if (lyricTemporary is not null)
             {
@@ -901,6 +957,11 @@ catch (Exception exception)
         {
             task.Status = DownloadTaskStatus.Cancelled;
             task.ErrorMessage = "下载已取消";
+            if (!string.IsNullOrWhiteSpace(replaceAudioPath))
+            {
+                task.SavePath = replaceAudioPath;
+                task.LyricPath = File.Exists(replaceLyricPath) ? replaceLyricPath : null;
+            }
         }
         catch (DownloadSafetyException exception)
         {
@@ -921,6 +982,11 @@ catch (Exception exception)
         catch (Exception exception)
         {
             task.Status = DownloadTaskStatus.Failed;
+            if (!string.IsNullOrWhiteSpace(replaceAudioPath))
+            {
+                task.SavePath = replaceAudioPath;
+                task.LyricPath = File.Exists(replaceLyricPath) ? replaceLyricPath : null;
+            }
             task.ErrorMessage = "下载失败：" + exception.GetType().Name + "：" + exception.Message;
             _logger.LogError(
                 "Download failed ({TaskId}): {ErrorType}",
@@ -1223,6 +1289,55 @@ catch (Exception exception)
         return path;
     }
 
+    private static void PromoteReplacement(
+        string newAudio,
+        string? newLyric,
+        string replaceAudio,
+        string? replaceLyric)
+    {
+        var audioBackup = File.Exists(replaceAudio)
+            ? Path.Combine(Path.GetDirectoryName(replaceAudio)!, ".lxmusic-backup-" + Guid.NewGuid().ToString("N") + Path.GetExtension(replaceAudio))
+            : null;
+        var lyricBackup = replaceLyric is not null && File.Exists(replaceLyric)
+            ? Path.Combine(Path.GetDirectoryName(replaceLyric)!, ".lxmusic-backup-" + Guid.NewGuid().ToString("N") + ".lrc")
+            : null;
+        try
+        {
+            if (audioBackup is not null) File.Move(replaceAudio, audioBackup);
+            if (lyricBackup is not null) File.Move(replaceLyric!, lyricBackup);
+
+            if (newLyric is not null)
+            {
+                if (lyricBackup is not null) File.Replace(newLyric, replaceLyric, null);
+                else File.Move(newLyric, replaceLyric!);
+            }
+            else if (File.Exists(replaceLyric))
+            {
+                File.Delete(replaceLyric);
+            }
+
+            if (audioBackup is not null) File.Replace(newAudio, replaceAudio, null);
+            else File.Move(newAudio, replaceAudio);
+
+            if (audioBackup is not null) File.Delete(audioBackup);
+            if (lyricBackup is not null) File.Delete(lyricBackup);
+        }
+        catch
+        {
+            if (File.Exists(audioBackup) && !File.Exists(replaceAudio))
+                File.Move(audioBackup, replaceAudio);
+            if (File.Exists(lyricBackup) && !File.Exists(replaceLyric))
+                File.Move(lyricBackup, replaceLyric!);
+            throw;
+        }
+        finally
+        {
+            if (File.Exists(newAudio)) File.Delete(newAudio);
+            if (newLyric is not null && File.Exists(newLyric)) File.Delete(newLyric);
+            if (audioBackup is not null && File.Exists(audioBackup)) File.Delete(audioBackup);
+            if (lyricBackup is not null && File.Exists(lyricBackup)) File.Delete(lyricBackup);
+        }
+    }
     private static string CommitUnique(string temporary, string directory, string name, string extension)
     {
         directory = EnsureSafeDirectory(directory);
@@ -1455,7 +1570,9 @@ catch (Exception exception)
     private sealed record DownloadPlan(
         string? TargetDirectory,
         DownloadPreferences Preferences,
-        string RequestedQuality);
+        string RequestedQuality,
+        string? ReplaceAudioPath = null,
+        string? ReplaceLyricPath = null);
 
     private sealed record HttpDownload(string Path, string Extension);
     private sealed record RemoteDownload(string Path, string Quality, AudioFileInfo Actual);
