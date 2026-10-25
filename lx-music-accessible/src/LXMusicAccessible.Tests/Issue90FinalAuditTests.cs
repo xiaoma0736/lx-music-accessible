@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -239,7 +239,7 @@ public sealed class Issue90FinalAuditTests
         Assert.Contains("https://dotnet.microsoft.com/download/dotnet-framework/net48", installer, StringComparison.Ordinal);
         Assert.Contains("installed=", installer, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("requiredRelease=", installer, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("ExitCode := 2", installer, StringComparison.Ordinal);
+        Assert.Contains("Abort;", installer, StringComparison.Ordinal);
 
         var readme = File.ReadAllText(RepositoryPath("README.md"));
         Assert.Contains("官方下载地址", readme, StringComparison.Ordinal);
@@ -428,3 +428,4 @@ public sealed class Issue90FinalAuditTests
         public bool ShowKugouQrLogin(Form? owner) => false;
     }
 }
+

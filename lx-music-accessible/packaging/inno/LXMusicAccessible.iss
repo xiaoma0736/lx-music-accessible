@@ -110,7 +110,7 @@ begin
       '官方下载：https://dotnet.microsoft.com/download/dotnet-framework/net48' + #13#10 +
       '诊断文件：%LocalAppData%\LXMusicAccessible\setup\net48-diagnostics.txt',
       mbCriticalError, MB_OK);
-    ExitCode := 2;
+    Abort;
   end;
 end;
 
@@ -124,3 +124,4 @@ begin
       'Software\Microsoft\Windows\CurrentVersion\Uninstall\LxMusicAccessible');
   end;
 end;
+
