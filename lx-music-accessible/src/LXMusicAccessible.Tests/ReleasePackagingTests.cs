@@ -98,6 +98,14 @@ public sealed class ReleasePackagingTests
         Assert.Contains("Complete uninstall left the application directory behind.", script);
     }
 
+    [Fact]
+    public void Release_zip_and_manifest_metadata_are_deterministic()
+    {
+        var script = File.ReadAllText(Path.Combine(RepositoryDirectory(), "build_release.ps1"));
+        Assert.Contains("$entry.LastWriteTime = [DateTimeOffset]::new(2000, 1, 1, 0, 0, 0, [TimeSpan]::Zero)", script, StringComparison.Ordinal);
+        Assert.Contains("$generatedAtUtcRaw = & git log -1 --format=%cI -- $appProject", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("generatedAtUtc = [DateTime]::UtcNow.ToString", script, StringComparison.Ordinal);
+    }
     private static string SourceDirectory()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
@@ -111,3 +119,4 @@ public sealed class ReleasePackagingTests
         return Directory.GetParent(src)!.FullName;
     }
 }
+

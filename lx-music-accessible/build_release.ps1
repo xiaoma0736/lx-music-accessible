@@ -121,7 +121,14 @@ function New-ReleaseZip([string]$SourceDirectory, [string]$ArchivePath) {
             if ($entryName.Contains('\') -or [System.IO.Path]::IsPathRooted($entryName) -or $entryName -match '(^|/)\.\.(/|$)') {
                 throw "Unsafe ZIP entry name: $entryName"
             }
-            $null = [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $fileFullPath, $entryName, [System.IO.Compression.CompressionLevel]::Optimal)
+            $entry = $archive.CreateEntry($entryName, [System.IO.Compression.CompressionLevel]::Optimal)
+            $entry.LastWriteTime = [DateTimeOffset]::new(2000, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+            $input = [System.IO.File]::OpenRead($fileFullPath)
+            try {
+                $output = $entry.Open()
+                try { $input.CopyTo($output) } finally { $output.Dispose() }
+            }
+            finally { $input.Dispose() }
         }
     }
     finally {
@@ -215,11 +222,11 @@ if ((Get-Item -LiteralPath $releaseRoot).Attributes -band [System.IO.FileAttribu
 }
 
 # Clean output makes the release list exact and cannot leave stale x86/self-contained artifacts.
-$generatedAtUtc = [DateTime]::UtcNow.ToString("O")
-if (Test-Path -LiteralPath (Join-Path $releaseRoot "release-manifest.json") -PathType Leaf) {
-    $generatedAtUtc = ([System.IO.File]::ReadAllText((Join-Path $releaseRoot "release-manifest.json")) | ConvertFrom-Json).generatedAtUtc
-}
-Get-ChildItem -LiteralPath $releaseRoot -Force | Remove-Item -Recurse -Force
+# The manifest freeze time is deterministic from the application project commit; this keeps repeated
+# validation of one candidate byte-stable while avoiding wall-clock metadata in tracked evidence.
+$generatedAtUtcRaw = & git log -1 --format=%cI -- $appProject
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($generatedAtUtcRaw)) { throw "Could not read deterministic application freeze timestamp." }
+$generatedAtUtc = [DateTimeOffset]::Parse($generatedAtUtcRaw, [System.Globalization.CultureInfo]::InvariantCulture).ToUniversalTime().ToString("O")
 if (Test-Path -LiteralPath $staging) {
     if ((Get-Item -LiteralPath $staging).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
         throw "Release staging directory cannot be a reparse point: $staging"
