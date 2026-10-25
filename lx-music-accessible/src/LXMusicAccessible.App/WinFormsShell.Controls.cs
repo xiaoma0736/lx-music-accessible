@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
@@ -84,6 +84,7 @@ public partial class WinFormsShell : Form
     protected Label StatusText;
     protected Label PlaybackInfoText;
     protected MenuItem VoiceAnnouncementItem;
+    private readonly Dictionary<string, MenuItem> _localHotkeyMenuItems = new(StringComparer.Ordinal);
     private MenuItem? _playQualityMenu;
     protected MenuItem LyricAnnouncementItem;
     protected Label LiveRegion;
@@ -92,6 +93,59 @@ public partial class WinFormsShell : Form
     protected Button CategoryPlaylistsLoadMore;
     protected Button SavedPlaylistLoadMore;
     protected Button RankingSongsLoadMore;
+
+    private void AddLocalHotkeyMenu(Menu parent, string actionId, string label, string accessKey, EventHandler onClick)
+    {
+        var item = new MenuItem(label + accessKey, onClick);
+        _localHotkeyMenuItems[actionId] = item;
+        parent.MenuItems.Add(item);
+    }
+
+    internal void RefreshLocalHotkeyMenuLabels()
+    {
+        foreach (var pair in _localHotkeyMenuItems)
+        {
+            var item = pair.Value;
+            var paren = item.Text.LastIndexOf('\u0028');
+            var accessKey = paren >= 0 ? item.Text[paren..] : string.Empty;
+            var label = pair.Key switch
+            {
+                HotkeyActions.PlayPause => "播放/暂停",
+                HotkeyActions.Stop => "停止",
+                HotkeyActions.Previous => "上一首",
+                HotkeyActions.Next => "下一首",
+                HotkeyActions.Rewind => "快退十秒",
+                HotkeyActions.Forward => "快进十秒",
+                HotkeyActions.VolumeDown => "音量减",
+                HotkeyActions.VolumeUp => "音量加",
+                HotkeyActions.SwitchPreviousOutputDevice => "上一个播放设备",
+                HotkeyActions.SwitchNextOutputDevice => "下一个播放设备",
+                HotkeyActions.TogglePlayMode => "切换播放模式",
+                _ => item.Text
+            };
+            var defaultKey = pair.Key switch
+            {
+                HotkeyActions.PlayPause => PlatformKey.F5,
+                HotkeyActions.Stop => PlatformKey.F6,
+                HotkeyActions.Previous => PlatformKey.F3,
+                HotkeyActions.Next => PlatformKey.F4,
+                HotkeyActions.Rewind => PlatformKey.F7,
+                HotkeyActions.Forward => PlatformKey.F8,
+                HotkeyActions.VolumeDown => PlatformKey.F9,
+                HotkeyActions.VolumeUp => PlatformKey.F10,
+                HotkeyActions.SwitchPreviousOutputDevice => PlatformKey.F11,
+                HotkeyActions.SwitchNextOutputDevice => PlatformKey.F12,
+                HotkeyActions.TogglePlayMode => PlatformKey.F1,
+                _ => PlatformKey.None
+            };
+            var hotkey = _services.Settings?.GetHotkeys().FirstOrDefault(candidate =>
+                !candidate.IsGlobal && candidate.ActionId == pair.Key);
+            var displayKey = hotkey is { IsEnabled: true } ? hotkey.Key : defaultKey;
+            item.Text = displayKey == PlatformKey.None
+                ? label + "（未设置）" + accessKey
+                : label + "（" + displayKey + "）" + accessKey;
+        }
+    }
 
     protected override void Dispose(bool disposing)
     {
@@ -205,20 +259,19 @@ public partial class WinFormsShell : Form
         file.MenuItems.Add(new MenuItem("-"));
         file.MenuItems.Add(new MenuItem("退出(&X)", (_, _) => _ = RequestExit(), Shortcut.CtrlQ));
         var play = new MenuItem("播放(&B)");
-        play.MenuItems.Add(new MenuItem("播放/暂停(&P)", (_, _) => TogglePlayback()));
-        play.MenuItems.Add(new MenuItem("停止(&S)", (_, _) => StopPlayback(), Shortcut.F6));
-        play.MenuItems.Add(new MenuItem("上一首(&V)", (_, _) => _ = MovePlayback(true), Shortcut.F3));
-        play.MenuItems.Add(new MenuItem("下一首(&N)", (_, _) => _ = MovePlayback(false), Shortcut.F4));
+        play.Popup += (_, _) => RefreshLocalHotkeyMenuLabels();
+        AddLocalHotkeyMenu(play, HotkeyActions.PlayPause, "播放/暂停", "(&P)", (_, _) => TogglePlayback());
+        AddLocalHotkeyMenu(play, HotkeyActions.Stop, "停止", "(&S)", (_, _) => StopPlayback());
+        AddLocalHotkeyMenu(play, HotkeyActions.Previous, "上一首", "(&V)", (_, _) => _ = MovePlayback(true));
+        AddLocalHotkeyMenu(play, HotkeyActions.Next, "下一首", "(&N)", (_, _) => _ = MovePlayback(false));
         play.MenuItems.Add(new MenuItem("-"));
-        play.MenuItems.Add(new MenuItem("快退十秒(&R)", (_, _) => Seek(-10), Shortcut.F7));
-        play.MenuItems.Add(new MenuItem("快进十秒(&F)", (_, _) => Seek(10), Shortcut.F8));
-        play.MenuItems.Add(new MenuItem("音量减(&L)", (_, _) => ChangeVolume(-VolumeStep), Shortcut.F9));
-        // F10 is not bound as a MenuItem shortcut: that accelerator is resolved through the configurable hotkey
-        // table and must stay free for the classic menu key, so the default key is named in the text instead.
-        play.MenuItems.Add(new MenuItem("音量加（默认 F10）(&G)", (_, _) => ChangeVolume(VolumeStep)));
-        play.MenuItems.Add(new MenuItem("上一个播放设备(&E)", (_, _) => SwitchDevice(-1), Shortcut.F11));
-        play.MenuItems.Add(new MenuItem("下一个播放设备(&X)", (_, _) => SwitchDevice(1), Shortcut.F12));
-        play.MenuItems.Add(new MenuItem("切换播放模式(&M)", (_, _) => TogglePlayMode(), Shortcut.F1));
+        AddLocalHotkeyMenu(play, HotkeyActions.Rewind, "快退十秒", "(&R)", (_, _) => Seek(-10));
+        AddLocalHotkeyMenu(play, HotkeyActions.Forward, "快进十秒", "(&F)", (_, _) => Seek(10));
+        AddLocalHotkeyMenu(play, HotkeyActions.VolumeDown, "音量减", "(&L)", (_, _) => ChangeVolume(-VolumeStep));
+        AddLocalHotkeyMenu(play, HotkeyActions.VolumeUp, "音量加", "(&G)", (_, _) => ChangeVolume(VolumeStep));
+        AddLocalHotkeyMenu(play, HotkeyActions.SwitchPreviousOutputDevice, "上一个播放设备", "(&E)", (_, _) => SwitchDevice(-1));
+        AddLocalHotkeyMenu(play, HotkeyActions.SwitchNextOutputDevice, "下一个播放设备", "(&X)", (_, _) => SwitchDevice(1));
+        AddLocalHotkeyMenu(play, HotkeyActions.TogglePlayMode, "切换播放模式", "(&M)", (_, _) => TogglePlayMode());
         _playQualityMenu = new MenuItem("当前歌曲音质(&Q)");
         _playQualityMenu.Popup += (_, _) => _ = RefreshQualitySubmenuAsync(
             _playQualityMenu,
@@ -257,6 +310,7 @@ public partial class WinFormsShell : Form
             item.OwnerDraw = false;
             menu.MenuItems.Add(item);
         }
+        RefreshLocalHotkeyMenuLabels();
         return menu;
     }
 

@@ -1,4 +1,4 @@
-using LXMusicAccessible.Audio;
+﻿using LXMusicAccessible.Audio;
 using LXMusicAccessible.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -69,6 +69,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
         _ownsHttpClient = httpClient is null;
         _precacheDirectory = Path.GetFullPath(precacheDirectory ?? Path.GetTempPath());
         _random = random ?? FrameworkCompatibility.SharedRandom;
+        _audioPlayer.StateChanged += AudioPlayer_StateChanged;
         _audioPlayer.PlaybackCompleted += AudioPlayer_PlaybackCompleted;
     }
 
@@ -1064,6 +1065,25 @@ catch (OperationCanceledException) when (cancellationToken.IsCancellationRequest
         RaiseStateChanged(change);
     }
 
+    private void AudioPlayer_StateChanged(object? sender, AudioPlayerState e)
+    {
+        var mapped = e switch
+        {
+            AudioPlayerState.Loading => PlayerState.Loading,
+            AudioPlayerState.Playing => PlayerState.Playing,
+            _ => (PlayerState?)null
+        };
+        if (mapped is null) return;
+        PlayerStateChangedEventArgs change;
+        lock (_gate)
+        {
+            if (_state != PlayerState.Playing) return;
+            change = StateChange(_state, mapped.Value, _currentMusic);
+            _state = mapped.Value;
+        }
+        RaiseStateChanged(change);
+    }
+
     private void AudioPlayer_PlaybackCompleted(object? sender, EventArgs e)
     {
         try { _ = AdvanceAsync(1, naturalEnd: true); }
@@ -1358,6 +1378,7 @@ catch (OperationCanceledException) when (cancellationToken.IsCancellationRequest
 
     public async ValueTask DisposeAsync()
     {
+        _audioPlayer.StateChanged -= AudioPlayer_StateChanged;
         _audioPlayer.PlaybackCompleted -= AudioPlayer_PlaybackCompleted;
         lock (_gate) ++_queueRevision;
         CancelGenerationWork();

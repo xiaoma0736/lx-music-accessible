@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using ManagedBass;
 using Microsoft.Extensions.Logging;
@@ -36,6 +36,7 @@ public class AudioPlayer : IAudioPlayer
     private bool _bassReady;
     private bool _pluginsLoaded;
     private int _disposed;
+    private System.Threading.Timer? _playbackStateTimer;
 
     // 输出设备：app 空间索引 -1 = 系统默认；具体设备 0..n
     // BASS Windows 设备布局：索引 0 = 无声、1 = 默认、2+ = 具体设备
@@ -391,6 +392,9 @@ public class AudioPlayer : IAudioPlayer
         }
         catch (Exception ex)
         {
+            ReleaseStream();
+            _position = TimeSpan.Zero;
+            State = AudioPlayerState.Stopped;
             Debug.WriteLine($"切换输出设备失败: {ex.Message}");
             return false;
         }
@@ -450,9 +454,11 @@ public class AudioPlayer : IAudioPlayer
         }
         catch (Exception ex)
         {
+            ReleaseStream();
+            DeleteTempFile();
             State = AudioPlayerState.Error;
             throw new InvalidOperationException("无法加载音频文件", ex);
-        }
+    }
     }
 
     /// <summary>把在线 URL 完整下载到临时文件（回退/第三方播放共用）</summary>
@@ -511,6 +517,7 @@ public class AudioPlayer : IAudioPlayer
             throw new InvalidOperationException($"播放失败: {Bass.LastError}");
         }
         State = AudioPlayerState.Playing;
+        StartPlaybackStateMonitor();
         await Task.CompletedTask;
     }
 
@@ -520,6 +527,7 @@ public class AudioPlayer : IAudioPlayer
         {
             _position = Position; // 暂停前锚定位置（BASS Pause 后位置仍会轻微前移，故以锚定值为准）
             Bass.ChannelPause(_stream);
+            StopPlaybackStateMonitor();
             State = AudioPlayerState.Paused;
         }
     }
@@ -531,6 +539,7 @@ public class AudioPlayer : IAudioPlayer
         {
             Bass.ChannelStop(_stream);
         }
+        StopPlaybackStateMonitor();
         _position = TimeSpan.Zero;
         State = AudioPlayerState.Stopped;
     }
@@ -584,8 +593,41 @@ public class AudioPlayer : IAudioPlayer
 
     // ============ 释放 ============
 
+    private void StartPlaybackStateMonitor()
+    {
+        StopPlaybackStateMonitor();
+        _playbackStateTimer = new System.Threading.Timer(_ =>
+        {
+            try
+            {
+                if (_stream == 0 || _disposed != 0) return;
+                var active = Bass.ChannelIsActive(_stream);
+                if (State == AudioPlayerState.Playing && active == PlaybackState.Stalled)
+                {
+                    // BASS enters Stalled while buffering; Loading keeps callers from treating the
+                    // stream as actively playing. Resume is restored below.
+                    State = AudioPlayerState.Loading;
+                }
+                else if (State == AudioPlayerState.Loading && active == PlaybackState.Playing)
+                {
+                    State = AudioPlayerState.Playing;
+                }
+            }
+            catch (Exception exception)
+            {
+                LogNativeFallback("playback-state-monitor", exception);
+            }
+        }, null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+    }
+
+    private void StopPlaybackStateMonitor()
+    {
+        _playbackStateTimer?.Dispose();
+        _playbackStateTimer = null;
+    }
     private void ReleaseStream()
     {
+        StopPlaybackStateMonitor();
         if (_stream != 0)
         {
             if (_endSync != 0)
@@ -633,9 +675,11 @@ public class AudioPlayer : IAudioPlayer
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        StopPlaybackStateMonitor();
         ReleaseStream();
         DeleteTempFile();
         if (_ownsHttpClient) _httpClient.Dispose();
         GC.SuppressFinalize(this);
     }
 }
+

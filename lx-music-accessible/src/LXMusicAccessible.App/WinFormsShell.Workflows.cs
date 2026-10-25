@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -1727,6 +1727,12 @@ public partial class WinFormsShell
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
         if (keyData == Keys.Back && HandleBrowseBack()) return true;
+        if (keyData == (Keys.Control | Keys.F))
+        {
+            SelectTab(0);
+            SearchText.Focus();
+            return true;
+        }
         if (keyData == Keys.Escape)
         {
             if (SearchText.Focused && SearchText.Text.Length > 0) ClearSearch();

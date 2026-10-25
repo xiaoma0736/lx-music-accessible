@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Linq;
@@ -411,7 +411,8 @@ public sealed class RuntimePlaybackSearchHistoryTests
     private static void InvokePlayModeMenuCommand(Form shell)
     {
         var item = FindPlayModeMenuItem(shell.Menu!);
-        Assert.Equal(Shortcut.F1, item.Shortcut);
+        Assert.Equal(Shortcut.None, item.Shortcut);
+        Assert.Contains("F1", item.Text, StringComparison.Ordinal);
 
         // WinForms MenuItem.OnClick dispatches both the stored click delegate and its Command. For a
         // delegate-constructed menu item they target the same application callback; invoke the stored
@@ -510,3 +511,4 @@ public sealed class RuntimePlaybackSearchHistoryTests
         public bool Unregister(IntPtr windowHandle, int id) => true;
     }
 }
+
