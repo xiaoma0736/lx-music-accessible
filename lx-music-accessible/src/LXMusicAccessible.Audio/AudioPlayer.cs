@@ -37,6 +37,8 @@ public class AudioPlayer : IAudioPlayer
     private bool _pluginsLoaded;
     private int _disposed;
     private System.Threading.Timer? _playbackStateTimer;
+    private DateTimeOffset? _stallStartedUtc;
+    private static readonly TimeSpan StallRecoveryTimeout = TimeSpan.FromSeconds(30);
 
     // 输出设备：app 空间索引 -1 = 系统默认；具体设备 0..n
     // BASS Windows 设备布局：索引 0 = 无声、1 = 默认、2+ = 具体设备
@@ -620,6 +622,16 @@ public class AudioPlayer : IAudioPlayer
         }, null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
     }
 
+    internal void RecoverIfStallExpired(DateTimeOffset now)
+    {
+        if (_stallStartedUtc is null || now - _stallStartedUtc.Value < StallRecoveryTimeout) return;
+        _stallStartedUtc = null;
+        ReleaseStream();
+        DeleteTempFile();
+        _loadedSource = null;
+        _position = TimeSpan.Zero;
+        State = AudioPlayerState.Error;
+    }
     private void StopPlaybackStateMonitor()
     {
         _playbackStateTimer?.Dispose();
@@ -682,4 +694,5 @@ public class AudioPlayer : IAudioPlayer
         GC.SuppressFinalize(this);
     }
 }
+
 
