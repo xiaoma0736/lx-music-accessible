@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -359,7 +359,7 @@ public class DownloadManagerForm : Form
         _pause = CreateButton("暂停", 4, (_, _) => ChangeState(DownloadWorkflowCommand.Pause));
         _resume = CreateButton("继续", 5, (_, _) => ChangeState(DownloadWorkflowCommand.Resume));
         _retry = CreateButton("重试", 6, (_, _) => _ = Retry());
-        _delete = CreateButton("删除", 7, (_, _) => Delete());
+        _delete = CreateButton("删除", 7, (_, _) => _ = Delete());
         var open = CreateButton("打开文件夹", 8, (_, _) => _downloads.OpenDownloadDirectory());
         _clearCompleted = CreateButton("清除已完成", 9, (_, _) => ClearCompleted());
         _filter.Items.AddRange(new object[] { "全部", "下载中", "已完成", "失败/取消" });
@@ -464,6 +464,7 @@ public class DownloadManagerForm : Form
     private void Reload()
     {
         var selectedIds = Selected().Select(task => task.Id).ToHashSet(StringComparer.Ordinal);
+        var focusedTask = (_tasks.FocusedItem?.Tag ?? _tasks.SelectedItems.OfType<ListViewItem>().FirstOrDefault()?.Tag) as DownloadTask;
         var listHadFocus = _tasks.Focused;
         _tasks.BeginUpdate();
         _tasks.Items.Clear();
@@ -481,7 +482,10 @@ public class DownloadManagerForm : Form
         if (selectedIds.Count > 0)
         {
             foreach (ListViewItem item in _tasks.Items)
+            {
                 item.Selected = item.Tag is DownloadTask task && selectedIds.Contains(task.Id);
+                if (focusedTask is not null && ReferenceEquals(item.Tag, focusedTask)) item.Focused = true;
+            }
         }
 
         if (listHadFocus) _tasks.Focus();
@@ -530,7 +534,7 @@ public class DownloadManagerForm : Form
         Reload();
     }
 
-    private void Delete()
+    private async Task Delete()
     {
         var tasks = Selected();
         if (tasks.Count == 0) return;
@@ -540,7 +544,7 @@ public class DownloadManagerForm : Form
 
         foreach (var task in tasks)
         {
-            if (!_downloads.Delete(task, deleteSourceFile: true))
+            if (!await _downloads.DeleteAsync(task, deleteSourceFile: true))
                 Announce($"任务仍无法删除：{task.DisplayName}", "download-manager-delete", AnnouncementKind.Error);
         }
 
@@ -560,23 +564,11 @@ public class DownloadManagerForm : Form
         UpdateButtonState();
     }
 
-private ContextMenu BuildTaskMenu()
+    private ContextMenu BuildTaskMenu()
     {
         var menu = new ContextMenu();
-        var redownloadItem = new MenuItem("手动重新下载", (_, _) =>
-        {
-            if (_menuTarget is null) return;
-            _ = _downloads.RedownloadAsync(_menuTarget, null, CancellationToken.None);
-            Announce("已请求手动重新下载：" + _menuTarget.DisplayName, "download-manager-focused");
-            Reload();
-        });
-        var retryItem = new MenuItem("重试下载", (_, _) =>
-        {
-            if (_menuTarget is null) return;
-            _ = _downloads.RetryAsync(_menuTarget, null, CancellationToken.None);
-            Announce("已请求重试下载：" + _menuTarget.DisplayName, "download-manager-focused");
-            Reload();
-        });
+        var redownloadItem = new MenuItem("手动重新下载", async (_, _) => await RunFocusedRestartAsync(redownload: true));
+        var retryItem = new MenuItem("重试下载", async (_, _) => await RunFocusedRestartAsync(redownload: false));
         var pauseItem = new MenuItem("暂停下载", (_, _) =>
         {
             if (_menuTarget is null) return;
@@ -598,26 +590,68 @@ private ContextMenu BuildTaskMenu()
             Announce("已请求停止下载：" + _menuTarget.DisplayName, "download-manager-focused");
             Reload();
         });
-        var removeItem = new MenuItem("移除下载", (_, _) =>
-        {
-            if (_menuTarget is null) return;
-            if (!_confirmDelete($"确定移除“{_menuTarget.DisplayName}”及其已下载源文件吗？")) return;
-            if (!_downloads.Delete(_menuTarget, deleteSourceFile: true))
-            {
-                Announce($"任务仍无法移除：{_menuTarget.DisplayName}", "download-manager-delete", AnnouncementKind.Error);
-                return;
-            }
-            Announce($"已移除：{_menuTarget.DisplayName}", "download-manager-delete", AnnouncementKind.Success);
-            Reload();
-        });
+        var removeItem = new MenuItem("移除下载", async (_, _) => await RemoveFocusedAsync());
         menu.MenuItems.Add(redownloadItem);
         menu.MenuItems.Add(retryItem);
         menu.MenuItems.Add(pauseItem);
         menu.MenuItems.Add(resumeItem);
         menu.MenuItems.Add(stopItem);
         menu.MenuItems.Add(removeItem);
-        menu.Popup += (_, _) => OnTaskMenuPopup();        return menu;
+        menu.Popup += (_, _) => OnTaskMenuPopup(redownloadItem, retryItem, pauseItem, resumeItem, stopItem, removeItem);
+        return menu;
     }
+
+    internal void OnTaskMenuPopup(
+        MenuItem? redownload = null,
+        MenuItem? retry = null,
+        MenuItem? pause = null,
+        MenuItem? resume = null,
+        MenuItem? stop = null,
+        MenuItem? remove = null)
+    {
+        _menuTarget = GetMenuTarget();
+        var status = _menuTarget?.Status;
+        var active = status is DownloadTaskStatus.Pending or DownloadTaskStatus.Downloading or DownloadTaskStatus.Paused;
+        if (redownload is not null) redownload.Enabled = status == DownloadTaskStatus.Completed;
+        if (retry is not null) retry.Enabled = status is DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled;
+        if (pause is not null) pause.Enabled = status == DownloadTaskStatus.Downloading;
+        if (resume is not null) resume.Enabled = status == DownloadTaskStatus.Paused;
+        if (stop is not null) stop.Enabled = active;
+        if (remove is not null) remove.Enabled = _menuTarget is not null;
+        UpdateButtonState();
+    }
+
+    private async Task RunFocusedRestartAsync(bool redownload)
+    {
+        var task = _menuTarget;
+        if (task is null) return;
+        Announce((redownload ? "已请求手动重新下载：" : "已请求重试下载：") + task.DisplayName, "download-manager-focused");
+        var started = await (redownload
+            ? _downloads.RedownloadAsync(task, null, CancellationToken.None)
+            : _downloads.RetryAsync(task, null, CancellationToken.None));
+        Reload();
+        if (!started)
+            Announce($"任务不能重新开始：{task.DisplayName}", "download-manager-focused", AnnouncementKind.Error);
+        else if (task.Status == DownloadTaskStatus.Completed)
+            Announce($"已完成重新下载：{task.DisplayName}", "download-manager-focused", AnnouncementKind.Success);
+        else
+            Announce($"{task.StatusText}：{task.DisplayName}", "download-manager-focused", AnnouncementKind.Error);
+    }
+
+    private async Task RemoveFocusedAsync()
+    {
+        var task = _menuTarget;
+        if (task is null) return;
+        if (!_confirmDelete($"确定移除“{task.DisplayName}”及其已下载源文件吗？")) return;
+        if (!await _downloads.DeleteAsync(task, deleteSourceFile: true))
+        {
+            Announce($"任务仍无法移除：{task.DisplayName}", "download-manager-delete", AnnouncementKind.Error);
+            return;
+        }
+        Announce($"已移除：{task.DisplayName}", "download-manager-delete", AnnouncementKind.Success);
+        Reload();
+    }
+
 private static bool MatchesCategory(DownloadTask task, string category) => category switch
     {
         "下载中" => task.Status is DownloadTaskStatus.Pending or DownloadTaskStatus.Downloading or DownloadTaskStatus.Paused,
@@ -695,7 +729,7 @@ public class PlaylistImportForm : Form
         var qq = CreateButton("QQ音乐", 2, (sender, args) => _ = SelectPlatformCommandAsync("qq", sender));
         var kg = CreateButton("酷狗音乐", 3, (sender, args) => _ = SelectPlatformCommandAsync("kg", sender));
         var kw = CreateButton("酷我音乐", 4, (sender, args) => _ = SelectPlatformCommandAsync("kw", sender));
-        var logout = CreateButton("退出登录", 5, (_, _) => _ = LogoutAsync());
+        var logout = CreateButton("退出登录", 5, (_, _) => _ = LogoutCommandAsync());
         // Kept as a field because it is the visible recovery command after a saved-session check or login load
         // fails; successful sign-in now starts the load immediately instead of parking focus here.
         _loadPlaylists = CreateButton("加载歌单", 6, (_, _) => _ = LoadPlaylistsCommandAsync());
@@ -1435,3 +1469,6 @@ public class SponsorForm : Form
         };
     }
 }
+
+
+

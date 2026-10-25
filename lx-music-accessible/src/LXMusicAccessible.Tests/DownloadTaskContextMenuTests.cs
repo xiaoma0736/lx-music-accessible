@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
@@ -53,6 +53,7 @@ public sealed class DownloadTaskContextMenuTests
             DeleteCalls++;
             return true;
         }
+        public Task<bool> DeleteAsync(DownloadTask task, bool deleteSourceFile) => Task.FromResult(Delete(task, deleteSourceFile));
         public void ClearCompleted() { }
         public string ResolveDownloadDirectory(string? requested = null) => System.IO.Path.GetTempPath();
         public ExternalPlaybackResult OpenDownloadDirectory(string? requested = null) => new(true, "ok");
@@ -132,3 +133,4 @@ public sealed class DownloadTaskContextMenuTests
         Application.DoEvents();
     }
 }
+

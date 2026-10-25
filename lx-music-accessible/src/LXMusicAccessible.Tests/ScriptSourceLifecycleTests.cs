@@ -1,4 +1,4 @@
-using System.Net.Http;
+﻿using System.Net.Http;
 using System.Net;
 using System.IO;
 using LXMusicAccessible.Core.MusicApi;
@@ -208,7 +208,7 @@ public sealed class ScriptSourceLifecycleTests
         Assert.Equal("2.0.0", updated.Version);
         Assert.Equal(UpdatedScript, updated.ScriptContent);
         Assert.Equal(ScriptMusicSource.ComputeSha256(UpdatedScript), updated.ContentSha256);
-        Assert.Equal(ScriptTrustState.UserApproved, updated.TrustState);
+        Assert.Equal(ScriptTrustState.Untrusted, updated.TrustState);
         Assert.False(updated.IsEnabled);
         var persisted = Assert.Single(await data.GetMusicSourcesAsync(), source => source.Id == "hyw");
         Assert.False(persisted.IsEnabled);
@@ -609,3 +609,4 @@ public sealed class ScriptSourceLifecycleTests
         Priority = 10
     };
 }
+

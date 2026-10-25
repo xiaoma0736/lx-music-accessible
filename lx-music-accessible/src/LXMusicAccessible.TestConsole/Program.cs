@@ -1,4 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Hosting;
 using LXMusicAccessible.Services;
@@ -11,7 +11,7 @@ namespace LXMusicAccessible.TestConsole;
 
 class Program
 {
-    static async Task Main(string[] args)
+    static async Task<int> Main(string[] args)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Console.WriteLine("=== LX Music 音源模块全链路验证 v3 ===\n");
@@ -770,6 +770,7 @@ send(EVENT_NAMES.inited, { sources: {} });
 
 Console.WriteLine($"\n=== 验证完成：通过 {pass}，失败 {fail} ===");
         await host.StopAsync();
+        return fail == 0 ? 0 : 1;
     }
     /// <summary>生成指定时长/频率的正弦单声道 16bit WAV（用于播放器冒烟测试）</summary>
     static void GenerateSineWav(string path, double seconds, double freq)
@@ -800,3 +801,4 @@ Console.WriteLine($"\n=== 验证完成：通过 {pass}，失败 {fail} ===");
             w.Write(s);
         }
     }}
+

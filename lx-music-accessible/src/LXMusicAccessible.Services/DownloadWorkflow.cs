@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Net;
@@ -113,6 +113,7 @@ public interface IDownloadWorkflow
     void Pause(DownloadTask task);
     void Resume(DownloadTask task);
     bool Delete(DownloadTask task, bool deleteSourceFile);
+    Task<bool> DeleteAsync(DownloadTask task, bool deleteSourceFile);
     void ClearCompleted();
     string ResolveDownloadDirectory(string? requested = null);
     ExternalPlaybackResult OpenDownloadDirectory(string? requested = null);
@@ -457,6 +458,11 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
         lock (_gate)
         {
             if (!_plans.TryGetValue(task.Id, out plan!)) return false;
+            if (_operations.ContainsKey(task.Id)
+                || task.Status is DownloadTaskStatus.Pending
+                    or DownloadTaskStatus.Downloading
+                    or DownloadTaskStatus.Paused)
+                return false;
             if (!string.IsNullOrWhiteSpace(targetDirectory))
                 plan = plan with { TargetDirectory = targetDirectory };
             plan = plan with
@@ -524,9 +530,10 @@ public sealed class DownloadWorkflow : IDownloadWorkflow, IAsyncDisposable
             task.Status = DownloadTaskStatus.Downloading;
     }
 
-    public bool Delete(DownloadTask task, bool deleteSourceFile) => DeleteAsync(task, deleteSourceFile).GetAwaiter().GetResult();
+    public bool Delete(DownloadTask task, bool deleteSourceFile) => DeleteAsyncCore(task, deleteSourceFile).GetAwaiter().GetResult();
+    public Task<bool> DeleteAsync(DownloadTask task, bool deleteSourceFile) => DeleteAsyncCore(task, deleteSourceFile);
 
-    private async Task<bool> DeleteAsync(DownloadTask task, bool deleteSourceFile)
+    private async Task<bool> DeleteAsyncCore(DownloadTask task, bool deleteSourceFile)
     {
         if (task is null) return false;
         var wasActive = task.Status is DownloadTaskStatus.Pending
@@ -846,6 +853,8 @@ catch (Exception exception)
     {
         string? audioTemporary = null;
         string? lyricTemporary = null;
+        string? committedReplacementAudio = null;
+        string? committedReplacementLyric = null;
         try
         {
             task.Status = DownloadTaskStatus.Downloading;
@@ -910,6 +919,7 @@ catch (Exception exception)
             {
                 finalPath = CommitUnique(audioTemporary, directory, name, extension);
                 audioTemporary = null;
+                committedReplacementAudio = finalPath;
                 task.SavePath = finalPath;
             }
             else
@@ -920,6 +930,7 @@ catch (Exception exception)
                 {
                     finalLyricPath = CommitUnique(lyricTemporary, directory, name, ".lrc");
                     lyricTemporary = null;
+                    committedReplacementLyric = finalLyricPath;
                 }
 
                 PromoteReplacement(finalPath, finalLyricPath, replaceAudioPath, replaceLyricPath);
@@ -957,6 +968,8 @@ catch (Exception exception)
         {
             task.Status = DownloadTaskStatus.Cancelled;
             task.ErrorMessage = "下载已取消";
+            DeleteTemporaryFile(committedReplacementAudio, task.Id);
+            DeleteTemporaryFile(committedReplacementLyric, task.Id);
             if (!string.IsNullOrWhiteSpace(replaceAudioPath))
             {
                 task.SavePath = replaceAudioPath;
@@ -966,6 +979,8 @@ catch (Exception exception)
         catch (DownloadSafetyException exception)
         {
             task.Status = DownloadTaskStatus.Failed;
+            DeleteTemporaryFile(committedReplacementAudio, task.Id);
+            DeleteTemporaryFile(committedReplacementLyric, task.Id);
             task.ErrorMessage = exception.Message;
             _logger.LogWarning("Download target was refused ({TaskId})", task.Id);
         }
@@ -982,6 +997,8 @@ catch (Exception exception)
         catch (Exception exception)
         {
             task.Status = DownloadTaskStatus.Failed;
+            DeleteTemporaryFile(committedReplacementAudio, task.Id);
+            DeleteTemporaryFile(committedReplacementLyric, task.Id);
             if (!string.IsNullOrWhiteSpace(replaceAudioPath))
             {
                 task.SavePath = replaceAudioPath;
@@ -1301,41 +1318,48 @@ catch (Exception exception)
         var lyricBackup = replaceLyric is not null && File.Exists(replaceLyric)
             ? Path.Combine(Path.GetDirectoryName(replaceLyric)!, ".lxmusic-backup-" + Guid.NewGuid().ToString("N") + ".lrc")
             : null;
+        var rollbackSucceeded = false;
         try
         {
             if (audioBackup is not null) File.Move(replaceAudio, audioBackup);
             if (lyricBackup is not null) File.Move(replaceLyric!, lyricBackup);
-
-            if (newLyric is not null)
-            {
-                if (lyricBackup is not null) File.Move(newLyric, replaceLyric!);
-                else File.Move(newLyric, replaceLyric!);
-            }
-            else if (File.Exists(replaceLyric))
-            {
-                File.Delete(replaceLyric);
-            }
-
-            if (audioBackup is not null) File.Move(newAudio, replaceAudio);
-            else File.Move(newAudio, replaceAudio);
-
-            if (audioBackup is not null) File.Delete(audioBackup);
-            if (lyricBackup is not null) File.Delete(lyricBackup);
+            if (newLyric is not null) File.Move(newLyric, replaceLyric!);
+            else if (File.Exists(replaceLyric)) File.Delete(replaceLyric);
+            File.Move(newAudio, replaceAudio);
+            rollbackSucceeded = true;
         }
         catch
         {
-            if (File.Exists(audioBackup) && !File.Exists(replaceAudio))
-                File.Move(audioBackup, replaceAudio);
-            if (File.Exists(lyricBackup) && !File.Exists(replaceLyric))
-                File.Move(lyricBackup, replaceLyric!);
+            try
+            {
+                if (audioBackup is not null)
+                {
+                    if (File.Exists(replaceAudio)) File.Delete(replaceAudio);
+                    File.Move(audioBackup, replaceAudio);
+                }
+                if (lyricBackup is not null)
+                {
+                    if (File.Exists(replaceLyric)) File.Delete(replaceLyric);
+                    File.Move(lyricBackup, replaceLyric!);
+                }
+                rollbackSucceeded = true;
+            }
+            catch (Exception rollbackException)
+            {
+                // Preserve any remaining backup so the prior version remains recoverable.
+                Debug.WriteLine("Replacement rollback failed: " + rollbackException.GetType().Name);
+            }
             throw;
         }
         finally
         {
             if (File.Exists(newAudio)) File.Delete(newAudio);
             if (newLyric is not null && File.Exists(newLyric)) File.Delete(newLyric);
-            if (audioBackup is not null && File.Exists(audioBackup)) File.Delete(audioBackup);
-            if (lyricBackup is not null && File.Exists(lyricBackup)) File.Delete(lyricBackup);
+            if (rollbackSucceeded)
+            {
+                if (audioBackup is not null && File.Exists(audioBackup)) File.Delete(audioBackup);
+                if (lyricBackup is not null && File.Exists(lyricBackup)) File.Delete(lyricBackup);
+            }
         }
     }
     private static string CommitUnique(string temporary, string directory, string name, string extension)
@@ -1599,3 +1623,7 @@ private sealed class QualityUnavailableException(string message) : IOException(m
         }
     }
 }
+
+
+
+

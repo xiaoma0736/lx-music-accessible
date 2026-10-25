@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -114,7 +114,14 @@ public class SettingsForm : Form
         BuildHotkeys();
         tabs.SelectedIndex = reconfigure is null ? 0 : 6;
         _loading = false;
-        settings.SettingsChanged += (_, e) => BeginInvoke(() => { _loading = true; LoadControls(e.Current.Settings); BuildHotkeys(); _loading = false; });
+        _settingsChanged = (_, e) => BeginInvoke(() =>
+        {
+            _loading = true;
+            LoadControls(e.Current.Settings);
+            BuildHotkeys();
+            _loading = false;
+        });
+        settings.SettingsChanged += _settingsChanged;
         Shown += (_, _) =>
         {
             if (reconfigure is null) { tabs.Focus(); return; }
@@ -127,6 +134,8 @@ public class SettingsForm : Form
         _backend.Text = "朗读后端：" + tts.ActiveBackendName + "（自动检测）";
     }
 
+
+    private EventHandler<SettingsChangedEventArgs>? _settingsChanged;
     internal bool IsRecordingHotkey => _recording is not null;
 
     /// <summary>
@@ -648,6 +657,7 @@ public class SettingsForm : Form
     {
         base.OnFormClosing(e);
         CommitTypedPaths();
+        _settings.SettingsChanged -= _settingsChanged;
         var result = await _settings.SaveAsync(_settings.Current);
         if (!result.Succeeded) Announce("设置保存失败，将在应用退出时重试", "settings", AnnouncementKind.Error);
     }

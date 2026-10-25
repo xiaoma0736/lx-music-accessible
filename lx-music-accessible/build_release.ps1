@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -317,12 +317,16 @@ Assert-ZipPayload $frameworkZip $requiredPayload
 $appMachine = Get-PortableExecutableMachine (Join-Path $application $applicationExecutable)
 if ($appMachine -ne 0x8664) { throw "Application executable is not x64." }
 
-$payloadFiles = foreach ($relativePath in $requiredPayload | Sort-Object) {
-    $payloadFile = Join-Path $application $relativePath
+$applicationPrefix = $application.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+$payloadFiles = foreach ($payloadFile in Get-ChildItem -LiteralPath $application -File -Recurse | Sort-Object FullName) {
+    $payloadFullPath = [System.IO.Path]::GetFullPath($payloadFile.FullName)
+    if (-not $payloadFullPath.StartsWith($applicationPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Payload file is outside the application directory: $payloadFullPath"
+    }
     [ordered]@{
-        path = $relativePath.Replace('\', '/')
-        sha256 = (Get-FileHash -LiteralPath $payloadFile -Algorithm SHA256).Hash.ToLowerInvariant()
-        bytes = (Get-Item -LiteralPath $payloadFile).Length
+        path = $payloadFullPath.Substring($applicationPrefix.Length).Replace('\', '/')
+        sha256 = (Get-FileHash -LiteralPath $payloadFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        bytes = $payloadFile.Length
     }
 }
 
@@ -340,6 +344,7 @@ $manifest = [ordered]@{
     runtime = "win-x64"
     framework = "net48"
     sqliteVersion = $sqliteVersion
+    payloadScope = "complete-framework-dependent-application-payload"
     generatedAtUtc = [DateTime]::UtcNow.ToString("O")
     payload = @($payloadFiles)
     artifacts = @($releaseArtifacts)
@@ -488,3 +493,4 @@ finally {
 
 Write-Host "Release build passed: $releaseRoot"
 Get-ChildItem -LiteralPath $releaseRoot -File | Select-Object Name, Length
+

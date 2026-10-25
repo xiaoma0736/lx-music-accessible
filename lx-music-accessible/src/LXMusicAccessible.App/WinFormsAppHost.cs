@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -163,6 +163,9 @@ public sealed class WinFormsDesktopIntegration : IDisposable
     private NotifyIcon? _tray;
     private WinFormsShell? _shell;
     private List<Form>? _hiddenToolWindows;
+    private Form? _activeFormBeforeHide;
+    private Control? _activeControlBeforeHide;
+    private FormWindowState _shellStateBeforeHide = FormWindowState.Normal;
     private SynchronizationContext? _uiContext;
     public event EventHandler<DesktopCommand>? CommandRequested;
 
@@ -182,6 +185,13 @@ public sealed class WinFormsDesktopIntegration : IDisposable
 
         // Owned tool windows are part of the accessible window group. Hiding only the shell would
         // leave a reader user in a visible tool window while playback commands say the app is hidden.
+        var activeForm = Form.ActiveForm ?? _shell;
+        if (activeForm is { IsDisposed: false } && (ReferenceEquals(activeForm, _shell) || Array.IndexOf(_shell.OwnedForms, activeForm) >= 0))
+        {
+            _activeFormBeforeHide = activeForm;
+            _activeControlBeforeHide = activeForm.ActiveControl;
+        }
+        _shellStateBeforeHide = _shell.WindowState;
         _hiddenToolWindows = _shell.OwnedForms
             .Where(form => form.Visible && !form.IsDisposed)
             .ToList();
@@ -199,6 +209,10 @@ public sealed class WinFormsDesktopIntegration : IDisposable
         if (_shell is null || _shell.IsDisposed) return DesktopFocusTarget.None;
 
         var restoredTools = _hiddenToolWindows;
+        var activeFormBeforeHide = _activeFormBeforeHide;
+        var activeControlBeforeHide = _activeControlBeforeHide;
+        _activeFormBeforeHide = null;
+        _activeControlBeforeHide = null;
         _hiddenToolWindows = null;
         if (restoredTools is not null)
         {
@@ -210,9 +224,16 @@ public sealed class WinFormsDesktopIntegration : IDisposable
 
         _shell.ShowInTaskbar = true;
         _shell.Visible = true;
-        _shell.WindowState = FormWindowState.Normal;
+        _shell.WindowState = _shellStateBeforeHide;
+        if (activeFormBeforeHide is { IsDisposed: false } && !ReferenceEquals(activeFormBeforeHide, _shell))
+        {
+            activeFormBeforeHide.Activate();
+            activeControlBeforeHide?.Focus();
+            return DesktopFocusTarget.PreviousControl;
+        }
+        activeControlBeforeHide?.Focus();
         _shell.Activate();
-        return DesktopFocusTarget.MainWindow;
+        return activeControlBeforeHide is null ? DesktopFocusTarget.MainWindow : DesktopFocusTarget.PreviousControl;
     }
 
     /// <summary>
@@ -619,3 +640,4 @@ public sealed class ApplicationRuntime : IAsyncDisposable
         _disposed = true;
     }
 }
+

@@ -1,4 +1,4 @@
-# LX Music 无障碍版 - 需求与发布说明
+﻿# LX Music 无障碍版 - 需求与发布说明
 
 ## 项目概述
 基于开源项目 lx-music-desktop，使用 C#、.NET Framework 4.8 与原生 WinForms 开发的专为盲人和视障用户优化的 64 位 Windows 客户端。
@@ -7,7 +7,7 @@
 
 - 产品版本为 3.0.0，仅支持 64 位 Windows。
 - 应用为框架依赖版本，必须已安装 Microsoft .NET Framework 4.8 或更新版本（安装器检查注册表 Release 值不低于 `528040`）。
-- ZIP 不内置 .NET 运行时；安装器会检测运行时，缺失时给出官方下载地址和诊断文件路径。
+- ZIP 不内置 .NET 运行时；安装器会检测运行时，缺失时给出官方下载地址，并把诊断写入 `%LocalAppData%\LXMusicAccessible\setup\net48-diagnostics.txt`。
 - 网页登录使用 Microsoft Edge WebView2 Runtime；歌词/状态语音播报可使用 SAPI5，检测到争渡、保益或 Prism 后端时优先使用。
 - 音频、SQLite、ClearScript V8、UIA/读屏桥接和 WebView2 加载器所需的 x64 原生库随应用分发；ClearScript V8 不可用时会回退到 Jint。
 - 不提供应用 self-contained .NET 8 产物。数据默认继续使用 `%LocalAppData%\lxmusic`，升级保留设置、歌单、凭据、快捷键和可信音源。
@@ -269,3 +269,4 @@
 2. **Alpha 版本**：分页视图 + 歌词查看 + 快捷键配置
 3. **Beta 版本**：音源集成 + 完整无障碍优化
 4. **正式版**：测试完善 + 用户文档 + 安装程序
+

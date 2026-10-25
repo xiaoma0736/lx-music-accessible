@@ -1,4 +1,4 @@
-; Inno Setup 6 package definition for LX Music Accessible.
+﻿; Inno Setup 6 package definition for LX Music Accessible.
 ; Build from repository root with build_release.ps1; the script supplies AppSource,
 ; AppVersion and OutputDir so release paths and versions cannot drift.
 
@@ -72,15 +72,46 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 MissingNet48=落雪音乐无障碍版需要 .NET Framework 4.8 或更高版本。请先安装 .NET Framework 4.8 Runtime，然后重新运行安装程序。
 
 [Code]
+const
+  RequiredNet48Release = 528040;
+
+procedure WriteNet48Diagnostics(Installed: Boolean; CurrentRelease: Cardinal);
+var
+  DirectoryName: String;
+  FileName: String;
+  Text: String;
+begin
+  DirectoryName := ExpandConstant('{localappdata}\LXMusicAccessible\setup');
+  FileName := DirectoryName + '\net48-diagnostics.txt';
+  ForceDirectories(DirectoryName);
+  Text :=
+    'time=' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + #13#10 +
+    'installed=' + IntToStr(Integer(Installed)) + #13#10 +
+    'requiredRelease=528040' + #13#10 +
+    'currentRelease=' + IntToStr(CurrentRelease) + #13#10;
+  SaveStringToFile(FileName, Text, False);
+end;
+
 function InitializeSetup(): Boolean;
 var
   Release: Cardinal;
+  Installed: Boolean;
 begin
-  Result := RegQueryDWordValue(HKLM,
+  Installed := RegQueryDWordValue(HKLM,
     'Software\Microsoft\NET Framework Setup\NDP\v4\Full',
-    'Release', Release) and (Release >= 528040);
+    'Release', Release);
+  if not Installed then Release := 0;
+  Result := Installed and (Release >= RequiredNet48Release);
   if not Result then
-    MsgBox(CustomMessage('MissingNet48'), mbCriticalError, MB_OK);
+  begin
+    WriteNet48Diagnostics(Installed, Release);
+    MsgBox(
+      CustomMessage('MissingNet48') + #13#10#13#10 +
+      '官方下载：https://dotnet.microsoft.com/download/dotnet-framework/net48' + #13#10 +
+      '诊断文件：%LocalAppData%\LXMusicAccessible\setup\net48-diagnostics.txt',
+      mbCriticalError, MB_OK);
+    ExitCode := 2;
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

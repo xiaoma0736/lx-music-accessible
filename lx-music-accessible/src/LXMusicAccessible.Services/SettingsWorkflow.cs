@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Threading;
 using LXMusicAccessible.Data;
 using LXMusicAccessible.Models;
@@ -175,6 +175,8 @@ public sealed class SettingsWorkflow : IDisposable
         string selectedParent,
         string localApplicationDataDirectory)
     {
+        string? createdTarget = null;
+        var copiedFiles = new List<string>();
         try
         {
             FrameworkCompatibility.ThrowIfNullOrWhiteSpace(selectedParent);
@@ -188,7 +190,8 @@ public sealed class SettingsWorkflow : IDisposable
             }
 
             var target = AppDataPaths.CreateOwnedDataDirectory(parent, localApplicationDataDirectory).Path;
-            CopyDataDirectoryContents(current, target);
+            createdTarget = target;
+            CopyDataDirectoryContents(current, target, copiedFiles);
             AppDataPaths.WriteDataDirPointer(target, localApplicationDataDirectory);
             return new(true, target, "数据目录已设置，请重启应用后完全生效");
         }
@@ -198,12 +201,19 @@ public sealed class SettingsWorkflow : IDisposable
             or InvalidOperationException
             or NotSupportedException)
         {
+            if (createdTarget is not null)
+            {
+                CleanupPartialCopy(createdTarget, copiedFiles);
+            }
             _logger.LogWarning("Data directory change failed: {ErrorType}", exception.GetType().Name);
             return new(false, DataDirectory, "设置数据目录失败");
         }
     }
 
-    private static void CopyDataDirectoryContents(string source, string target)
+    private static void CopyDataDirectoryContents(
+        string source,
+        string target,
+        ICollection<string> copiedFiles)
     {
         foreach (var entry in Directory.EnumerateFileSystemEntries(source))
         {
@@ -217,14 +227,41 @@ public sealed class SettingsWorkflow : IDisposable
             {
                 var info = new FileInfo(entry);
                 if (info.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+                if (File.Exists(destination)) throw new IOException("Data directory destination already exists.");
                 File.Copy(entry, destination, overwrite: false);
+                copiedFiles.Add(destination);
             }
             else if (Directory.Exists(entry))
             {
                 var info = new DirectoryInfo(entry);
                 if (info.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
                 Directory.CreateDirectory(destination);
-                CopyDataDirectoryContents(entry, destination);
+                CopyDataDirectoryContents(entry, destination, copiedFiles);
+            }
+        }
+    }
+
+    private static void CleanupPartialCopy(string target, IReadOnlyCollection<string> copiedFiles)
+    {
+        foreach (var file in copiedFiles)
+        {
+            try { if (File.Exists(file)) File.Delete(file); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return;
+            }
+        }
+
+        foreach (var directory in Directory.EnumerateDirectories(target, "*", SearchOption.AllDirectories)
+            .OrderByDescending(path => path.Length))
+        {
+            try
+            {
+                if (Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any())
+                    Directory.Delete(directory);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
             }
         }
     }
@@ -514,3 +551,4 @@ public sealed class SettingsWorkflow : IDisposable
         }
     }
 }
+

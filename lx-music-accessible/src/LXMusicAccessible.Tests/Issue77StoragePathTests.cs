@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -326,7 +326,7 @@ public sealed class Issue77StoragePathTests
             Task.FromResult<LyricResult?>(null);
     }
 
-    private sealed class DataDirectoryFixture : IDisposable
+    internal sealed class DataDirectoryFixture : IDisposable
     {
         public DataDirectoryFixture()
         {

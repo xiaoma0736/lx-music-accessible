@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
 using Dapper;
 using LXMusicAccessible.Models;
@@ -55,13 +55,15 @@ public class DatabaseInitializer
 
             if (previousVersion < CurrentSchemaVersion)
             {
-                using var migrationConnection = await OpenMigrationConnectionAsync(dbFilePath);
+                using var migrationConnection = await OpenMigrationConnectionAsync(dbFilePath, CancellationToken.None);
+                await EnableAndVerifyForeignKeysAsync(migrationConnection);
+                using var migrationTransaction = migrationConnection.BeginTransaction();
                 await InitializeSchemaAsync(migrationConnection);
                 orphansRemoved = await NormalizePlaylistItemsAsync(migrationConnection);
                 await NormalizePlaylistRemoteKeysAsync(migrationConnection);
                 await migrationConnection.ExecuteAsync($"PRAGMA user_version = {CurrentSchemaVersion}");
-                await EnableAndVerifyForeignKeysAsync(migrationConnection);
                 await VerifyIntegrityAsync(migrationConnection);
+                migrationTransaction.Commit();
             }
             else
             {
@@ -277,14 +279,23 @@ public class DatabaseInitializer
         return backupPath;
     }
 
-    private static async Task<SqliteConnection> OpenMigrationConnectionAsync(string dbFilePath)
+    private static async Task<SqliteConnection> OpenMigrationConnectionAsync(string dbFilePath, CancellationToken cancellationToken)
     {
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        var builder = new SqliteConnectionStringBuilder
         {
             DataSource = dbFilePath,
-            ForeignKeys = false
-        }.ToString());
-        await connection.OpenAsync();
+            ForeignKeys = true,
+            DefaultTimeout = 5
+        };
+        var connection = new SqliteConnection(builder.ToString());
+        await connection.OpenAsync(cancellationToken);
+        await connection.ExecuteAsync(new CommandDefinition("PRAGMA busy_timeout = 5000", cancellationToken: cancellationToken));
+        var journalMode = await connection.QuerySingleAsync<string>(new CommandDefinition("PRAGMA journal_mode = WAL", cancellationToken: cancellationToken));
+        if (!string.Equals(journalMode, "wal", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("SQLite WAL journaling could not be enabled.");
+        await connection.ExecuteAsync(new CommandDefinition("PRAGMA synchronous = NORMAL", cancellationToken: cancellationToken));
+        if (await connection.QuerySingleAsync<int>(new CommandDefinition("PRAGMA foreign_keys", cancellationToken: cancellationToken)) != 1)
+            throw new InvalidOperationException("SQLite foreign key enforcement is disabled.");
         return connection;
     }
 
@@ -524,18 +535,22 @@ internal static class SqliteDatabaseConnection
         string dbFilePath,
         CancellationToken cancellationToken = default)
     {
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        var builder = new SqliteConnectionStringBuilder
         {
             DataSource = dbFilePath,
-            ForeignKeys = true
-        }.ToString());
-
+            ForeignKeys = true,
+            DefaultTimeout = 5
+        }.ToString();
+        var connection = new SqliteConnection(builder);
         try
         {
             await connection.OpenAsync(cancellationToken);
-            if (await connection.QuerySingleAsync<int>(new CommandDefinition(
-                    "PRAGMA foreign_keys",
-                    cancellationToken: cancellationToken)) != 1)
+            await connection.ExecuteAsync(new CommandDefinition("PRAGMA busy_timeout = 5000", cancellationToken: cancellationToken));
+            var journalMode = await connection.QuerySingleAsync<string>(new CommandDefinition("PRAGMA journal_mode = WAL", cancellationToken: cancellationToken));
+            if (!string.Equals(journalMode, "wal", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("SQLite WAL journaling could not be enabled.");
+            await connection.ExecuteAsync(new CommandDefinition("PRAGMA synchronous = NORMAL", cancellationToken: cancellationToken));
+            if (await connection.QuerySingleAsync<int>(new CommandDefinition("PRAGMA foreign_keys", cancellationToken: cancellationToken)) != 1)
                 throw new InvalidOperationException("SQLite foreign key enforcement is disabled.");
             return connection;
         }
@@ -544,9 +559,8 @@ internal static class SqliteDatabaseConnection
             connection.Dispose();
             throw;
         }
-    }
 }
-
+}
 public class DataService : IDataService
 {
     private const int PlaylistItemBatchSize = 100;

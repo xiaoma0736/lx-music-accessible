@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -1096,6 +1096,7 @@ public sealed class WinFormsAccessibilityAuditTests
     public void Pause(DownloadTask task) { }
     public void Resume(DownloadTask task) { }
     public bool Delete(DownloadTask task, bool deleteSourceFile) => true;
+    public Task<bool> DeleteAsync(DownloadTask task, bool deleteSourceFile) => Task.FromResult(Delete(task, deleteSourceFile));
         public void ClearCompleted() => _tasks.Where(task => task.Status == DownloadTaskStatus.Completed).ToList().ForEach(task => _tasks.Remove(task));
         public string ResolveDownloadDirectory(string? requested = null) => requested ?? System.IO.Path.GetTempPath();
         public ExternalPlaybackResult OpenDownloadDirectory(string? requested = null) => new(true, "ok");
@@ -1264,3 +1265,4 @@ public sealed class WinFormsAccessibilityAuditTests
         public string? SwitchOutputDevice(int index) => null;
     }
 }
+

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Text;
@@ -55,7 +55,7 @@ public sealed class ReleasePackagingTests
         Assert.Contains("DefaultDirName={autopf}\\LXMusicAccessible", script);
         Assert.Contains("OutputBaseFilename=LXMusicAccessible-Setup-{#AppVersion}-win-x64", script);
         Assert.Contains("ChineseSimplified.isl", script);
-        Assert.Contains("Release >= 528040", script);
+        Assert.Contains("RequiredNet48Release = 528040", script);
     }
 
     [Fact]

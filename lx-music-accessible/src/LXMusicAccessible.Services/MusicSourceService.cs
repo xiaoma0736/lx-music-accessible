@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Data;
@@ -264,10 +264,14 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             Priority = 10 + _sources.Count,
             AddedDate = DateTime.Now
         };
-        var preserveDisabled = existing is not null
-            && existing.TrustState != ScriptTrustState.Untrusted
-            && !existing.IsEnabled;
-
+        var isUnchanged = existing is not null
+            && string.Equals(existing.ContentSha256, digest, StringComparison.Ordinal)
+            && string.Equals(existing.ScriptContent, candidate.RawScript, StringComparison.Ordinal);
+        var preservedTrustState = isUnchanged && existing!.TrustState != ScriptTrustState.Untrusted
+            ? existing!.TrustState
+            : ScriptTrustState.Untrusted;
+        var preservedEnabled = isUnchanged && existing!.TrustState != ScriptTrustState.Untrusted
+            && existing!.IsEnabled;
         source.Name = candidate.Name;
         source.Author = candidate.Author;
         source.Version = candidate.Version
@@ -276,8 +280,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         source.ScriptContent = candidate.RawScript;
         source.ContentSha256 = digest;
         source.Type = SourceType.Network;
-        source.TrustState = ScriptTrustState.UserApproved;
-        source.IsEnabled = !preserveDisabled;
+        source.TrustState = preservedTrustState;
+        source.IsEnabled = preservedEnabled;
         source.LastUpdateDate = DateTime.Now;
         if (existing is null) _sources.Add(source);
 
