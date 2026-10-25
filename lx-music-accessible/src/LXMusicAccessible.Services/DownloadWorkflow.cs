@@ -933,7 +933,7 @@ catch (Exception exception)
                     committedReplacementLyric = finalLyricPath;
                 }
 
-                PromoteReplacement(finalPath, finalLyricPath, replaceAudioPath, replaceLyricPath);
+                PromoteReplacement(finalPath, finalLyricPath, replaceAudioPath, replaceLyricPath, _logger);
                 finalPath = replaceAudioPath;
                 finalLyricPath = File.Exists(replaceLyricPath) ? replaceLyricPath : null;
                 task.SavePath = finalPath;
@@ -1310,20 +1310,22 @@ catch (Exception exception)
         string newAudio,
         string? newLyric,
         string replaceAudio,
-        string? replaceLyric)
+        string? replaceLyric,
+        ILogger<DownloadWorkflow> logger)
     {
-        var audioBackup = File.Exists(replaceAudio)
-            ? Path.Combine(Path.GetDirectoryName(replaceAudio)!, ".lxmusic-backup-" + Guid.NewGuid().ToString("N") + Path.GetExtension(replaceAudio))
-            : null;
-        var lyricBackup = replaceLyric is not null && File.Exists(replaceLyric)
-            ? Path.Combine(Path.GetDirectoryName(replaceLyric)!, ".lxmusic-backup-" + Guid.NewGuid().ToString("N") + ".lrc")
-            : null;
         if (SamePath(replaceAudio, replaceLyric ?? string.Empty)
             || SamePath(newAudio, replaceLyric ?? string.Empty)
             || (newLyric is not null && SamePath(newLyric, replaceAudio)))
         {
             throw new IOException("Replacement audio and lyric targets must be distinct files.");
         }
+
+        var audioBackup = File.Exists(replaceAudio)
+            ? Path.Combine(Path.GetDirectoryName(replaceAudio)!, ".lxmusic-backup-" + Guid.NewGuid().ToString("N") + Path.GetExtension(replaceAudio))
+            : null;
+        var lyricBackup = replaceLyric is not null && File.Exists(replaceLyric)
+            ? Path.Combine(Path.GetDirectoryName(replaceLyric)!, ".lxmusic-backup-" + Guid.NewGuid().ToString("N") + ".lrc")
+            : null;
         var rollbackSucceeded = false;
         try
         {
@@ -1334,27 +1336,50 @@ catch (Exception exception)
             File.Move(newAudio, replaceAudio);
             rollbackSucceeded = true;
         }
-        catch
+        catch (Exception original)
         {
+            Exception? rollbackFailure = null;
             try
             {
+                // No backup means "this path did not exist before"; rollback therefore removes any
+                // partially promoted file instead of leaving new content behind.
                 if (audioBackup is not null)
                 {
                     if (File.Exists(replaceAudio)) File.Delete(replaceAudio);
                     File.Move(audioBackup, replaceAudio);
                 }
+                else if (File.Exists(replaceAudio))
+                {
+                    File.Delete(replaceAudio);
+                }
+
                 if (lyricBackup is not null)
                 {
                     if (File.Exists(replaceLyric)) File.Delete(replaceLyric);
                     File.Move(lyricBackup, replaceLyric!);
                 }
+                else if (replaceLyric is not null && File.Exists(replaceLyric))
+                {
+                    File.Delete(replaceLyric);
+                }
                 rollbackSucceeded = true;
             }
-            catch (Exception rollbackException)
+            catch (Exception cleanup)
             {
-                // Preserve any remaining backup so the prior version remains recoverable.
-                Debug.WriteLine("Replacement rollback failed: " + rollbackException.GetType().Name);
+                rollbackFailure = cleanup;
+                logger.LogError(
+                    cleanup,
+                    "Replacement rollback failed; original promotion error={OriginalError}. Backups are retained: audio={AudioBackup}, lyric={LyricBackup}",
+                    original.GetType().Name,
+                    audioBackup,
+                    lyricBackup);
             }
+
+            if (rollbackFailure is not null)
+                throw new AggregateException(
+                    "Download replacement failed and rollback did not fully complete.",
+                    original,
+                    rollbackFailure);
             throw;
         }
         finally
@@ -1367,8 +1392,7 @@ catch (Exception exception)
                 if (lyricBackup is not null && File.Exists(lyricBackup)) File.Delete(lyricBackup);
             }
         }
-    }
-    private static string CommitUnique(string temporary, string directory, string name, string extension)
+    }    private static string CommitUnique(string temporary, string directory, string name, string extension)
     {
         directory = EnsureSafeDirectory(directory);
         for (var suffix = 0; suffix < 10_000; suffix++)
@@ -1629,6 +1653,7 @@ private sealed class QualityUnavailableException(string message) : IOException(m
         }
     }
 }
+
 
 
 

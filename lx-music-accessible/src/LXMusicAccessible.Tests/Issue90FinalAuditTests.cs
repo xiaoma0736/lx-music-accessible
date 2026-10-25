@@ -156,7 +156,7 @@ public sealed class Issue90FinalAuditTests
 
             var method = typeof(DownloadWorkflow).GetMethod("PromoteReplacement", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.NotNull(method);
-            Assert.Throws<TargetInvocationException>(() => method!.Invoke(null, [newAudio, newLyric, oldAudio, invalidLyricTarget]));
+            Assert.Throws<TargetInvocationException>(() => method!.Invoke(null, [newAudio, newLyric, oldAudio, invalidLyricTarget, NullLogger<DownloadWorkflow>.Instance]));
             Assert.Equal(new byte[] { 7, 8, 9 }, File.ReadAllBytes(oldAudio));
             Assert.Empty(Directory.EnumerateFiles(root, ".lxmusic-backup-*"));
         }
@@ -165,6 +165,47 @@ public sealed class Issue90FinalAuditTests
             Directory.Delete(root, true);
         }
     }
+    [Fact]
+    public void Promotion_failure_removes_new_lyric_when_no_prior_lyric_existed()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "issue90-absent-lyric-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var newAudio = Path.Combine(root, "new.audio");
+            var newLyric = Path.Combine(root, "new.lrc");
+            var invalidAudioTarget = Path.Combine(root, "target.audio") + Path.DirectorySeparatorChar;
+            var lyricTarget = Path.Combine(root, "target.lrc");
+            // Model the staged audio disappearing after lyric promotion.
+            // There was no prior lyric, so rollback must remove the promoted lyric.
+            File.WriteAllBytes(newLyric, [4, 5, 6]);
+
+            var method = typeof(DownloadWorkflow).GetMethod("PromoteReplacement", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+            Assert.Throws<TargetInvocationException>(() => method!.Invoke(
+                null,
+                [newAudio, newLyric, invalidAudioTarget, lyricTarget, NullLogger<DownloadWorkflow>.Instance]));
+
+            Assert.False(File.Exists(lyricTarget), "A new lyric remained even though no prior lyric existed.");
+            Assert.Empty(Directory.EnumerateFiles(root, ".lxmusic-backup-*"));
+            Assert.Empty(Directory.EnumerateFiles(root, "*.lrc"));
+            Assert.Empty(Directory.EnumerateFiles(root, "*.audio"));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void Promotion_rollback_failures_are_diagnosed_and_preserve_backups()
+    {
+        var source = File.ReadAllText(RepositoryPath("src", "LXMusicAccessible.Services", "DownloadWorkflow.cs"));
+        Assert.Contains("Replacement rollback failed; original promotion error=", source, StringComparison.Ordinal);
+        Assert.Contains("Backups are retained: audio=", source, StringComparison.Ordinal);
+        Assert.Contains("throw new AggregateException(", source, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Shell_documents_search_shortcuts_without_stale_delete_clearing_claims()
     {
@@ -428,4 +469,6 @@ public sealed class Issue90FinalAuditTests
         public bool ShowKugouQrLogin(Form? owner) => false;
     }
 }
+
+
 
