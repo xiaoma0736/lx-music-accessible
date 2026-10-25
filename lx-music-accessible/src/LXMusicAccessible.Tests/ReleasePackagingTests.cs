@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Text;
@@ -119,4 +119,3 @@ public sealed class ReleasePackagingTests
         return Directory.GetParent(src)!.FullName;
     }
 }
-
