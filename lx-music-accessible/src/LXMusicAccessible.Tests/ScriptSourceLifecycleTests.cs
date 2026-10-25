@@ -125,6 +125,82 @@ public sealed class ScriptSourceLifecycleTests
     }
 
     [Fact]
+    public async Task Restart_does_not_self_approve_an_untrusted_persisted_script()
+    {
+        using var app = await TestApplicationHost.StartAsync();
+        var data = app.Services.GetRequiredService<IDataService>();
+        var url = new Uri("https://fixture.invalid/untrusted.js");
+        await data.SaveMusicSourcesAsync([new MusicSource
+        {
+            Id = "untrusted",
+            Name = "Untrusted source",
+            Version = "1.0.0",
+            ScriptUrl = url.ToString(),
+            ScriptContent = ValidScript,
+            ContentSha256 = ScriptMusicSource.ComputeSha256(ValidScript),
+            TrustState = ScriptTrustState.Untrusted,
+            Type = SourceType.Network,
+            IsEnabled = false,
+            Priority = 10
+        }]);
+        var sources = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+
+        await sources.InitializeScriptSourcesAsync();
+
+        var loaded = Assert.Single(sources.GetAllSources(), source => source.Id == "untrusted");
+        Assert.Equal(ScriptTrustState.Untrusted, loaded.TrustState);
+        Assert.False(loaded.IsEnabled);
+        var persisted = Assert.Single(await data.GetMusicSourcesAsync(), source => source.Id == "untrusted");
+        Assert.Equal(ScriptTrustState.Untrusted, persisted.TrustState);
+        Assert.False(persisted.IsEnabled);
+    }
+
+    [Fact]
+    public async Task Manual_refresh_same_content_preserves_trust_and_enabled_state()
+    {
+        using var app = await TestApplicationHost.StartAsync();
+        var data = app.Services.GetRequiredService<IDataService>();
+        var url = new Uri("https://fixture.invalid/unchanged.js");
+        await data.SaveMusicSourcesAsync([TrustedSource("unchanged", url.ToString())]);
+        app.HttpHandler.RegisterText(HttpMethod.Get, url, ValidScript);
+        var sources = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+        await sources.InitializeScriptSourcesAsync();
+        var source = Assert.Single(sources.GetAllSources(), item => item.Id == "unchanged");
+
+        Assert.True(await sources.RefreshSourceAsync(source));
+
+        Assert.Equal(ValidScript, source.ScriptContent);
+        Assert.Equal(ScriptTrustState.UserApproved, source.TrustState);
+        Assert.True(source.IsEnabled);
+        var persisted = Assert.Single(await data.GetMusicSourcesAsync(), item => item.Id == "unchanged");
+        Assert.Equal(ScriptTrustState.UserApproved, persisted.TrustState);
+        Assert.True(persisted.IsEnabled);
+    }
+
+    [Fact]
+    public async Task Manual_refresh_changed_content_requires_new_trust_and_disables_the_source()
+    {
+        using var app = await TestApplicationHost.StartAsync();
+        var data = app.Services.GetRequiredService<IDataService>();
+        var url = new Uri("https://fixture.invalid/changed-refresh.js");
+        await data.SaveMusicSourcesAsync([TrustedSource("changed-refresh", url.ToString())]);
+        app.HttpHandler.RegisterText(HttpMethod.Get, url, UpdatedScript);
+        var sources = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
+        await sources.InitializeScriptSourcesAsync();
+        var source = Assert.Single(sources.GetAllSources(), item => item.Id == "changed-refresh");
+
+        Assert.True(await sources.RefreshSourceAsync(source));
+
+        Assert.Equal(UpdatedScript, source.ScriptContent);
+        Assert.Equal(ScriptTrustState.Untrusted, source.TrustState);
+        Assert.False(source.IsEnabled);
+        var persisted = Assert.Single(await data.GetMusicSourcesAsync(), item => item.Id == "changed-refresh");
+        Assert.Equal(UpdatedScript, persisted.ScriptContent);
+        Assert.Equal(ScriptTrustState.Untrusted, persisted.TrustState);
+        Assert.False(persisted.IsEnabled);
+    }
+
+    [Fact]
     public async Task Failed_refresh_source_keeps_the_active_version()
     {
         using var app = await TestApplicationHost.StartAsync();
@@ -424,7 +500,7 @@ public sealed class ScriptSourceLifecycleTests
     }
 
     [Fact]
-    public async Task Legacy_script_without_trust_metadata_is_migrated_enabled_without_network()
+    public async Task Persisted_untrusted_script_is_not_activated_without_explicit_consent()
     {
         using var app = await TestApplicationHost.StartAsync();
         var data = app.Services.GetRequiredService<IDataService>();
@@ -448,15 +524,14 @@ public sealed class ScriptSourceLifecycleTests
         Assert.DoesNotContain(app.HttpHandler.Requests, request =>
             request.Uri == ScriptUrl);
         var legacy = Assert.Single(sources.GetAllSources(), source => source.Id == "legacy-remote");
-        Assert.True(legacy.IsEnabled);
-        Assert.Equal(ScriptTrustState.UserApproved, legacy.TrustState);
-        Assert.Equal("已启用", legacy.StatusText);
-        Assert.Equal(ScriptMusicSource.ComputeSha256(ValidScript), legacy.ContentSha256);
-        Assert.NotNull(sources.GetScriptSource().GetScript(legacy.Id));
+        Assert.False(legacy.IsEnabled);
+        Assert.Equal(ScriptTrustState.Untrusted, legacy.TrustState);
+        Assert.Null(sources.GetScriptSource().GetScript(legacy.Id));
+        Assert.Null(legacy.ContentSha256);
 
         var persisted = Assert.Single(await data.GetMusicSourcesAsync(), source => source.Id == legacy.Id);
-        Assert.True(persisted.IsEnabled);
-        Assert.Equal(ScriptTrustState.UserApproved, persisted.TrustState);
+        Assert.False(persisted.IsEnabled);
+        Assert.Equal(ScriptTrustState.Untrusted, persisted.TrustState);
         Assert.Equal(legacy.ContentSha256, persisted.ContentSha256);
     }
 
@@ -511,7 +586,7 @@ public sealed class ScriptSourceLifecycleTests
     }
 
     [Fact]
-    public async Task Resource_heavy_obfuscated_source_registers_activates_and_reloads()
+    public async Task Persisted_untrusted_obfuscated_source_requires_explicit_activation()
     {
         using var app = await TestApplicationHost.StartAsync();
         var scriptSource = app.Services.GetRequiredService<ScriptMusicSource>();
@@ -543,18 +618,18 @@ public sealed class ScriptSourceLifecycleTests
         await sources.InitializeScriptSourcesAsync();
 
         var restored = Assert.Single(sources.GetAllSources(), source => source.Id == "obfuscated-compatibility");
-        Assert.True(restored.IsEnabled);
-        Assert.Equal(ScriptTrustState.UserApproved, restored.TrustState);
-        Assert.NotNull(sources.GetScriptSource().GetScript(restored.Id));
+        Assert.False(restored.IsEnabled);
+        Assert.Equal(ScriptTrustState.Untrusted, restored.TrustState);
+        Assert.Null(sources.GetScriptSource().GetScript(restored.Id));
 
         var reloaded = ActivatorUtilities.CreateInstance<MusicSourceService>(app.Services);
         await reloaded.InitializeScriptSourcesAsync();
         var persisted = Assert.Single(
             reloaded.GetAllSources(),
             source => source.Id == "obfuscated-compatibility");
-        Assert.True(persisted.IsEnabled);
-        Assert.Equal(ScriptTrustState.UserApproved, persisted.TrustState);
-        Assert.NotNull(reloaded.GetScriptSource().GetScript(persisted.Id));
+        Assert.False(persisted.IsEnabled);
+        Assert.Equal(ScriptTrustState.Untrusted, persisted.TrustState);
+        Assert.Null(reloaded.GetScriptSource().GetScript(persisted.Id));
     }
 
     [Fact]
@@ -609,4 +684,5 @@ public sealed class ScriptSourceLifecycleTests
         Priority = 10
     };
 }
+
 

@@ -1611,6 +1611,9 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             return false;
 
         var digest = ScriptMusicSource.ComputeSha256(candidate.RawScript);
+        var isUnchanged = string.Equals(source.ContentSha256, digest, StringComparison.Ordinal)
+            && string.Equals(source.ScriptContent, candidate.RawScript, StringComparison.Ordinal);
+        var preservedTrust = isUnchanged && source.TrustState != ScriptTrustState.Untrusted;
         var previousScript = _scriptSource.GetScript(source.Id);
         var previous = SourceSnapshot.Capture(source);
 
@@ -1621,7 +1624,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         source.ScriptContent = candidate.RawScript;
         source.ContentSha256 = digest;
         source.Type = SourceType.Network;
-        source.TrustState = ScriptTrustState.UserApproved;
+        source.TrustState = preservedTrust ? source.TrustState : ScriptTrustState.Untrusted;
+        source.IsEnabled = preservedTrust && source.IsEnabled;
         source.LastUpdateDate = DateTime.Now;
 
         if (!_scriptSource.RegisterVerified(candidate, digest))
@@ -2074,19 +2078,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
                     continue;
                 }
 
-                var establishTrustFromStoredContent = src.TrustState == ScriptTrustState.Untrusted
-                    && !string.IsNullOrEmpty(src.ScriptContent);
-                if (establishTrustFromStoredContent)
-                {
-                    var actualDigest = ScriptMusicSource.ComputeSha256(src.ScriptContent!);
-                    if (string.IsNullOrWhiteSpace(src.ContentSha256))
-                        src.ContentSha256 = actualDigest;
-                    if (string.Equals(src.ContentSha256, actualDigest, StringComparison.OrdinalIgnoreCase))
-                    {
-                        src.TrustState = ScriptTrustState.UserApproved;
-                        src.IsEnabled = true;
-                    }
-                }
+                // A persisted Untrusted source must stay disabled until the user explicitly approves
+                // it again; matching stored content alone is not consent.
                 _sources.Add(src);
                 if (src.IsEnabled
                     && !IsOfficialBuiltIn(src)
@@ -2094,8 +2087,6 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
                 {
                     src.IsEnabled = false;
                     src.IsDefault = false;
-                    if (establishTrustFromStoredContent)
-                        src.TrustState = ScriptTrustState.Untrusted;
                     _logger.LogWarning("持久化脚本未通过摘要或执行校验，已禁用: {Id}", src.Id);
                 }
             }
