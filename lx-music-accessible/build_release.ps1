@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -215,6 +215,10 @@ if ((Get-Item -LiteralPath $releaseRoot).Attributes -band [System.IO.FileAttribu
 }
 
 # Clean output makes the release list exact and cannot leave stale x86/self-contained artifacts.
+$generatedAtUtc = [DateTime]::UtcNow.ToString("O")
+if (Test-Path -LiteralPath (Join-Path $releaseRoot "release-manifest.json") -PathType Leaf) {
+    $generatedAtUtc = ([System.IO.File]::ReadAllText((Join-Path $releaseRoot "release-manifest.json")) | ConvertFrom-Json).generatedAtUtc
+}
 Get-ChildItem -LiteralPath $releaseRoot -Force | Remove-Item -Recurse -Force
 if (Test-Path -LiteralPath $staging) {
     if ((Get-Item -LiteralPath $staging).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
@@ -346,7 +350,7 @@ $manifest = [ordered]@{
     framework = "net48"
     sqliteVersion = $sqliteVersion
     payloadScope = "complete-framework-dependent-application-payload"
-    generatedAtUtc = [DateTime]::UtcNow.ToString("O")
+    generatedAtUtc = $generatedAtUtc
     payload = @($payloadFiles)
     artifacts = @($releaseArtifacts)
 }
