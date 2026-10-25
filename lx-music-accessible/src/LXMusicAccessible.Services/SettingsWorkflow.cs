@@ -248,7 +248,7 @@ public sealed class SettingsWorkflow : IDisposable
             try { if (File.Exists(file)) File.Delete(file); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                return;
+                System.Diagnostics.Debug.WriteLine("Partial data directory cleanup skipped: " + exception.GetType().Name);
             }
         }
 
@@ -262,6 +262,7 @@ public sealed class SettingsWorkflow : IDisposable
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
+                System.Diagnostics.Debug.WriteLine("Empty partial directory cleanup skipped: " + exception.GetType().Name);
             }
         }
     }

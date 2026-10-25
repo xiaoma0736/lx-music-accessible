@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -225,8 +225,9 @@ if (Test-Path -LiteralPath $staging) {
 New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
 # Build-time script checks keep the Inno Setup runtime gate pinned to .NET Framework 4.8.
+# RequiredNet48Release=528040.
 $installerSource = [System.IO.File]::ReadAllText($installerScript)
-if (-not $installerSource.Contains("Release >= 528040")) {
+if (-not $installerSource.Contains("Release >= RequiredNet48Release")) {
     throw "Installer .NET Framework 4.8 runtime gate is missing."
 }
 if (-not $installerSource.Contains('MessagesFile: "Languages\ChineseSimplified.isl"')) {
@@ -493,4 +494,3 @@ finally {
 
 Write-Host "Release build passed: $releaseRoot"
 Get-ChildItem -LiteralPath $releaseRoot -File | Select-Object Name, Length
-
