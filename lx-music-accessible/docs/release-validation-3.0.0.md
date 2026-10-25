@@ -1,4 +1,4 @@
-﻿# LX Music 无障碍版 3.0.0 发布验证记录
+# LX Music 无障碍版 3.0.0 发布验证记录
 
 **状态：3.0.0 自动化发布候选（Release Candidate）已冻结；公开发布前，真实键盘、读屏和升级人工验收仍待执行。** 本文件是 3.0.0 的正式发布验证和人工验收记录。Issue #58–#63 均已在 GitHub 上关闭，状态为 `COMPLETED`；父规范 #57 保持打开，等待根工作流收尾。
 
@@ -27,15 +27,15 @@
 
 ## 3.0.0 产物
 
-SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framework-dependent-application-payload`，完整记录 92 个框架依赖应用载荷文件及以下两个发布产物；构建脚本已独立复核全部哈希。
+SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framework-dependent-application-payload`，完整记录 92 个框架依赖应用载荷文件及以下两个发布产物；构建脚本已独立复核全部哈希。ZIP 条目时间固定为 `2000-01-01T00:00:00Z`，manifest 时间取应用项目最新提交时间；连续两次 clean build 已确认 ZIP、安装器和 manifest 哈希一致。
 
 | 产物 | 字节 | SHA-256 |
 | --- | ---: | --- |
-| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 22,107,676 | `0daf7f2a174625242dd3f1886c8c7c324dcb0af8b867f6abdd83c9a4ff404686` |
-| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 16,889,466 | `92f2ce3a630487d96ef30de8dc1d4b30a7fef6f5e3855cbad91224d693973f16` |
-| `release-manifest.json`（清单，不入哈希清单） | 24,864 | `4e48ec6ff842daa25693fcc0c5bc1c94f25625618e2a18e5869fbe4f75c959fe` |
+| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 22,109,300 | `2ccff329011470c7ca91ce241867ab270985561b0831effc9976ff520d497f27` |
+| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 16,890,142 | `6e2110c03723127ad1535e893fb789ca83d228b46aa034b1f0399aa04d4b14fd` |
+| `release-manifest.json`（清单，不入哈希清单） | 24,869 | `41c119521e007cd2a3949047fa9e54f1ebd93adc637959e7c594e135d97059d3` |
 
-清单运行时元数据：`version=3.0.0`、`runtime=win-x64`、`framework=net48`、`sqliteVersion=3.53.3`；生成时间 `2026-10-25T10:50:05.0830151Z`。
+清单运行时元数据：`version=3.0.0`、`runtime=win-x64`、`framework=net48`、`sqliteVersion=3.53.3`；冻结时间 `2026-09-28T23:50:24.0000000+00:00`（应用项目最新提交时间）。
 
 ## 自动化回归与最终质量门
 
@@ -45,10 +45,10 @@ SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framew
   - Restore：通过。
   - 依赖审计：High/Critical advisories 为 0。
   - Release build：通过；warnings treated as errors，未出现 warning/error。
-  - 离线测试：**executed 749，passed 749，failed 0，skipped 0**。
-  - 文本检查：通过，250 个 tracked text files；`git diff --check` 通过。
-  - 主机/异常静态检查：通过，185 个 C# source files。
-  - 发布重建/产物/SQLite/native/hash 检查：通过。
+  - 离线测试：**executed 763，passed 763，failed 0，skipped 0**。
+  - 文本检查与 EOF 空行检查：通过，254 个 tracked text files；`git diff --check` 通过。
+  - 主机/异常静态检查：通过，189 个 C# source files。
+  - 发布重建/产物/SQLite/native/hash 检查：通过；连续两次 clean build 的 ZIP、安装器和 manifest 哈希一致。
 - 安装器 smoke 全部通过：first install 成功；upgrade 成功且 ownership ID 不变；preserving uninstall `accepted=True; failures=0; preserved=True`；complete uninstall `accepted=True; failures=0; preserved=False`；repeat uninstall `accepted=True; failures=0; preserved=False`。
 - 验证中仅有 Git 的 CRLF working-copy 提示，非测试/构建错误；UTF-8 检查通过。没有其他警告或错误。
 
