@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -139,6 +139,32 @@ public sealed class Issue90FinalAuditTests
             "A failed copy left database content behind.");
     }
 
+    [Fact]
+    public void Replacement_promotion_rolls_back_audio_when_lyric_target_is_invalid()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "issue90-replacement-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var newAudio = Path.Combine(root, "new.audio");
+            var newLyric = Path.Combine(root, "new.lrc");
+            var oldAudio = Path.Combine(root, "old.audio");
+            var invalidLyricTarget = newAudio;
+            File.WriteAllBytes(newAudio, [1, 2, 3]);
+            File.WriteAllBytes(newLyric, [4, 5, 6]);
+            File.WriteAllBytes(oldAudio, [7, 8, 9]);
+
+            var method = typeof(DownloadWorkflow).GetMethod("PromoteReplacement", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+            Assert.Throws<TargetInvocationException>(() => method!.Invoke(null, [newAudio, newLyric, oldAudio, invalidLyricTarget]));
+            Assert.Equal(new byte[] { 7, 8, 9 }, File.ReadAllBytes(oldAudio));
+            Assert.Empty(Directory.EnumerateFiles(root, ".lxmusic-backup-*"));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
     [Fact]
     public void Shell_documents_search_shortcuts_without_stale_delete_clearing_claims()
     {
@@ -402,15 +428,3 @@ public sealed class Issue90FinalAuditTests
         public bool ShowKugouQrLogin(Form? owner) => false;
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-

@@ -259,6 +259,8 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
         var oldAudio = await Task.Run(() => File.ReadAllText(task.SavePath!));
         var oldLyric = await Task.Run(() => File.ReadAllText(task.LyricPath!));
 
+        task.SavePath = Path.Combine(Target, "locked-audio.mp3") + Path.DirectorySeparatorChar;
+        task.LyricPath = Path.Combine(Target, "locked-lrc.lrc") + Path.DirectorySeparatorChar;
         Http.Responses[url] = new(HttpStatusCode.OK) { Content = new ByteArrayContent("new-audio"u8.ToArray()) };
         Assert.True(await Workflow.RedownloadAsync(task));
 

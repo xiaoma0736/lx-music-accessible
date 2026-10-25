@@ -1318,6 +1318,12 @@ catch (Exception exception)
         var lyricBackup = replaceLyric is not null && File.Exists(replaceLyric)
             ? Path.Combine(Path.GetDirectoryName(replaceLyric)!, ".lxmusic-backup-" + Guid.NewGuid().ToString("N") + ".lrc")
             : null;
+        if (SamePath(replaceAudio, replaceLyric ?? string.Empty)
+            || SamePath(newAudio, replaceLyric ?? string.Empty)
+            || (newLyric is not null && SamePath(newLyric, replaceAudio)))
+        {
+            throw new IOException("Replacement audio and lyric targets must be distinct files.");
+        }
         var rollbackSucceeded = false;
         try
         {
