@@ -1,4 +1,4 @@
-﻿using Microsoft.Data.Sqlite;
+using Microsoft.Data.Sqlite;
 
 namespace LXMusicAccessible.Data;
 
@@ -41,7 +41,7 @@ public static class SqliteDatabaseBackup
         }
         catch when (destinationCreated && File.Exists(destinationDatabase))
         {
-            try { File.Delete(destinationDatabase); } catch (IOException) { }
+            try { File.Delete(destinationDatabase); } catch (Exception cleanupException) { System.Diagnostics.Debug.WriteLine("SQLite backup destination cleanup failed: " + cleanupException.GetType().Name); }
             throw;
         }
     }
