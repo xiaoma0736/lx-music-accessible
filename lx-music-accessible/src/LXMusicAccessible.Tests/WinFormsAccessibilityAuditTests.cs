@@ -1091,6 +1091,7 @@ public sealed class WinFormsAccessibilityAuditTests
         }
         public Task<DownloadListResult> DownloadListAsync(DownloadListRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> RetryAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<bool> RedownloadAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public void Cancel(DownloadTask task) { }
     public void Pause(DownloadTask task) { }
     public void Resume(DownloadTask task) { }

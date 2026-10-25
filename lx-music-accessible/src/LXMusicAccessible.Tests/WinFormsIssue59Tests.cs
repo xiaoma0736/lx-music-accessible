@@ -143,6 +143,7 @@ public sealed class FakeDownloadWorkflow : IDownloadWorkflow
     public Task<DownloadListResult> DownloadListAsync(DownloadListRequest request, CancellationToken cancellationToken = default) =>
         Task.FromResult(new DownloadListResult(0, 0, 0, 0, 0, Array.Empty<DownloadTask>(), "ok"));
     public Task<bool> RetryAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<bool> RedownloadAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
     public void Cancel(DownloadTask task) { }
     public void Pause(DownloadTask task) { }
     public void Resume(DownloadTask task) { }

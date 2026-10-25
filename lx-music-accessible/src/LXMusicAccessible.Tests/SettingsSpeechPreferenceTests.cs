@@ -353,6 +353,7 @@ public sealed class SettingsSpeechPreferenceTests
             => Task.FromResult(new DownloadListResult(0, 0, 0, 0, 0, new List<DownloadTask>(), "ok"));
         public Task<bool> RetryAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default)
             => Task.FromResult(true);
+        public Task<bool> RedownloadAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public void Cancel(DownloadTask task) { }
     public void Pause(DownloadTask task) { }
     public void Resume(DownloadTask task) { }

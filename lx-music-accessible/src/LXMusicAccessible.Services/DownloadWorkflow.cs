@@ -1308,7 +1308,7 @@ catch (Exception exception)
 
             if (newLyric is not null)
             {
-                if (lyricBackup is not null) File.Replace(newLyric, replaceLyric, null);
+                if (lyricBackup is not null) File.Move(newLyric, replaceLyric!);
                 else File.Move(newLyric, replaceLyric!);
             }
             else if (File.Exists(replaceLyric))
@@ -1316,7 +1316,7 @@ catch (Exception exception)
                 File.Delete(replaceLyric);
             }
 
-            if (audioBackup is not null) File.Replace(newAudio, replaceAudio, null);
+            if (audioBackup is not null) File.Move(newAudio, replaceAudio);
             else File.Move(newAudio, replaceAudio);
 
             if (audioBackup is not null) File.Delete(audioBackup);

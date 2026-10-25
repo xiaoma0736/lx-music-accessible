@@ -334,6 +334,7 @@ public class DownloadManagerForm : Form
     private readonly HashSet<DownloadTask> _observedTasks = new();
     private readonly object _observerGate = new();
     private readonly Func<string, bool> _confirmDelete;
+    private DownloadTask? _menuTarget;
 
     public DownloadManagerForm(
         IAccessibleAnnouncer announcer,
@@ -376,6 +377,16 @@ public class DownloadManagerForm : Form
         Controls.AddRange(new Control[] { _filter, _cancel, _pause, _resume, _retry, _delete, open, _clearCompleted, _tasks, _empty });
         // Same as in the source manager: the empty-state label must not be hidden behind the task list.
         _empty.BringToFront();
+        _tasks.ContextMenu = BuildTaskMenu();
+        _tasks.MouseDown += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Right) return;
+            var hit = _tasks.HitTest(e.Location);
+            if (hit.Item is null) return;
+            hit.Item.Selected = true;
+            hit.Item.Focused = true;
+            _menuTarget = hit.Item.Tag as DownloadTask;
+        };
         Reload();
         _taskPropertyChanged = (_, e) => OnTaskPropertyChanged(e);
         _tasksChanged = (_, e) => OnTasksChanged(e);
@@ -537,31 +548,77 @@ public class DownloadManagerForm : Form
         Reload();
     }
 
-    private ContextMenu BuildTaskMenu()
+    private DownloadTask? GetMenuTarget()
     {
-        var menu = new ContextMenu();
-        var pauseItem = new MenuItem("暂停", (_, _) => ChangeState(DownloadWorkflowCommand.Pause));
-        var resumeItem = new MenuItem("继续", (_, _) => ChangeState(DownloadWorkflowCommand.Resume));
-        var cancelItem = new MenuItem("取消", (_, _) => Cancel());
-        var retryItem = new MenuItem("重试", (_, _) => _ = Retry());
-        menu.MenuItems.Add(pauseItem);
-        menu.MenuItems.Add(resumeItem);
-        menu.MenuItems.Add(cancelItem);
-        menu.MenuItems.Add(retryItem);
-        menu.MenuItems.Add(new MenuItem("删除（包含源文件）", (_, _) => Delete()));
-        menu.Popup += (_, _) =>
-        {
-            var selected = Selected();
-            pauseItem.Enabled = selected.Any(task => task.Status == DownloadTaskStatus.Downloading);
-            resumeItem.Enabled = selected.Any(task => task.Status == DownloadTaskStatus.Paused);
-            cancelItem.Enabled = selected.Any(task => task.Status is DownloadTaskStatus.Pending or DownloadTaskStatus.Downloading or DownloadTaskStatus.Paused);
-            retryItem.Enabled = selected.Any(task => task.Status is DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled);
-            UpdateButtonState();
-        };
-        return menu;
+        var item = _tasks.FocusedItem ?? _tasks.SelectedItems.OfType<ListViewItem>().FirstOrDefault();
+        return item?.Tag as DownloadTask;
     }
 
-    private static bool MatchesCategory(DownloadTask task, string category) => category switch
+    internal void OnTaskMenuPopup()
+    {
+        _menuTarget = GetMenuTarget();
+        UpdateButtonState();
+    }
+
+private ContextMenu BuildTaskMenu()
+    {
+        var menu = new ContextMenu();
+        var redownloadItem = new MenuItem("手动重新下载", (_, _) =>
+        {
+            if (_menuTarget is null) return;
+            _ = _downloads.RedownloadAsync(_menuTarget, null, CancellationToken.None);
+            Announce("已请求手动重新下载：" + _menuTarget.DisplayName, "download-manager-focused");
+            Reload();
+        });
+        var retryItem = new MenuItem("重试下载", (_, _) =>
+        {
+            if (_menuTarget is null) return;
+            _ = _downloads.RetryAsync(_menuTarget, null, CancellationToken.None);
+            Announce("已请求重试下载：" + _menuTarget.DisplayName, "download-manager-focused");
+            Reload();
+        });
+        var pauseItem = new MenuItem("暂停下载", (_, _) =>
+        {
+            if (_menuTarget is null) return;
+            _downloads.Pause(_menuTarget);
+            Announce("已请求暂停下载：" + _menuTarget.DisplayName, "download-manager-focused");
+            Reload();
+        });
+        var resumeItem = new MenuItem("继续下载", (_, _) =>
+        {
+            if (_menuTarget is null) return;
+            _downloads.Resume(_menuTarget);
+            Announce("已请求继续下载：" + _menuTarget.DisplayName, "download-manager-focused");
+            Reload();
+        });
+        var stopItem = new MenuItem("停止下载", (_, _) =>
+        {
+            if (_menuTarget is null) return;
+            _downloads.Cancel(_menuTarget);
+            Announce("已请求停止下载：" + _menuTarget.DisplayName, "download-manager-focused");
+            Reload();
+        });
+        var removeItem = new MenuItem("移除下载", (_, _) =>
+        {
+            if (_menuTarget is null) return;
+            if (!_confirmDelete($"确定移除“{_menuTarget.DisplayName}”及其已下载源文件吗？")) return;
+            if (!_downloads.Delete(_menuTarget, deleteSourceFile: true))
+            {
+                Announce($"任务仍无法移除：{_menuTarget.DisplayName}", "download-manager-delete", AnnouncementKind.Error);
+                return;
+            }
+            Announce($"已移除：{_menuTarget.DisplayName}", "download-manager-delete", AnnouncementKind.Success);
+            Reload();
+        });
+        menu.MenuItems.Add(redownloadItem);
+        menu.MenuItems.Add(retryItem);
+        menu.MenuItems.Add(pauseItem);
+        menu.MenuItems.Add(resumeItem);
+        menu.MenuItems.Add(stopItem);
+        menu.MenuItems.Add(removeItem);
+        menu.Popup += (_, _) => OnTaskMenuPopup();        return menu;
+    }
+private static bool MatchesCategory(DownloadTask task, string category) => category switch
     {
         "下载中" => task.Status is DownloadTaskStatus.Pending or DownloadTaskStatus.Downloading or DownloadTaskStatus.Paused,
         "已完成" => task.Status == DownloadTaskStatus.Completed,

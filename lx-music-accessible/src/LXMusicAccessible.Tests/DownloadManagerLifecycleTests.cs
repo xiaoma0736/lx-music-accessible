@@ -47,6 +47,7 @@ public sealed class DownloadManagerLifecycleTests
         public Task<DownloadListResult> DownloadListAsync(DownloadListRequest request, CancellationToken cancellationToken = default) =>
             Task.FromResult(new DownloadListResult(0, 0, 0, 0, 0, Array.Empty<DownloadTask>(), "ok"));
         public Task<bool> RetryAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> RedownloadAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public void Cancel(DownloadTask task) { }
         public void Pause(DownloadTask task) { }
         public void Resume(DownloadTask task) { }
@@ -79,6 +80,7 @@ public sealed class DownloadManagerLifecycleTests
         public Task<DownloadTask> DownloadAsync(DownloadRequest request, CancellationToken cancellationToken = default) => _completion.Task;
         public Task<DownloadListResult> DownloadListAsync(DownloadListRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> RetryAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> RedownloadAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public void Cancel(DownloadTask task) => CancelCalls++;
         public void Pause(DownloadTask task)
         {
