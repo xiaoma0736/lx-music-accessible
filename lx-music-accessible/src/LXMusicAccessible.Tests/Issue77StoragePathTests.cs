@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
+using Microsoft.Data.Sqlite;
 using LXMusicAccessible.Audio;
 using LXMusicAccessible.Data;
 using LXMusicAccessible.Models;
@@ -221,7 +222,15 @@ public sealed class Issue77StoragePathTests
             target);
         Assert.Equal(target, AppDataPaths.ResolveDataDir(fixture.LocalAppData));
         Assert.True(File.Exists(Path.Combine(target, "lxmusic.db")));
-        Assert.True(File.Exists(Path.Combine(target, "lxmusic.db-wal")));
+        Assert.False(File.Exists(Path.Combine(target, "lxmusic.db-wal")));
+        using (var copied = new SqliteConnection($"Data Source={Path.Combine(target, "lxmusic.db")};Pooling=false"))
+        {
+            copied.Open();
+            using var copiedCommand = copied.CreateCommand();
+            copiedCommand.CommandText = "SELECT Value FROM Settings WHERE [Key] = @Key";
+            copiedCommand.Parameters.AddWithValue("@Key", "migration");
+            Assert.Equal("ready", copiedCommand.ExecuteScalar());
+        }
         Assert.True(File.Exists(Path.Combine(target, "logs", "app.log")));
         Assert.True(File.Exists(Path.Combine(target, "file-storage", "search_history.json")));
         Assert.True(File.Exists(Path.Combine(target, "trusted", "local-source.js")));
@@ -231,6 +240,29 @@ public sealed class Issue77StoragePathTests
             fixture.LocalAppData,
             AppDataPaths.DefaultDirName,
             "data_dir.json")));
+    }
+
+    [Fact]
+    public void Failed_data_directory_copy_is_retryable_after_explicit_cleanup()
+    {
+        using var fixture = new DataDirectoryFixture();
+        fixture.CreateCurrentContent();
+        var target = Path.Combine(fixture.SelectedParent, AppDataPaths.DefaultDirName);
+        Directory.CreateDirectory(target);
+        var blocked = Path.Combine(target, "blocked.txt");
+        File.WriteAllText(blocked, "existing");
+        var workflow = fixture.CreateWorkflow();
+
+        Assert.False(workflow.ChangeDataDirectoryInRoot(fixture.SelectedParent, fixture.LocalAppData).Succeeded);
+        Assert.True(File.Exists(blocked));
+        Assert.False(File.Exists(Path.Combine(target, "lxmusic.db")));
+
+        File.Delete(blocked);
+        var retry = workflow.ChangeDataDirectoryInRoot(fixture.SelectedParent, fixture.LocalAppData);
+
+        Assert.True(retry.Succeeded, retry.Message);
+        Assert.True(File.Exists(Path.Combine(target, "lxmusic.db")));
+        Assert.False(File.Exists(Path.Combine(target, "lxmusic.db-wal")));
     }
 
     [Fact]
@@ -346,7 +378,15 @@ public sealed class Issue77StoragePathTests
 
         public void CreateCurrentContent()
         {
-            File.WriteAllText(Path.Combine(Current, "lxmusic.db"), "settings;sources;playlists;accounts");
+            using (var connection = new SqliteConnection($"Data Source={Path.Combine(Current, "lxmusic.db")};Pooling=false"))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "CREATE TABLE Settings ([Key] TEXT PRIMARY KEY, Value TEXT NOT NULL); INSERT INTO Settings VALUES (@Key, @Value);";
+                command.Parameters.AddWithValue("@Key", "migration");
+                command.Parameters.AddWithValue("@Value", "ready");
+                command.ExecuteNonQuery();
+            }
             File.WriteAllText(Path.Combine(Current, "lxmusic.db-wal"), "recent commits");
             Directory.CreateDirectory(Path.Combine(Current, "logs"));
             File.WriteAllText(Path.Combine(Current, "logs", "app.log"), "log");
@@ -515,3 +555,4 @@ public sealed class Issue77StoragePathTests
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }
+

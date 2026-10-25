@@ -1,4 +1,4 @@
-﻿using System.Net.Http;
+using System.Net.Http;
 using System.Net;
 using System.IO;
 using LXMusicAccessible.Core.MusicApi;
@@ -684,5 +684,3 @@ public sealed class ScriptSourceLifecycleTests
         Priority = 10
     };
 }
-
-

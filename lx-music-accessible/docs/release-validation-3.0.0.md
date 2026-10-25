@@ -1,4 +1,4 @@
-# LX Music 无障碍版 3.0.0 发布验证记录
+﻿# LX Music 无障碍版 3.0.0 发布验证记录
 
 **状态：3.0.0 自动化发布候选（Release Candidate）已冻结；公开发布前，真实键盘、读屏和升级人工验收仍待执行。** 本文件是 3.0.0 的正式发布验证和人工验收记录。Issue #58–#63 均已在 GitHub 上关闭，状态为 `COMPLETED`；父规范 #57 保持打开，等待根工作流收尾。
 
@@ -15,7 +15,7 @@
 - ZIP 不包含应用 .NET 运行时。安装器检测失败时显示“Microsoft .NET Framework 4.8 required”、官方下载地址和诊断路径；非交互 smoke 模式返回 exit code 2。
 - 诊断写入 `%LocalAppData%\LXMusicAccessible\setup\net48-diagnostics.txt`，记录时间、`installed`、required release、当前 release 和诊断摘要。
 - 网页登录需要 Microsoft Edge WebView2 Runtime。BASS/APE/FLAC/Opus、SQLite、ClearScript V8、Prism、Tolk、保益桥接和 WebView2 Loader 的 x64 原生库随应用分发；ClearScript V8 不可用时回退 Jint。
-- 数据默认路径继续为 `%LocalAppData%\lxmusic`；目录指针 schema 为 1，默认目录所有权记录继续使用 `.lxmusic-default-owner.json`。覆盖安装保留 SQLite（schema `user_version=1`）、设置、歌单、登录凭据、快捷键和可信音源。
+- 数据默认路径继续为 `%LocalAppData%\lxmusic`；目录指针 schema 为 1，默认目录所有权记录继续使用 `.lxmusic-default-owner.json`。覆盖安装保留 SQLite（schema `user_version=3`）、设置、歌单、登录凭据、快捷键和可信音源。
 - 可执行文件名为 `落雪音乐无障碍版V3.0.exe`；安装器会检测并关闭旧版 `落雪音乐无障碍版V2.0.exe`，升级后移除旧可执行文件。保留卸载会保留未知文件和用户数据；完全卸载只移除所有权清单允许的安装内容。
 
 ## LX 音源与官方平台
@@ -114,3 +114,4 @@ SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framew
 | 发布批准 | 待指定 | 待定 | 未批准 |
 
 真实键盘、Narrator、NVDA、JAWS 和五平台浏览验收尚未运行；这些人工结果 pending 时，本版本不得标记为公开发布可访问。
+

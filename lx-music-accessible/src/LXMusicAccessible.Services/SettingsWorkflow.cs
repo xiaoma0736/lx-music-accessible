@@ -223,6 +223,18 @@ public sealed class SettingsWorkflow : IDisposable
                 continue;
 
             var destination = Path.Combine(target, name);
+            if (IsDatabaseFile(name))
+            {
+                // SQLite sidecars are never copied; a checkpointed backup API copy is the consistent
+                // database image. This makes a failed attempt retryable after explicit cleanup.
+                if (IsMainDatabase(name))
+                {
+                    SqliteDatabaseBackup.Copy(entry, destination);
+                    copiedFiles.Add(destination);
+                }
+                continue;
+            }
+
             if (File.Exists(entry))
             {
                 var info = new FileInfo(entry);
@@ -241,6 +253,11 @@ public sealed class SettingsWorkflow : IDisposable
         }
     }
 
+    private static bool IsDatabaseFile(string name) =>
+        name.StartsWith("lxmusic.db", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMainDatabase(string name) =>
+        string.Equals(name, "lxmusic.db", StringComparison.OrdinalIgnoreCase);
     private static void CleanupPartialCopy(string target, IReadOnlyCollection<string> copiedFiles)
     {
         foreach (var file in copiedFiles)
@@ -552,4 +569,5 @@ public sealed class SettingsWorkflow : IDisposable
         }
     }
 }
+
 
