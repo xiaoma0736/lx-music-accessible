@@ -569,5 +569,3 @@ public sealed class SettingsWorkflow : IDisposable
         }
     }
 }
-
-

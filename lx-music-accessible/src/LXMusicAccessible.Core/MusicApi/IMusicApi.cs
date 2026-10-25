@@ -68,4 +68,3 @@ public interface IMusicApi
         CancellationToken cancellationToken = default);
 
 }
-

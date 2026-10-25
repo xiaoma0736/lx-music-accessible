@@ -137,13 +137,3 @@ public sealed class DownloadCommandStateTests
         public DownloadCacheCleanupResult ClearTemporaryFiles() => new(0, 0);
     }
 }
-
-
-
-
-
-
-
-
-
-

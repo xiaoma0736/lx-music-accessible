@@ -212,7 +212,3 @@ public sealed class JsonSourceLifecycleTests
         Priority = 10
     };
 }
-
-
-
-

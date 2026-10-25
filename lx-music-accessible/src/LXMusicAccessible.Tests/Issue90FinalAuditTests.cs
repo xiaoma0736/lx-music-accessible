@@ -469,6 +469,3 @@ public sealed class Issue90FinalAuditTests
         public bool ShowKugouQrLogin(Form? owner) => false;
     }
 }
-
-
-

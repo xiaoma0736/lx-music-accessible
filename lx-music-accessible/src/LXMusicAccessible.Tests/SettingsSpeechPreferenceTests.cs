@@ -369,4 +369,3 @@ public sealed class SettingsSpeechPreferenceTests
         public DownloadCacheCleanupResult ClearTemporaryFiles() => new(0, 0);
     }
 }
-

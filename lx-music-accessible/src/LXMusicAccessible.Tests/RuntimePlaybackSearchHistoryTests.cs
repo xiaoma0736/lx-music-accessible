@@ -511,4 +511,3 @@ public sealed class RuntimePlaybackSearchHistoryTests
         public bool Unregister(IntPtr windowHandle, int id) => true;
     }
 }
-

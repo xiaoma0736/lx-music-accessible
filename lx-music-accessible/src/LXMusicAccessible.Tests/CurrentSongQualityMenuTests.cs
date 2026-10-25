@@ -366,4 +366,3 @@ public sealed class CurrentSongQualityMenuTests
         public void Invalidate(MusicInfo music) { }
     }
 }
-

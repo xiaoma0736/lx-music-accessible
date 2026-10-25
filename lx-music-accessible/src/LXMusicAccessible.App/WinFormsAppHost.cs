@@ -640,4 +640,3 @@ public sealed class ApplicationRuntime : IAsyncDisposable
         _disposed = true;
     }
 }
-

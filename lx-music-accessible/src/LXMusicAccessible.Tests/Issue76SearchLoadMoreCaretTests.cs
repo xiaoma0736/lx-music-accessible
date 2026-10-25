@@ -208,14 +208,3 @@ public sealed class Issue76SearchLoadMoreCaretTests
             Task.FromResult(PagedResult<MusicInfo>.Empty(page, pageSize));
     }
 }
-
-
-
-
-
-
-
-
-
-
-

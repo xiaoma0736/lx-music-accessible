@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = "Stop"
@@ -56,6 +56,10 @@ try {
             if ($damagePattern.IsMatch($line)) {
                 $failures.Add("${relativePath}:${lineNumber}: replacement character or known encoding damage")
             }
+        }
+
+        if ($text.EndsWith([Environment]::NewLine + [Environment]::NewLine) -or $text.EndsWith([char]10 + [char]10)) {
+            $failures.Add("${relativePath}: blank line at EOF")
         }
     }
 }

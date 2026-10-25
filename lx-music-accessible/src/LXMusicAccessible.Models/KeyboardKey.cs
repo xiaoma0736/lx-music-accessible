@@ -217,4 +217,3 @@ public enum PlatformModifiers
     Shift = 4,
     Windows = 8
 }
-

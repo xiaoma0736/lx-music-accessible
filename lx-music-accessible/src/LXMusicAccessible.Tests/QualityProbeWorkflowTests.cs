@@ -127,4 +127,3 @@ public sealed class QualityProbeWorkflowTests
         }
     }
 }
-

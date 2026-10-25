@@ -694,5 +694,3 @@ public class AudioPlayer : IAudioPlayer
         GC.SuppressFinalize(this);
     }
 }
-
-

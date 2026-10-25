@@ -228,4 +228,3 @@ public sealed class Issue71AccessibleWindowAndSpeechTests
     }
 
 }
-

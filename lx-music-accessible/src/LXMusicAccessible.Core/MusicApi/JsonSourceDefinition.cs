@@ -210,4 +210,3 @@ public static class JsonSourceDefinitionParser
 
     private static JsonSourceManifestException Invalid() => new("json_manifest_invalid");
 }
-

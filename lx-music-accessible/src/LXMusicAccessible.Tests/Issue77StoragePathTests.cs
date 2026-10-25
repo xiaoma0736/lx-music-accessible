@@ -555,4 +555,3 @@ public sealed class Issue77StoragePathTests
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }
-

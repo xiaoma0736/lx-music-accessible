@@ -926,4 +926,3 @@ public sealed class BatchDownloadSelectionTests
         }
     }
 }
-

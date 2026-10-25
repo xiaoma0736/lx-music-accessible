@@ -1540,7 +1540,3 @@ public class SponsorForm : Form
         };
     }
 }
-
-
-
-

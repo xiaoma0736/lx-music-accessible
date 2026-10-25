@@ -525,4 +525,3 @@ public class MusicHttpClient : IDisposable
         _httpClient?.Dispose();
     }
 }
-

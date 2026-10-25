@@ -114,4 +114,3 @@ SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framew
 | 发布批准 | 待指定 | 待定 | 未批准 |
 
 真实键盘、Narrator、NVDA、JAWS 和五平台浏览验收尚未运行；这些人工结果 pending 时，本版本不得标记为公开发布可访问。
-

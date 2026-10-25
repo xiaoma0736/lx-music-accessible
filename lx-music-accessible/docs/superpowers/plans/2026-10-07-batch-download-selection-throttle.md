@@ -634,6 +634,3 @@ Comment on the implementation issue with:
 - explicit confirmation that no pagination auto-load or whole-list download was added.
 
 Close the issue only after every acceptance criterion is met and the full gate passes.
-
-
-

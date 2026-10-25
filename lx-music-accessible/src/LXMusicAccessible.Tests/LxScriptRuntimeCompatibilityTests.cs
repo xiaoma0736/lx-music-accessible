@@ -463,5 +463,3 @@ public sealed class LxScriptRuntimeCompatibilityTests
     }
 
 }
-
-

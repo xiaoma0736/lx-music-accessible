@@ -54,5 +54,3 @@ public sealed class AudioPlayerStallRecoveryTests
         typeof(AudioPlayer).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!
             .GetValue(player);
 }
-
-

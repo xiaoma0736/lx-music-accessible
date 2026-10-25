@@ -190,5 +190,3 @@ internal static class CompatibilityCollectionExtensions
     public static string ReplaceLineEndings(this string value, string replacement = "\r\n") =>
         FrameworkCompatibility.ReplaceLineEndings(value, replacement);
 }
-
-
