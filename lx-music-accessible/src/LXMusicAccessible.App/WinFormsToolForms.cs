@@ -335,6 +335,7 @@ public class DownloadManagerForm : Form
     private readonly object _observerGate = new();
     private readonly Func<string, bool> _confirmDelete;
     private DownloadTask? _menuTarget;
+    private bool _downloadCommandBusy;
 
     public DownloadManagerForm(
         IAccessibleAnnouncer announcer,
@@ -538,18 +539,42 @@ public class DownloadManagerForm : Form
     {
         var tasks = Selected();
         if (tasks.Count == 0) return;
-        if (!_confirmDelete(tasks.Count == 1
-            ? "确定删除所选下载任务，并删除已下载源文件吗？"
-            : $"确定删除 {tasks.Count} 个下载任务，并删除已下载源文件吗？")) return;
-
-        foreach (var task in tasks)
+        if (!BeginDownloadCommand())
         {
-            if (!await _downloads.DeleteAsync(task, deleteSourceFile: true))
-                Announce($"任务仍无法删除：{task.DisplayName}", "download-manager-delete", AnnouncementKind.Error);
+            Announce("上一个下载命令仍在执行", "download-manager", AnnouncementKind.Error);
+            return;
         }
+        var accepted = 0;
+        var rejected = 0;
+        try
+        {
+            if (!_confirmDelete(tasks.Count == 1
+                ? "确定删除所选下载任务，并删除已下载源文件吗？"
+                : $"确定删除 {tasks.Count} 个下载任务，并删除已下载源文件吗？")) return;
 
-        Announce("已删除所选任务", "download-manager-delete", AnnouncementKind.Success);
-        Reload();
+            foreach (var task in tasks)
+            {
+                if (await _downloads.DeleteAsync(task, deleteSourceFile: true)) accepted++;
+                else rejected++;
+            }
+
+            Reload();
+            if (accepted > 0 && rejected == 0)
+                Announce("已删除所选任务", "download-manager-delete", AnnouncementKind.Success);
+            else
+                Announce($"下载删除结束：已删除 {accepted}，未删除 {rejected}", "download-manager-delete", rejected > 0 ? AnnouncementKind.Error : AnnouncementKind.Success);
+        }
+        finally
+        {
+            _downloadCommandBusy = false;
+        }
+    }
+
+    private bool BeginDownloadCommand()
+    {
+        if (_downloadCommandBusy) return false;
+        _downloadCommandBusy = true;
+        return true;
     }
 
     private DownloadTask? GetMenuTarget()
@@ -625,31 +650,55 @@ public class DownloadManagerForm : Form
     {
         var task = _menuTarget;
         if (task is null) return;
-        Announce((redownload ? "已请求手动重新下载：" : "已请求重试下载：") + task.DisplayName, "download-manager-focused");
-        var started = await (redownload
-            ? _downloads.RedownloadAsync(task, null, CancellationToken.None)
-            : _downloads.RetryAsync(task, null, CancellationToken.None));
-        Reload();
-        if (!started)
-            Announce($"任务不能重新开始：{task.DisplayName}", "download-manager-focused", AnnouncementKind.Error);
-        else if (task.Status == DownloadTaskStatus.Completed)
-            Announce($"已完成重新下载：{task.DisplayName}", "download-manager-focused", AnnouncementKind.Success);
-        else
-            Announce($"{task.StatusText}：{task.DisplayName}", "download-manager-focused", AnnouncementKind.Error);
+        if (!BeginDownloadCommand())
+        {
+            Announce("上一个下载命令仍在执行", "download-manager", AnnouncementKind.Error);
+            return;
+        }
+        try
+        {
+            Announce((redownload ? "已请求手动重新下载：" : "已请求重试下载：") + task.DisplayName, "download-manager-focused");
+            var started = await (redownload
+                ? _downloads.RedownloadAsync(task, null, CancellationToken.None)
+                : _downloads.RetryAsync(task, null, CancellationToken.None));
+            Reload();
+            if (!started)
+                Announce($"任务不能重新开始：{task.DisplayName}", "download-manager-focused", AnnouncementKind.Error);
+            else if (task.Status == DownloadTaskStatus.Completed)
+                Announce($"已完成重新下载：{task.DisplayName}", "download-manager-focused", AnnouncementKind.Success);
+            else
+                Announce($"{task.StatusText}：{task.DisplayName}", "download-manager-focused", AnnouncementKind.Error);
+        }
+        finally
+        {
+            _downloadCommandBusy = false;
+        }
     }
 
     private async Task RemoveFocusedAsync()
     {
         var task = _menuTarget;
         if (task is null) return;
-        if (!_confirmDelete($"确定移除“{task.DisplayName}”及其已下载源文件吗？")) return;
-        if (!await _downloads.DeleteAsync(task, deleteSourceFile: true))
+        if (!BeginDownloadCommand())
         {
-            Announce($"任务仍无法移除：{task.DisplayName}", "download-manager-delete", AnnouncementKind.Error);
+            Announce("上一个下载命令仍在执行", "download-manager", AnnouncementKind.Error);
             return;
         }
-        Announce($"已移除：{task.DisplayName}", "download-manager-delete", AnnouncementKind.Success);
-        Reload();
+        try
+        {
+            if (!_confirmDelete($"确定移除“{task.DisplayName}”及其已下载源文件吗？")) return;
+            if (!await _downloads.DeleteAsync(task, deleteSourceFile: true))
+            {
+                Announce($"任务仍无法移除：{task.DisplayName}", "download-manager-delete", AnnouncementKind.Error);
+                return;
+            }
+            Announce($"已移除：{task.DisplayName}", "download-manager-delete", AnnouncementKind.Success);
+            Reload();
+        }
+        finally
+        {
+            _downloadCommandBusy = false;
+        }
     }
 
 private static bool MatchesCategory(DownloadTask task, string category) => category switch
@@ -662,10 +711,32 @@ private static bool MatchesCategory(DownloadTask task, string category) => categ
 
     private async Task Retry()
     {
-        foreach (var task in Selected().Where(task => task.Status is DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled).ToList())
-            await _downloads.RetryAsync(task);
-        Announce("已重试所选下载", "download-manager");
-        Reload();
+        var candidates = Selected().Where(task => task.Status is DownloadTaskStatus.Failed or DownloadTaskStatus.Cancelled).ToList();
+        if (candidates.Count == 0) return;
+        if (!BeginDownloadCommand())
+        {
+            Announce("上一个下载命令仍在执行", "download-manager", AnnouncementKind.Error);
+            return;
+        }
+        var accepted = 0;
+        var rejected = 0;
+        try
+        {
+            foreach (var task in candidates)
+            {
+                if (await _downloads.RetryAsync(task)) accepted++;
+                else rejected++;
+            }
+            Reload();
+            if (accepted > 0)
+                Announce($"已请求重试所选下载：接受 {accepted}，拒绝 {rejected}", "download-manager");
+            else
+                Announce($"所选下载不能重试：拒绝 {rejected}", "download-manager", AnnouncementKind.Error);
+        }
+        finally
+        {
+            _downloadCommandBusy = false;
+        }
     }
 
     private void ClearCompleted()
@@ -1469,6 +1540,7 @@ public class SponsorForm : Form
         };
     }
 }
+
 
 
 
