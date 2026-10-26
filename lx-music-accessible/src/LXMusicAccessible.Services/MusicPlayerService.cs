@@ -1348,9 +1348,10 @@ catch (OperationCanceledException) when (cancellationToken.IsCancellationRequest
     {
         try
         {
-            var indices = _audioPlayer.GetOutputDevices()
-                .Where(device => device.Index >= 0)
-                .Select(device => device.Index)
+            var indices = new[] { -1 }
+                .Concat(_audioPlayer.GetOutputDevices()
+                    .Where(device => device.Index >= 0)
+                    .Select(device => device.Index))
                 .Distinct()
                 .OrderBy(index => index)
                 .ToArray();
