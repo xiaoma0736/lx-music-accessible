@@ -622,6 +622,29 @@ public class AudioPlayer : IAudioPlayer
         }, null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
     }
 
+    internal void ObservePlaybackState(PlaybackState active, DateTimeOffset now)
+    {
+        if (active == PlaybackState.Stalled)
+        {
+            if (_stallStartedUtc is null) _stallStartedUtc = now;
+            if (State == AudioPlayerState.Playing) State = AudioPlayerState.Loading;
+            RecoverIfStallExpired(now);
+            return;
+        }
+
+        _stallStartedUtc = null;
+        if (State == AudioPlayerState.Loading && active == PlaybackState.Playing)
+            State = AudioPlayerState.Playing;
+    }
+
+    internal void CleanupFailedDeviceSwitch()
+    {
+        ReleaseStream();
+        DeleteTempFile();
+        _loadedSource = null;
+        _position = TimeSpan.Zero;
+        State = AudioPlayerState.Stopped;
+    }
     internal void RecoverIfStallExpired(DateTimeOffset now)
     {
         if (_stallStartedUtc is null || now - _stallStartedUtc.Value < StallRecoveryTimeout) return;

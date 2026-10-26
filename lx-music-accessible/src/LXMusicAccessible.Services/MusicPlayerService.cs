@@ -1071,17 +1071,21 @@ catch (OperationCanceledException) when (cancellationToken.IsCancellationRequest
         {
             AudioPlayerState.Loading => PlayerState.Loading,
             AudioPlayerState.Playing => PlayerState.Playing,
+            AudioPlayerState.Error => PlayerState.Error,
             _ => (PlayerState?)null
         };
         if (mapped is null) return;
         PlayerStateChangedEventArgs change;
         lock (_gate)
         {
-            if (_state != PlayerState.Playing) return;
+            if (_state is not (PlayerState.Playing or PlayerState.Loading)) return;
             change = StateChange(_state, mapped.Value, _currentMusic);
+            if (mapped.Value == PlayerState.Error) change.ErrorMessage = "音频流停滞超时，已停止并清理";
             _state = mapped.Value;
         }
         RaiseStateChanged(change);
+        if (mapped.Value == PlayerState.Error)
+            SafeAnnounce(new("音频流停滞超时，已停止并清理", AnnouncementKind.Error));
     }
 
     private void AudioPlayer_PlaybackCompleted(object? sender, EventArgs e)
@@ -1481,3 +1485,4 @@ catch (OperationCanceledException) when (cancellationToken.IsCancellationRequest
         }
     }
 }
+
