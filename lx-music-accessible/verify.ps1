@@ -63,6 +63,7 @@ try {
     if (Test-Path -LiteralPath $resolvedResults) {
         Remove-Item -LiteralPath $resolvedResults -Recurse -Force
     }
+    New-Item -ItemType Directory -Path $resolvedResults -Force | Out-Null
 
     $proxyNames = @("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
     $savedProxyValues = @{}
@@ -74,8 +75,15 @@ try {
         $env:HTTPS_PROXY = "http://127.0.0.1:9"
         $env:ALL_PROXY = "http://127.0.0.1:9"
         $env:NO_PROXY = ""
-        & dotnet test $solution --configuration Release --no-build --no-restore --logger "trx;LogFileName=tests.trx" --results-directory $resolvedResults
-        if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
+        # Redirect the native test host output to a file. Plain piping can deadlock an STA
+        # testhost when the gate itself is launched by another capture-only PowerShell host.
+        $testConsoleLog = Join-Path $resolvedResults "test-console.log"
+        & dotnet test $solution --configuration Release --no-build --no-restore --logger "trx;LogFileName=tests.trx" --results-directory $resolvedResults *> $testConsoleLog
+        $testExitCode = $LASTEXITCODE
+        if (Test-Path -LiteralPath $testConsoleLog) {
+            Get-Content -LiteralPath $testConsoleLog | Write-Host
+        }
+        if ($testExitCode -ne 0) { throw "Tests failed." }
     }
     finally {
         foreach ($name in $proxyNames) {
@@ -147,3 +155,6 @@ try {
 finally {
     Pop-Location
 }
+
+# Native child exit codes (notably Inno's uninstaller) can otherwise leak into the wrapper.
+exit 0
