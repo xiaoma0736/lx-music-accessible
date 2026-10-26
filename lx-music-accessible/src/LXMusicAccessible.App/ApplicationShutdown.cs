@@ -127,14 +127,56 @@ internal sealed class ApplicationShutdownCoordinator
 
     private async Task<ShutdownResult> PersistAsync()
     {
+        IApplicationShutdownParticipant participant;
+        ApplicationShutdownSnapshot snapshot;
+        try
+        {
+            participant = _participant();
+            snapshot = participant.CaptureAndBlock();
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                "Application shutdown failed while capturing {Phase}: {ErrorType}",
+                PersistencePhase,
+                exception.GetType().Name);
+            return new ShutdownResult(ShutdownStatus.Failed, PersistencePhase);
+        }
+
+        // Background quiescing gets its own short budget. Native audio/network cleanup can block
+        // longer than the whole shutdown budget; in that case the captured settings/source state
+        // must still get a save attempt rather than being discarded with the timeout.
+        var quiesceBudget = TimeSpan.FromMilliseconds(Math.Min(
+            3000d,
+            Math.Max(1d, _timeout.TotalMilliseconds / 2d)));
+        var quiesced = true;
+        using (var quiesceTimeout = new CancellationTokenSource(quiesceBudget))
+        {
+            try
+            {
+                await _quiesceBackground(quiesceTimeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (quiesceTimeout.IsCancellationRequested)
+            {
+                quiesced = false;
+                _logger.LogError("Application shutdown timed out while quiescing background work.");
+            }
+            catch (Exception exception)
+            {
+                quiesced = false;
+                _logger.LogError(
+                    "Application shutdown failed while quiescing background work: {ErrorType}",
+                    exception.GetType().Name);
+            }
+        }
+
         using var timeout = new CancellationTokenSource(_timeout);
         try
         {
-            var participant = _participant();
-            var snapshot = participant.CaptureAndBlock();
-            await _quiesceBackground(timeout.Token).ConfigureAwait(false);
             await participant.PersistAsync(snapshot, timeout.Token).ConfigureAwait(false);
-            return new ShutdownResult(ShutdownStatus.Completed, PersistencePhase);
+            return new ShutdownResult(
+                quiesced ? ShutdownStatus.Completed : ShutdownStatus.TimedOut,
+                PersistencePhase);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {

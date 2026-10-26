@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -507,29 +507,31 @@ public class SettingsForm : Form
         return $"{bytes / 1024d / 1024d:0.#} MB";
     }
 
-    private void CommitPath(Action<UserSettings> edit, bool returnFocusOnError = true)
+    private bool CommitPath(Action<UserSettings> edit, bool returnFocusOnError = true)
     {
-        if (_loading) return;
+        if (_loading) return true;
         var result = _settings.Edit(edit);
         if (!result.Accepted)
         {
             if (returnFocusOnError) _playerPath.Focus();
             Announce(string.Join(" ", result.Errors), "settings", AnnouncementKind.Error);
-            return;
+            return false;
         }
         var committed = _playerPath.Text.Trim();
         Announce(committed.Length == 0
             ? "第三方播放器路径已清空"
             : "第三方播放器路径已保存：" + committed, "settings", AnnouncementKind.Success);
+        return true;
     }
 
-    private void CommitDownloadPath()
+    private bool CommitDownloadPath()
     {
-        if (!Apply(settings => settings.DownloadPath = _downloadPath.Text.Trim())) return;
+        if (!Apply(settings => settings.DownloadPath = _downloadPath.Text.Trim())) return false;
         var committed = _downloadPath.Text.Trim();
         Announce(committed.Length == 0
             ? "下载目录已清空"
             : "下载目录已设置为 " + committed, "settings", AnnouncementKind.Success);
+        return true;
     }
 
     /// <summary>
@@ -538,14 +540,21 @@ public class SettingsForm : Form
     /// tabbing past the box no longer writes a half-finished value, and a path that was typed but never
     /// confirmed is still collected when the window closes instead of being silently lost.
     /// </summary>
-    private void CommitTypedPaths()
+    private bool CommitTypedPaths()
     {
         var playerPath = _playerPath.Text.Trim();
-        if (!string.Equals(playerPath, _settings.Current.Settings.ThirdPartyPlayerPath ?? string.Empty, StringComparison.Ordinal))
-            CommitPath(settings => settings.ThirdPartyPlayerPath = playerPath, returnFocusOnError: false);
+        if (!string.Equals(playerPath, _settings.Current.Settings.ThirdPartyPlayerPath ?? string.Empty, StringComparison.Ordinal)
+            && !CommitPath(settings => settings.ThirdPartyPlayerPath = playerPath))
+        {
+            return false;
+        }
         var downloadPath = _downloadPath.Text.Trim();
-        if (!string.Equals(downloadPath, _settings.Current.Settings.DownloadPath ?? string.Empty, StringComparison.Ordinal))
-            CommitDownloadPath();
+        if (!string.Equals(downloadPath, _settings.Current.Settings.DownloadPath ?? string.Empty, StringComparison.Ordinal)
+            && !CommitDownloadPath())
+        {
+            return false;
+        }
+        return true;
     }
 
     private void BrowsePath(TextBox target, string title, string filter, Action<UserSettings> edit)
@@ -671,7 +680,12 @@ public class SettingsForm : Form
     protected override async void OnFormClosing(FormClosingEventArgs e)
     {
         base.OnFormClosing(e);
-        CommitTypedPaths();
+        if (e.Cancel) return;
+        if (!CommitTypedPaths())
+        {
+            e.Cancel = true;
+            return;
+        }
         _settings.SettingsChanged -= _settingsChanged;
         var result = await _settings.SaveAsync(_settings.Current);
         if (!result.Succeeded) Announce("设置保存失败，将在应用退出时重试", "settings", AnnouncementKind.Error);

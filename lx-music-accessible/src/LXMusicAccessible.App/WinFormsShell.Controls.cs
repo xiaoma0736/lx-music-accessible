@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
@@ -366,15 +366,21 @@ public partial class WinFormsShell : Form
             {
                 e.Handled = true;
                 e.SuppressKeyPress = true;
+                var searchTextHadFocus = SearchText.ContainsFocus;
                 await SearchAsync(true);
-                ActiveControl = SearchResults;
+                if (searchTextHadFocus && !IsDisposed && SearchResults.CanFocus)
+                    ActiveControl = SearchResults;
             }
             else if (e.Control && e.KeyCode == Keys.Delete)
             {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
                 await DeleteHistory(false);
             }
             else if (e.Alt && e.KeyCode == Keys.Delete)
             {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
                 await DeleteHistory(true);
             }
         };
@@ -720,13 +726,27 @@ public partial class WinFormsShell : Form
         }
         if (_services.Playback is not null)
         {
-            _services.Playback.StateChanged += (_, e) => BeginInvoke(() => OnPlaybackStateChanged(e));
-            _services.Playback.QueueCompleted += (_, e) => BeginInvoke(() =>
+            _services.Playback.StateChanged += (_, e) => PostToShell(() => OnPlaybackStateChanged(e));
+            _services.Playback.QueueCompleted += (_, e) => PostToShell(() =>
             {
                 Announce("播放队列已完成", "playback-queue");
             });
         }
 
+    }
+
+    private void PostToShell(Action action)
+    {
+        if (IsDisposed || Disposing) return;
+        try
+        {
+            if (IsHandleCreated && InvokeRequired) BeginInvoke(action);
+            else action();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException)
+        {
+            // A playback event can arrive after the shell handle has gone away during shutdown.
+        }
     }
 
     /// <summary>

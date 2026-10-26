@@ -14,7 +14,9 @@ $releaseBuild = Join-Path $root "build_release.ps1"
 Push-Location $root
 try {
     Write-Host "== 1/7 Restore =="
-    & dotnet restore $solution --force-evaluate
+    # A reusable MSBuild node can outlive a confined runner and make --force-evaluate return 1
+    # without an error line. Keep the gate deterministic in clean CI and sandboxed agents.
+    & dotnet restore $solution --force-evaluate -nodeReuse:false
     if ($LASTEXITCODE -ne 0) { throw "Restore failed." }
 
     Write-Host "== 2/7 Audit High/Critical dependencies =="
@@ -93,7 +95,11 @@ try {
             $executed += [int]$counters.Node.executed
         }
     }
-    if ($executed -lt 1) { throw "The test run discovered zero tests." }
+    # Guard against silently losing compiled suites as well as a zero-test discovery.
+    $minimumExecutedTests = 780
+    if ($executed -lt $minimumExecutedTests) {
+        throw "Only $executed tests executed; the release gate requires at least $minimumExecutedTests."
+    }
     Write-Host "Executed tests: $executed"
 
     Write-Host "== 6/7 Text checks =="

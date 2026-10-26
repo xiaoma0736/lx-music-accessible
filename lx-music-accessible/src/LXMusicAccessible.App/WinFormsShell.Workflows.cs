@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -163,6 +163,7 @@ public partial class WinFormsShell
         if (_searchLoading || (!reset && !SearchLoadMore.Enabled)) return;
         _searchLoading = true;
         var loadMoreSelected = !reset && FocusedItem<LoadMoreAction>(SearchResults) is not null;
+        var focusNewSong = !reset && (loadMoreSelected || SearchLoadMore.Focused);
         // Search browse results are cumulative, so the old song count is the boundary of the next batch.
         var previousSongCount = reset ? 0 : _searchSongs.Count;
         try
@@ -185,7 +186,7 @@ public partial class WinFormsShell
                 if (preservedSongIds is not null)
                 {
                     RestoreSelectedSongs(SearchResults, _searchSongs, preservedSongIds);
-                    if (loadMoreSelected) FocusFirstAppendedSong(SearchResults, firstNewSongIndex, preservedSongIds);
+                    if (focusNewSong) FocusFirstAppendedSong(SearchResults, firstNewSongIndex, preservedSongIds);
                 }
                 else
                 {
@@ -210,6 +211,7 @@ public partial class WinFormsShell
         if (album is null || _searchLoading || !SearchLoadMore.Enabled) return;
         var previousSongCount = _searchSongs.Count;
         var requestedPage = (_browse.CurrentAlbumPage?.Page ?? 0) + 1;
+        var focusNewSong = SearchResults.ContainsFocus || SearchLoadMore.Focused;
         // The flag guards re-entry; disabling the focused load-more control would move focus away.
         _searchLoading = true;
         try
@@ -223,7 +225,7 @@ public partial class WinFormsShell
                 WinFormsUi.FillSongs(SearchResults, songs);
                 RestoreSelection(SearchResults, songs, selected);
                 UpdateLoadMore(SearchLoadMore, SearchResults, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, songs.Count), () => LoadMoreAlbumSongsAsync());
-                FocusFirstAppendedSong(SearchResults, previousSongCount, SelectedSongIds(SearchResults));
+                FocusFirstAppendedSong(SearchResults, previousSongCount, SelectedSongIds(SearchResults), focusNewSong);
                 Announce(result.Message, "album");
             }
             else if (!string.IsNullOrWhiteSpace(result.Message))
@@ -294,7 +296,20 @@ public partial class WinFormsShell
             _currentPlaybackQuality = playbackQuality;
             ShowPlayback(music);
         }
-        Announce(result.Status == PlaybackResultStatus.Playing ? $"正在播放：{music.Artist}，{music.Title}" : $"播放失败：{result.Message}", "playback-song", result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted ? AnnouncementKind.Success : AnnouncementKind.Error);
+        if (result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted)
+        {
+            Announce($"正在播放：{music.Artist}，{music.Title}", "playback-song", AnnouncementKind.Success);
+        }
+        else if (result.Status == PlaybackResultStatus.Failed)
+        {
+            Announce($"播放失败：{result.Message}", "playback-song", AnnouncementKind.Error);
+        }
+        else if (result.Status == PlaybackResultStatus.NoChange)
+        {
+            Announce(result.Message, "playback-song", AnnouncementKind.Status);
+        }
+        // Superseded: a newer request owns the user-visible outcome; announcing it as a failure
+        // was false because the newer request may already be playing.
     }
 
     private void OnPlaybackStateChanged(PlayerStateChangedEventArgs e)
@@ -337,6 +352,7 @@ public partial class WinFormsShell
         var current = _browse.CurrentSavedPlaylistPage;
         if (current is null || current.Playlist.Id != playlist.Id) return;
         var previousSongCount = _favoriteSongs.Count;
+        var focusNewSong = FavoriteSongs.ContainsFocus || SavedPlaylistLoadMore.Focused;
         _savedSongsLoading = true;
         try
         {
@@ -347,7 +363,7 @@ public partial class WinFormsShell
             if (result.Succeeded)
             {
                 RenderSaved(result.Snapshot, result.Message, AnnouncementKind.Success, append: true);
-                FocusFirstAppendedSong(FavoriteSongs, previousSongCount, SelectedSongIds(FavoriteSongs));
+                FocusFirstAppendedSong(FavoriteSongs, previousSongCount, SelectedSongIds(FavoriteSongs), focusNewSong);
             }
             else
             {
@@ -428,7 +444,7 @@ public partial class WinFormsShell
             using var dialog = new OpenFileDialog
             {
                 Title = "添加本地音频到本地歌曲",
-                Filter = "音频文件|*.mp3;*.flac;*.ape;*.m4a;*.wav;*.ogg|所有文件|*.*",
+                Filter = "音频文件|*.mp3;*.flac;*.ape;*.m4a;*.wav;*.ogg;*.opus;*.aac;*.wma|所有文件|*.*",
                 Multiselect = true
             };
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
@@ -448,7 +464,7 @@ public partial class WinFormsShell
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
             var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                ".mp3", ".flac", ".ape", ".m4a", ".wav", ".ogg"
+                ".mp3", ".flac", ".ape", ".m4a", ".wav", ".ogg", ".opus", ".aac", ".wma"
             };
             var paths = Directory.EnumerateFiles(dialog.SelectedPath, "*", SearchOption.AllDirectories)
                 .Where(path => extensions.Contains(Path.GetExtension(path)))
@@ -483,7 +499,7 @@ public partial class WinFormsShell
         if (paths is null) throw new ArgumentNullException(nameof(paths));
         var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            ".mp3", ".flac", ".ape", ".m4a", ".wav", ".ogg"
+            ".mp3", ".flac", ".ape", ".m4a", ".wav", ".ogg", ".opus", ".aac", ".wma"
         };
         var songs = new List<MusicInfo>();
         skippedCount = 0;
@@ -575,6 +591,7 @@ public partial class WinFormsShell
         if (playlist is null || _categorySongsLoading || (append && !CategorySongsLoadMore.Enabled)) return;
         var requestedPage = Math.Max(1, page);
         var previousSongCount = append ? _categorySongs.Count : -1;
+        var focusNewSong = CategorySongs.ContainsFocus || CategorySongsLoadMore.Focused;
         _categorySongsLoading = true;
         if (!append) UpdateLoadMore(CategorySongsLoadMore, CategorySongs, false);
         try
@@ -588,7 +605,7 @@ public partial class WinFormsShell
                 WinFormsUi.FillSongs(CategorySongs, _categorySongs);
                 RestoreSelection(CategorySongs, _categorySongs, selected);
                 UpdateLoadMore(CategorySongsLoadMore, CategorySongs, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, _categorySongs.Count), LoadMoreCategorySongsAsync);
-                if (append) FocusFirstAppendedSong(CategorySongs, previousSongCount, SelectedSongIds(CategorySongs));
+                if (append) FocusFirstAppendedSong(CategorySongs, previousSongCount, SelectedSongIds(CategorySongs), focusNewSong);
                 SetBrowseStatus(result.Message);
                 if (!append && ContainsFocus) CategorySongs.Focus();
             }
@@ -691,11 +708,14 @@ public partial class WinFormsShell
     private static void FocusFirstAppendedSong(
         ListBox list,
         int previousSongCount,
-        IReadOnlyList<string>? preservedSongIds = null)
+        IReadOnlyList<string>? preservedSongIds = null,
+        bool focusList = true)
     {
         if (previousSongCount < 0 || previousSongCount >= list.Items.Count) return;
         var index = previousSongCount;
-        if (!list.IsDisposed && list.CanFocus) list.Focus();
+        // Callers only pass true when the list or its explicit load-more command still owns focus;
+        // a background page that finishes after the user moved away must not steal it back.
+        if (focusList && !list.IsDisposed && list.CanFocus) list.Focus();
         if (preservedSongIds is not null && preservedSongIds.Count == 0)
             WinFormsUi.SelectOnly(list, index);
         else
@@ -784,6 +804,7 @@ public partial class WinFormsShell
         if (ranking is null || _rankingSongsLoading || (append && !RankingSongsLoadMore.Enabled)) return;
         var requestedPage = Math.Max(1, page);
         var previousSongCount = append ? _rankingSongs.Count : -1;
+        var focusNewSong = RankingSongs.ContainsFocus || RankingSongsLoadMore.Focused;
         _rankingSongsLoading = true;
         if (!append) UpdateLoadMore(RankingSongsLoadMore, RankingSongs, false);
         try
@@ -797,7 +818,7 @@ public partial class WinFormsShell
                 WinFormsUi.FillSongs(RankingSongs, _rankingSongs);
                 RestoreSelection(RankingSongs, _rankingSongs, selected);
                 UpdateLoadMore(RankingSongsLoadMore, RankingSongs, HasMore(result.Value.HasMore, result.Value.Items.Count, result.Value.TotalItems, _rankingSongs.Count), LoadMoreRankingSongsAsync);
-                if (append) FocusFirstAppendedSong(RankingSongs, previousSongCount, SelectedSongIds(RankingSongs));
+                if (append) FocusFirstAppendedSong(RankingSongs, previousSongCount, SelectedSongIds(RankingSongs), focusNewSong);
                 SetBrowseStatus(result.Message);
             }
             else SetBrowseStatus(result.Message);
@@ -853,6 +874,8 @@ public partial class WinFormsShell
         }
         else
         {
+            // ReplayAsync resumes a pause and restarts a stopped/ended song; ResumeAsync alone did
+            // nothing after Stop or a completed queue while the shell still announced success.
             _ = ResumePlaybackAsync();
         }
     }
@@ -862,8 +885,24 @@ public partial class WinFormsShell
         try
         {
             if (_services.Playback is null) return;
-            await _services.Playback.ResumeAsync();
-            Announce("恢复播放", "playback-state", AnnouncementKind.Success);
+            if (_services.Playback.IsPaused)
+            {
+                await _services.Playback.ResumeAsync();
+                Announce("恢复播放", "playback-state", AnnouncementKind.Success);
+                return;
+            }
+
+            var result = await _services.Playback.ReplayAsync();
+            if (result.Status == PlaybackResultStatus.Playing)
+            {
+                Announce("重新播放当前歌曲", "playback-state", AnnouncementKind.Success);
+                return;
+            }
+
+            Announce(result.Message, "playback-state",
+                result.Status == PlaybackResultStatus.Superseded
+                    ? AnnouncementKind.Status
+                    : AnnouncementKind.Error);
         }
         catch (Exception exception)
         {
@@ -910,6 +949,8 @@ public partial class WinFormsShell
         if (_services.Audio is null) return;
         var volume = Math.Max(0.0, Math.Min(1.0, _services.Audio.Volume + delta));
         _services.Audio.SetVolume(volume);
+        var edit = _services.Settings?.Edit(settings => settings.DefaultVolume = volume);
+        if (edit is not null) _ = SaveSettingsAsync(edit);
         // The changed loudness is audible; announcing every step competes with the music and the reader.
         Announce($"音量 {volume:0%}", "volume", AnnouncementKind.Status);
     }
@@ -918,7 +959,8 @@ public partial class WinFormsShell
     {
         if (_services.Audio is null) return;
         var name = direction < 0 ? _services.Audio.SwitchToPreviousOutputDevice() : _services.Audio.SwitchToNextOutputDevice();
-        Announce(string.IsNullOrWhiteSpace(name) ? "没有更多播放设备" : $"播放设备：{name}", "audio-device");
+        if (string.IsNullOrWhiteSpace(name)) return;
+        Announce($"播放设备：{name}", "audio-device");
     }
 
     private void TogglePlayMode()
@@ -991,7 +1033,9 @@ public partial class WinFormsShell
     {
         if (e.Control || e.Shift || e.Alt || e.KeyCode != Keys.Space) return false;
         e.Handled = true;
-        if (_services.Playback?.CurrentMusic is not null)
+        // Only an active or paused stream owns Space. After Stop/queue end the focused row wins,
+        // otherwise Space looked up CurrentMusic and silently did nothing.
+        if (_services.Playback is { } playback && (playback.IsPlaying || playback.IsPaused))
         {
             TogglePlayback();
             return true;
@@ -1225,12 +1269,13 @@ public partial class WinFormsShell
     {
         if (_services.Downloads is null || songs.Count == 0) return;
         var quality = _services.Settings?.Current.Settings.DefaultDownloadQuality ?? "128k";
-        var result = await _services.Downloads.DownloadListAsync(new DownloadListRequest(
+        // DownloadWorkflow owns the batch busy/terminal announcements; repeating them here would
+        // speak the same outcome twice and could override an error with a success kind.
+        await _services.Downloads.DownloadListAsync(new DownloadListRequest(
             songs,
             MainTabs.SelectedTab?.Text ?? "歌曲",
             quality,
             Subdirectory: subdirectory));
-        Announce(result.Message, "download-list:" + result.Requested, AnnouncementKind.Success);
     }
 
     private bool _albumDownloadLoading;
@@ -1291,12 +1336,11 @@ public partial class WinFormsShell
     {
         if (_services.Downloads is null || songs.Count == 0) return;
         var quality = _services.Settings?.Current.Settings.DefaultDownloadQuality ?? "128k";
-        var result = await _services.Downloads.DownloadListAsync(new DownloadListRequest(
+        await _services.Downloads.DownloadListAsync(new DownloadListRequest(
             songs,
             string.IsNullOrWhiteSpace(subdirectory) ? "歌曲" : subdirectory,
             quality,
             Subdirectory: subdirectory));
-        Announce(result.Message, "album-download:" + result.Requested, AnnouncementKind.Success);
     }
 
     private sealed class QualityMenuChoice
@@ -1455,13 +1499,17 @@ public partial class WinFormsShell
             var result = await _services.Playback.PlayAsync(new PlaybackRequest(
                 [song], song, playbackQuality, origin, ForceResolve: true));
             if (result.Status is PlaybackResultStatus.Playing or PlaybackResultStatus.QueueCompleted)
+            {
                 _currentPlaybackQuality = playbackQuality;
-            Announce(
-                result.Status == PlaybackResultStatus.Playing
-                    ? $"正在按{QualityCatalog.Label(quality)}播放：{song.Title}"
-                    : "所选音质播放失败",
-                "play-quality:" + song.Source + ":" + song.Id,
-                result.Status == PlaybackResultStatus.Playing ? AnnouncementKind.Success : AnnouncementKind.Error);
+                Announce(
+                    $"正在按{QualityCatalog.Label(quality)}播放：{song.Title}",
+                    "play-quality:" + song.Source + ":" + song.Id,
+                    AnnouncementKind.Success);
+            }
+            else if (result.Status == PlaybackResultStatus.Failed)
+            {
+                Announce("所选音质播放失败", "play-quality:" + song.Source + ":" + song.Id, AnnouncementKind.Error);
+            }
         }
         catch (Exception exception)
         {
@@ -1540,7 +1588,7 @@ public partial class WinFormsShell
 
     private void OpenLocalFile()
     {
-        using var dialog = new OpenFileDialog { Filter = "音频文件|*.mp3;*.flac;*.ape;*.m4a;*.wav;*.ogg|所有文件|*.*", Multiselect = true, Title = "打开本地音频" };
+        using var dialog = new OpenFileDialog { Filter = "音频文件|*.mp3;*.flac;*.ape;*.m4a;*.wav;*.ogg;*.opus;*.aac;*.wma|所有文件|*.*", Multiselect = true, Title = "打开本地音频" };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         foreach (var path in dialog.FileNames)
         {
@@ -1753,7 +1801,7 @@ public partial class WinFormsShell
         if (keyData == (Keys.Alt | Keys.M)) { SelectTab(0); SearchSource.Focus(); return true; }
         if (keyData == (Keys.Alt | Keys.C)) { SelectTab(2); return true; }
         if (keyData == (Keys.Alt | Keys.P)) { SelectTab(1); return true; }
-        if (keyData == (Keys.Alt | Keys.S)) { SelectTab(MainTabs.SelectedIndex == 2 ? 2 : 3); (MainTabs.SelectedIndex == 2 ? (Control)CategorySongs : RankingSongs).Focus(); return true; }
+        if (keyData == (Keys.Alt | Keys.S)) { CurrentSongList()?.Focus(); return true; }
         if (keyData == (Keys.Alt | Keys.R)) { SelectTab(3); RankingList.Focus(); return true; }
         if (keyData == (Keys.Control | Keys.Up))
         {

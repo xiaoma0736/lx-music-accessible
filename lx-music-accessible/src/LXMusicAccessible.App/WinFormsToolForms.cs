@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -1155,10 +1155,15 @@ public class PlaylistImportForm : Form
             _status.Text = $"正在导入 {_remotePlaylists.Count} 个歌单，请稍候。";
             Announce(_status.Text, "playlist-import", AnnouncementKind.Busy);
             var results = await _service.ImportPlaylistsAsync(_platform, _remotePlaylists, message => { _status.Text = message; Announce(message, "playlist-import", AnnouncementKind.Busy); });
-            var imported = results.Sum(result => result.ImportedCount);
-            var skipped = results.Sum(result => result.SkippedCount);
-            _status.Text = $"批量导入完成：{results.Count} 个歌单，新增 {imported}，跳过 {skipped}。";
-            Announce(_status.Text, "playlist-import", AnnouncementKind.Success);
+            var imported = results.Where(result => result.Succeeded).Sum(result => result.ImportedCount);
+            var skipped = results.Where(result => result.Succeeded).Sum(result => result.SkippedCount);
+            var failed = results.Count(result => !result.Succeeded);
+            var pending = Math.Max(0, _remotePlaylists.Count - results.Count);
+            _status.Text = $"批量导入结束：成功 {results.Count - failed} 个歌单，新增 {imported}，跳过 {skipped}"
+                + (failed > 0 ? $"，失败 {failed}" : string.Empty)
+                + (pending > 0 ? $"，未开始 {pending}" : string.Empty) + "。";
+            Announce(_status.Text, "playlist-import",
+                failed > 0 || pending > 0 ? AnnouncementKind.Error : AnnouncementKind.Success);
         }
         catch (Exception ex) { WinFormsUi.Error(this, ex, "导入全部歌单"); }
         finally { EndBusy(); }
@@ -1208,6 +1213,7 @@ public class LyricsForm : Form
     private readonly LyricsTextBox _text = new() { Multiline = true, ReadOnly = true, ScrollBars = RichTextBoxScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window, TabIndex = 1 };
     private readonly Label _title = new() { Text = "暂无歌词", AutoSize = true, TabStop = false, Dock = DockStyle.Top, Name = "LyricsSongInfo" };
     private readonly Button _copy = new() { Text = "复制歌词", Dock = DockStyle.Bottom };
+    private EventHandler<LyricsState>? _lyricsStateChanged;
     private string _rendered = string.Empty;
 
     public LyricsForm(IAccessibleAnnouncer announcer, LyricsWorkflow lyrics, Func<KeyEventArgs, bool> handleHotkey)
@@ -1229,7 +1235,20 @@ public class LyricsForm : Form
             Clipboard.SetDataObject(_text.Text.Length == 0 ? string.Empty : _text.Text, true, 5, 100);
             Announce("歌词已复制", "lyrics", AnnouncementKind.Success);
         };
-        if (lyrics is not null) lyrics.StateChanged += (_, state) => BeginInvoke(() => Render(state));
+        if (lyrics is not null)
+        {
+            _lyricsStateChanged = (_, state) =>
+            {
+                if (IsDisposed || Disposing || !IsHandleCreated) return;
+                try { BeginInvoke(() => { if (!IsDisposed && !Disposing) Render(state); }); }
+                catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException)
+                {
+                    // The viewer was closed while a background lyric update was in flight.
+                }
+            };
+            lyrics.StateChanged += _lyricsStateChanged;
+            FormClosed += (_, _) => lyrics.StateChanged -= _lyricsStateChanged;
+        }
         Render(lyrics?.Current ?? LyricsState.Empty);
         Shown += (_, _) => _text.Focus();
     }

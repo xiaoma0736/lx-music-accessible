@@ -199,8 +199,10 @@ public class KugouPlaylistProvider : IPlaylistImportProvider
         if (playlist == null) throw new ArgumentNullException(nameof(playlist));
 
         var result = new List<MusicInfo>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         const int pageSize = 50;
-        for (var page = 1; ; page++)
+        const int maxPages = 400;
+        for (var page = 1; page <= maxPages; page++)
         {
             var body = new Dictionary<string, object>
             {
@@ -223,10 +225,19 @@ public class KugouPlaylistProvider : IPlaylistImportProvider
             if (!data.TryGetProperty("info", out var info) || info.ValueKind != JsonValueKind.Array || info.GetArrayLength() == 0)
                 break;
 
+            var added = 0;
             foreach (var s in info.EnumerateArray())
-                result.Add(MapSong(s));
+            {
+                var song = MapSong(s);
+                if (!string.IsNullOrWhiteSpace(song.Id) && seen.Add(song.Id))
+                {
+                    result.Add(song);
+                    added++;
+                }
+            }
 
             var got = info.GetArrayLength();
+            if (added == 0) break;
             int total = data.TryGetProperty("count", out var c) && c.ValueKind == JsonValueKind.Number ? c.GetInt32() : -1;
             if (got < pageSize) break;
             if (total >= 0 && result.Count >= total) break;

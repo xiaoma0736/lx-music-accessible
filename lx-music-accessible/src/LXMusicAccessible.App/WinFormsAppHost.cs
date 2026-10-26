@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -191,7 +191,9 @@ public sealed class WinFormsDesktopIntegration : IDisposable
             _activeFormBeforeHide = activeForm;
             _activeControlBeforeHide = activeForm.ActiveControl;
         }
-        _shellStateBeforeHide = _shell.WindowState;
+        _shellStateBeforeHide = _shell.WindowState == FormWindowState.Minimized
+            ? FormWindowState.Normal
+            : _shell.WindowState;
         _hiddenToolWindows = _shell.OwnedForms
             .Where(form => form.Visible && !form.IsDisposed)
             .ToList();
@@ -224,7 +226,9 @@ public sealed class WinFormsDesktopIntegration : IDisposable
 
         _shell.ShowInTaskbar = true;
         _shell.Visible = true;
-        _shell.WindowState = _shellStateBeforeHide;
+        _shell.WindowState = _shellStateBeforeHide == FormWindowState.Minimized
+            ? FormWindowState.Normal
+            : _shellStateBeforeHide;
         if (activeFormBeforeHide is { IsDisposed: false } && !ReferenceEquals(activeFormBeforeHide, _shell))
         {
             activeFormBeforeHide.Activate();
@@ -528,6 +532,8 @@ internal sealed class ProductionStartupInitializer(string dataDirectory) : IStar
         var settings = services.GetRequiredService<SettingsWorkflow>();
         globalHotkeys.HotkeyReceived += (_, id) => settings.RaiseGlobalHotkey(id);
         await settings.LoadAsync(globalHotkeys.Handle);
+        services.GetRequiredService<IAudioPlaybackControl>()
+            .SetVolume(settings.Current.Settings.DefaultVolume);
         var sources = services.GetRequiredService<IMusicSourceService>();
         await sources.InitializeScriptSourcesAsync(cancellationToken);
         _ = services.GetRequiredService<IDownloadWorkflow>();

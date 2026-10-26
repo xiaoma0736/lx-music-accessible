@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -65,7 +65,7 @@ public sealed class BatchDownloadSelectionTests
     {
         WinFormsTestRunner.RunStaAsync(async () =>
         {
-            var playback = new PlaybackSpy { IsPlaying = false, CurrentMusic = new MusicInfo { Id = "current", Source = "test", Title = "Current" } };
+            var playback = new PlaybackSpy { IsPlaying = false, IsPaused = true, CurrentMusic = new MusicInfo { Id = "current", Source = "test", Title = "Current" } };
             using var shell = CreateShell(new RecordingBatchDownloads(), playback);
             shell.Show();
             Application.DoEvents();
@@ -894,7 +894,7 @@ public sealed class BatchDownloadSelectionTests
         public int PauseCount { get; private set; }
         public int ResumeCount { get; private set; }
         public bool IsPlaying { get; set; }
-        public bool IsPaused => false;
+        public bool IsPaused { get; set; }
         public MusicInfo? CurrentMusic { get; set; }
         public PlayMode Mode { get; set; }
         public string DefaultQuality { get; set; } = "128k";

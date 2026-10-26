@@ -1,4 +1,4 @@
-﻿using LXMusicAccessible.Audio;
+using LXMusicAccessible.Audio;
 using LXMusicAccessible.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -34,6 +34,7 @@ public sealed class MusicPlayerService : IPlaybackCoordinator, IExactPlaybackCoo
     private readonly Dictionary<string, string> _precachedPaths =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _activePrecacheFiles = new(StringComparer.OrdinalIgnoreCase);
+    private string? _precacheInUse;
     private bool _playbackCacheCleanupInProgress;
 
     private PlayerState _state = PlayerState.Stopped;
@@ -877,6 +878,9 @@ catch (OperationCanceledException) when (cancellationToken.IsCancellationRequest
             return Superseded(trigger);
         }
 
+        // A new stream has replaced the old BASS handle, so the previous precache file is safe to
+        // remove even when the new track itself came from a direct URL rather than the cache.
+        ReleasePrecacheInUse(url);
         ConsumePrecache(music);
         StartPrecache(revision);
         return new PlaybackResult(
@@ -1090,7 +1094,16 @@ catch (OperationCanceledException) when (cancellationToken.IsCancellationRequest
 
     private void AudioPlayer_PlaybackCompleted(object? sender, EventArgs e)
     {
-        try { _ = AdvanceAsync(1, naturalEnd: true); }
+        try
+        {
+            _ = AdvanceAsync(1, naturalEnd: true).ContinueWith(
+                task => _logger.LogDebug(
+                    "Natural playback continuation ended: {ErrorType}",
+                    task.Exception?.GetBaseException().GetType().Name ?? "cancelled"),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+        }
         catch (ObjectDisposedException)
         {
             _logger.LogDebug("Natural playback completion arrived during shutdown");
@@ -1250,9 +1263,36 @@ catch (OperationCanceledException) when (cancellationToken.IsCancellationRequest
     private void ConsumePrecache(MusicInfo music)
     {
         string? path = null;
+        string? previous = null;
         lock (_gate)
         {
-            if (_precachedPaths.TryGetValue(MusicKey(music), out var cached)) { path = cached; _precachedPaths.Remove(MusicKey(music)); }
+            if (_precachedPaths.TryGetValue(MusicKey(music), out var cached))
+            {
+                path = cached;
+                _precachedPaths.Remove(MusicKey(music));
+                previous = _precacheInUse;
+                _precacheInUse = path;
+            }
+        }
+        // BASS keeps the media file open for the whole stream. Deleting it at playback start either
+        // fails (an untracked per-song temp leak) or truncates playback; release the previous file
+        // only after a later load has already released that stream.
+        if (previous is not null && !string.Equals(previous, path, StringComparison.OrdinalIgnoreCase))
+            DeletePrecacheFile(previous);
+    }
+
+    private void ReleasePrecacheInUse(string? keepPath = null)
+    {
+        string? path;
+        lock (_gate)
+        {
+            path = _precacheInUse;
+            if (path is not null
+                && string.Equals(path, keepPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+            _precacheInUse = null;
         }
         if (path is not null) DeletePrecacheFile(path);
     }
@@ -1300,19 +1340,70 @@ catch (OperationCanceledException) when (cancellationToken.IsCancellationRequest
             .FirstOrDefault(device => device.Index == _audioPlayer.CurrentOutputDeviceIndex)?.Name
         ?? "系统默认";
     public string? SwitchToNextOutputDevice() =>
-        SwitchOutputDevice(_audioPlayer.CurrentOutputDeviceIndex + 1);
+        SwitchRelativeOutputDevice(1);
     public string? SwitchToPreviousOutputDevice() =>
-        SwitchOutputDevice(_audioPlayer.CurrentOutputDeviceIndex - 1);
+        SwitchRelativeOutputDevice(-1);
+
+    private string? SwitchRelativeOutputDevice(int direction)
+    {
+        try
+        {
+            var indices = _audioPlayer.GetOutputDevices()
+                .Where(device => device.Index >= 0)
+                .Select(device => device.Index)
+                .Distinct()
+                .OrderBy(index => index)
+                .ToArray();
+            if (indices.Length == 0)
+            {
+                SafeAnnounce(new("没有更多播放设备", AnnouncementKind.Status, "audio-device"));
+                return null;
+            }
+
+            var current = _audioPlayer.CurrentOutputDeviceIndex;
+            var position = Array.IndexOf(indices, current);
+            var next = position < 0
+                ? (direction > 0 ? indices[0] : indices[^1])
+                : indices[(position + direction + indices.Length) % indices.Length];
+            return SwitchOutputDevice(next);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "Audio output enumeration failed: {ErrorType}",
+                exception.GetType().Name);
+            return null;
+        }
+    }
 
     public string? SwitchOutputDevice(int index)
     {
         try
         {
             var devices = _audioPlayer.GetOutputDevices();
-            var maxConcrete = devices.Count - 2;
-            if (index > maxConcrete) index = -1;
-            if (index < -1) index = maxConcrete;
-            return _audioPlayer.SwitchOutputDevice(index) ? CurrentOutputDeviceName : null;
+            if (index != -1 && !devices.Any(device => device.Index == index))
+                return null;
+            if (index < -1) index = -1;
+
+            if (_audioPlayer.SwitchOutputDevice(index))
+                return CurrentOutputDeviceName;
+
+            // The audio player has already released its failed stream. Reflect that in the shared
+            // state so the shell does not keep claiming that music is playing on a dead device.
+            PlayerStateChangedEventArgs? change = null;
+            lock (_gate)
+            {
+                if (_state is PlayerState.Playing or PlayerState.Paused or PlayerState.Loading)
+                {
+                    var oldState = _state;
+                    _state = PlayerState.Error;
+                    change = StateChange(oldState, _state, _currentMusic);
+                    change.ErrorMessage = "切换播放设备失败，播放已停止";
+                }
+            }
+            if (change is not null) RaiseStateChanged(change);
+            SafeAnnounce(new("切换播放设备失败，播放已停止", AnnouncementKind.Error, "audio-device"));
+            return null;
         }
         catch (Exception exception)
         {
@@ -1342,7 +1433,13 @@ catch (OperationCanceledException) when (cancellationToken.IsCancellationRequest
 
             string[] activeFiles;
             lock (_gate)
-                activeFiles = _precachedPaths.Values.Concat(_activePrecacheFiles).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            {
+                activeFiles = _precachedPaths.Values
+                    .Concat(_activePrecacheFiles)
+                    .Concat(_precacheInUse is null ? Array.Empty<string>() : new[] { _precacheInUse })
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
 
             foreach (var file in Directory.EnumerateFiles(_precacheDirectory, "lxmusic_pre_*.tmp"))
             {
@@ -1397,6 +1494,9 @@ catch (OperationCanceledException) when (cancellationToken.IsCancellationRequest
             _logger.LogWarning("Music player disposal timed out waiting for background work.");
         }
         if (_ownsBackgroundWork) await _backgroundWork.DisposeAsync();
+        // Release the native file stream before deleting a precached media file it may still hold.
+        if (_audioPlayer is AudioPlayer audioPlayer) audioPlayer.Unload();
+        ReleasePrecacheInUse();
         if (_ownsHttpClient) _httpClient.Dispose();
         GC.SuppressFinalize(this);
     }

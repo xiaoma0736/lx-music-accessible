@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace LXMusicAccessible.Models;
 
@@ -72,7 +72,10 @@ public class PlaylistImportResult
     public string PlaylistName { get; set; } = string.Empty;
     public int ImportedCount { get; set; }
     public int SkippedCount { get; set; }
+    public bool Succeeded { get; set; } = true;
+    public string? ErrorMessage { get; set; }
 
-    public override string ToString() =>
-        $"歌单“{PlaylistName}”导入完成，新增 {ImportedCount} 首，跳过重复 {SkippedCount} 首";
+    public override string ToString() => Succeeded
+        ? $"歌单“{PlaylistName}”导入完成，新增 {ImportedCount} 首，跳过重复 {SkippedCount} 首"
+        : $"歌单“{PlaylistName}”导入失败：{ErrorMessage ?? "未知错误"}";
 }

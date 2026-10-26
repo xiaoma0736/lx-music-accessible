@@ -221,8 +221,10 @@ public class KuwoPlaylistProvider : IPlaylistImportProvider
         if (playlist == null) throw new ArgumentNullException(nameof(playlist));
 
         var result = new List<MusicInfo>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         const int pageSize = 100;
-        for (var page = 0; ; page++)
+        const int maxPages = 200;
+        for (var page = 0; page < maxPages; page++)
         {
             var raw = await _http.GetAsync(
                 NplServerBase,
@@ -251,10 +253,19 @@ public class KuwoPlaylistProvider : IPlaylistImportProvider
             if (!resp.TryGetProperty("musiclist", out var musiclist) || musiclist.ValueKind != JsonValueKind.Array || musiclist.GetArrayLength() == 0)
                 break;
 
+            var added = 0;
             foreach (var s in musiclist.EnumerateArray())
-                result.Add(MapSong(s));
+            {
+                var song = MapSong(s);
+                if (!string.IsNullOrWhiteSpace(song.Id) && seen.Add(song.Id))
+                {
+                    result.Add(song);
+                    added++;
+                }
+            }
 
             var got = musiclist.GetArrayLength();
+            if (added == 0) break;
             int total = resp.TryGetProperty("total", out var t)
                 ? (t.ValueKind == JsonValueKind.Number ? t.GetInt32() : (int.TryParse(t.GetString(), out var n) ? n : -1))
                 : -1;

@@ -131,7 +131,12 @@ public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer, IDisposa
     private Control? _liveRegion;
     private readonly System.Windows.Forms.Timer _progressTimer = new() { Interval = 350 };
     private readonly Dictionary<string, AccessibleAnnouncement> _pendingProgress = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _terminal = new(StringComparer.Ordinal);
+    // A terminal duplicate can arrive through two paths (workflow + window). Suppress only the
+    // same outcome within a short window; a fixed ActivityId must remain usable for the next
+    // command and the dictionary is bounded so a long session cannot grow it forever.
+    private readonly Dictionary<string, TerminalAnnouncement> _terminal = new(StringComparer.Ordinal);
+    private const long TerminalDedupeWindowMs = 1500;
+    private const int MaxTerminalEntries = 512;
 
     public WinFormsAccessibleAnnouncer(
         IEnumerable<ITtsService> speech,
@@ -160,7 +165,11 @@ public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer, IDisposa
         if (string.IsNullOrWhiteSpace(announcement.Text) || _liveRegion is null || _liveRegion.IsDisposed) return;
         if (_liveRegion.InvokeRequired)
         {
-            _liveRegion.BeginInvoke(() => Announce(announcement));
+            try { _liveRegion.BeginInvoke(() => Announce(announcement)); }
+            catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException)
+            {
+                // The window handle went away while this background announcement was in flight.
+            }
             return;
         }
         if (announcement.Kind == AnnouncementKind.Progress)
@@ -170,12 +179,31 @@ public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer, IDisposa
             _progressTimer.Start();
             return;
         }
-        if (!string.IsNullOrEmpty(announcement.ActivityId) && announcement.Kind is AnnouncementKind.Busy or AnnouncementKind.Progress)
-            _terminal.Remove(announcement.ActivityId);
-        if (announcement.Kind is AnnouncementKind.Success or AnnouncementKind.Error && !string.IsNullOrEmpty(announcement.ActivityId))
+        if (!string.IsNullOrEmpty(announcement.ActivityId))
         {
-            _pendingProgress.Remove(announcement.ActivityId);
-            if (!_terminal.Add(announcement.ActivityId)) return;
+            if (announcement.Kind is AnnouncementKind.Success or AnnouncementKind.Error)
+            {
+                _pendingProgress.Remove(announcement.ActivityId);
+                var now = NowMilliseconds();
+                if (_terminal.TryGetValue(announcement.ActivityId, out var previous)
+                    && previous.Kind == announcement.Kind
+                    && string.Equals(previous.Text, announcement.Text, StringComparison.Ordinal)
+                    && now - previous.Tick < TerminalDedupeWindowMs)
+                {
+                    return;
+                }
+
+                _terminal[announcement.ActivityId] = new TerminalAnnouncement(
+                    announcement.Kind,
+                    announcement.Text,
+                    now);
+                PruneTerminalEntries();
+            }
+            else
+            {
+                // A new attempt or an intervening status makes the next terminal outcome new again.
+                _terminal.Remove(announcement.ActivityId);
+            }
         }
         Deliver(announcement);
     }
@@ -192,6 +220,26 @@ public sealed class WinFormsAccessibleAnnouncer : IAccessibleAnnouncer, IDisposa
         _speech?.IsAvailable == true
         && (SpeechEnabled || announcement.Speech == AnnouncementSpeech.Always)
         && AccessibleSpeechPolicy.ShouldSpeak(announcement, SpeechScope ?? new AccessibilitySettings());
+
+    private static long NowMilliseconds() =>
+        DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
+
+    private void PruneTerminalEntries()
+    {
+        if (_terminal.Count <= MaxTerminalEntries) return;
+        foreach (var pair in _terminal
+                     .OrderBy(pair => pair.Value.Tick)
+                     .Take(_terminal.Count - MaxTerminalEntries)
+                     .ToArray())
+        {
+            _terminal.Remove(pair.Key);
+        }
+    }
+
+    private readonly record struct TerminalAnnouncement(
+        AnnouncementKind Kind,
+        string Text,
+        long Tick);
 
     private async Task SpeakAsync(AccessibleAnnouncement announcement)
     {

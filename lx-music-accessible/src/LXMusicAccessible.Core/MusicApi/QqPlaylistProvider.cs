@@ -283,9 +283,12 @@ public class QqPlaylistProvider : IPlaylistImportProvider
         if (playlist == null) throw new ArgumentNullException(nameof(playlist));
 
         var result = new List<MusicInfo>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         const int pageSize = 100;
-        for (var begin = 0; ; begin += pageSize)
+        const int maxPages = 200;
+        for (var page = 0; page < maxPages; page++)
         {
+            var begin = page * pageSize;
             var payload = new
             {
                 comm = new { cv = 1602, ct = 24, uin = 0L },
@@ -318,10 +321,19 @@ public class QqPlaylistProvider : IPlaylistImportProvider
             if (!data.TryGetProperty("songlist", out var songlist) || songlist.ValueKind != JsonValueKind.Array || songlist.GetArrayLength() == 0)
                 break;
 
+            var added = 0;
             foreach (var s in songlist.EnumerateArray())
-                result.Add(MapSong(s));
+            {
+                var song = MapSong(s);
+                if (!string.IsNullOrWhiteSpace(song.Id) && seen.Add(song.Id))
+                {
+                    result.Add(song);
+                    added++;
+                }
+            }
 
             var got = songlist.GetArrayLength();
+            if (added == 0) break;
             int total = -1;
             if (data.TryGetProperty("total_song_num", out var tn) && tn.ValueKind == JsonValueKind.Number)
                 total = tn.GetInt32();

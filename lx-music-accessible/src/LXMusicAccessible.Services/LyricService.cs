@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using LXMusicAccessible.Models;
 using System.Collections.Concurrent;
 
@@ -13,8 +13,9 @@ public class LyricService : ILyricService
     private readonly IMusicSourceService _musicSource;
     private static readonly string[] SearchOrder = { "netease", "qq", "kg", "kw", "migu" };
     private readonly ConcurrentDictionary<string, LyricResult> _cache = new();
-    // ConcurrentDictionary 不允许 null 值，未命中（已搜索无果）单独用标记集记录，避免同一首歌反复搜索
-    private readonly ConcurrentDictionary<string, byte> _missed = new();
+    // ConcurrentDictionary 不允许 null 值；未命中单独记录并带 TTL，网络故障不能永久禁用该歌曲的歌词。
+    private readonly ConcurrentDictionary<string, long> _missed = new();
+    private static readonly long MissRetryIntervalMs = (long)TimeSpan.FromMinutes(5).TotalMilliseconds;
     public LyricService(ILogger<LyricService> logger, IMusicSourceService musicSource)
     {
         _logger = logger;
@@ -33,8 +34,11 @@ public class LyricService : ILyricService
         var key = $"{music.Source}:{music.Id}";
         if (_cache.TryGetValue(key, out var cached))
             return cached;
-        if (_missed.ContainsKey(key))
-            return null;
+        if (_missed.TryGetValue(key, out var retryAt))
+        {
+            if (FrameworkCompatibility.CurrentTickMs < retryAt) return null;
+            _missed.TryRemove(key, out _);
+        }
 
         _logger.LogInformation("获取歌词: {Title} - {Artist} [{Source}]", music.Title, music.Artist, music.Source);
 
@@ -64,7 +68,7 @@ public class LyricService : ILyricService
             _logger.LogInformation("已从其他音源 [{Source}] 搜索到歌词: {Title}", searched.SourceId, music.Title);
             return searched;
         }
-        _missed.TryAdd(key, 0);
+        _missed[key] = FrameworkCompatibility.CurrentTickMs + MissRetryIntervalMs;
         _logger.LogInformation("未能在其他音源找到歌词: {Title}", music.Title);
         return null;
     }
@@ -187,7 +191,7 @@ public class LyricService : ILyricService
             try
             {
                 var results = await _musicSource
-                    .SearchAsync(MusicSearchMatcher.BuildSearchKeyword(music), 1, 8, "song", sid)
+                    .SearchAsync(MusicSearchMatcher.BuildSearchKeyword(music), 1, 8, "song", sid, cancellationToken)
                     .WaitAsync(cancellationToken);
                 var best = MusicSearchMatcher.BestMatch(results.Items, music);
                 if (best == null) continue;

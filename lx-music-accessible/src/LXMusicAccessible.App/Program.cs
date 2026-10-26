@@ -34,6 +34,13 @@ internal static class Program
             // async pipeline yields a completed task it is safe for this STA entry point to collect it.
             exitCode = RunCoreAsync(args).GetAwaiter().GetResult();
         }
+        catch (Exception exception)
+        {
+            // A slow native shutdown or a long-lived modal warning must not escape as a Windows
+            // unhandled-exception crash after the main loop has already ended.
+            Log.Error(exception, "Fatal application pipeline failure");
+            exitCode = 1;
+        }
         finally
         {
             _exiting = true;

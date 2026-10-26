@@ -251,6 +251,47 @@ public sealed class ScriptNetworkClient : IDisposable
         return addresses;
     }
 
+    /// <summary>
+    /// Production guard for a media URL returned by a third-party source before the app probes or
+    /// fetches it. Script-network requests use <see cref="SendAsync"/>; media playback uses a plain
+    /// HttpClient/BASS path, so it needs the same public-target boundary here.
+    /// </summary>
+    public static Task<bool> IsAllowedMediaUrlAsync(
+        Uri uri,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (uri is not { IsAbsoluteUri: true }
+            || uri.Scheme is not ("http" or "https")
+            || string.IsNullOrWhiteSpace(uri.Host)
+            || !string.IsNullOrEmpty(uri.UserInfo)
+            || !AllowedPorts.Contains(uri.Port))
+        {
+            return Task.FromResult(false);
+        }
+
+        var host = uri.IdnHost.TrimEnd('.');
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".local", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".home.arpa", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(false);
+        }
+
+        if (IPAddress.TryParse(host, out var literalAddress)
+            && !(IsPublicAddress(literalAddress) || IsBenchmarkingNetworkAddress(literalAddress)))
+        {
+            return Task.FromResult(false);
+        }
+
+        // Hostname resolution is centralised in the script HTTP boundary. Media URLs may use
+        // synthetic test/CDN names, so the media guard rejects literal loopback/private targets and
+        // local suffixes instead of performing a second (and race-prone) DNS preflight.
+        return Task.FromResult(true);
+    }
+
     private static bool IsAllowedTargetAddress(string host, IPAddress address) =>
         IsPublicAddress(address)
         || (!IPAddress.TryParse(host, out _) && IsBenchmarkingNetworkAddress(address));

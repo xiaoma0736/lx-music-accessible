@@ -146,16 +146,23 @@ public class NeteasePlaylistProvider : IPlaylistImportProvider
     private async Task<List<MusicInfo>> GetLikedSongsAsync()
     {
         var ids = new List<long>();
+        var seen = new HashSet<long>();
         const int limit = 1000;
-        for (var offset = 0; ; offset += limit)
+        const int maxPages = 20;
+        for (var page = 0; page < maxPages; page++)
         {
+            var offset = page * limit;
             var resp = await _http.PostWeapiAsync<NeteaseLikeGetResp>(
                 $"{WeapiBaseUrl}/song/like/get",
                 new { uid = long.Parse(_uid), limit, offset }, DefaultHeaders);
             var batch = resp?.Ids;
             if (batch == null || batch.Count == 0) break;
-            ids.AddRange(batch);
-            if (batch.Count < limit) break;
+            var added = 0;
+            foreach (var id in batch)
+            {
+                if (seen.Add(id)) { ids.Add(id); added++; }
+            }
+            if (added == 0 || batch.Count < limit) break;
         }
         return await ResolveSongsByIdsAsync(ids);
     }

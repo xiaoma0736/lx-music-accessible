@@ -486,7 +486,12 @@ public class NeteaseMusicService : IMusicApi
             var m = System.Text.RegularExpressions.Regex.Match(line.Trim(), @"^\[(\d{2}):(\d{2})(?:\.(\d+))?\](.*)");
             if (m.Success)
             {
-                var idx = int.Parse(m.Groups[1].Value) * 60000 + int.Parse(m.Groups[2].Value) * 1000;
+                var ms = m.Groups[3].Success
+                    ? int.Parse(m.Groups[3].Value.PadRight(3, '0')[..3])
+                    : 0;
+                var idx = int.Parse(m.Groups[1].Value) * 60000
+                    + int.Parse(m.Groups[2].Value) * 1000
+                    + ms;
                 map[idx] = m.Groups[4].Value.Trim();
             }
         }

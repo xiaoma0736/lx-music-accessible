@@ -256,17 +256,19 @@ public sealed class DeclaredQualityDownloadTests : IDisposable
         var task = await Workflow.DownloadAsync(new(Song("manual"), "128k", Target));
         Assert.True(File.Exists(task.SavePath), "audio missing");
         Assert.True(File.Exists(task.LyricPath), "lyric missing");
-        var oldAudio = await Task.Run(() => File.ReadAllText(task.SavePath!));
-        var oldLyric = await Task.Run(() => File.ReadAllText(task.LyricPath!));
+        var oldAudioPath = task.SavePath!;
+        var oldLyricPath = task.LyricPath!;
+        Assert.Equal("old-audio", await Task.Run(() => File.ReadAllText(oldAudioPath)));
+        Assert.False(string.IsNullOrWhiteSpace(await Task.Run(() => File.ReadAllText(oldLyricPath))));
 
-        task.SavePath = Path.Combine(Target, "locked-audio.mp3") + Path.DirectorySeparatorChar;
-        task.LyricPath = Path.Combine(Target, "locked-lrc.lrc") + Path.DirectorySeparatorChar;
         Http.Responses[url] = new(HttpStatusCode.OK) { Content = new ByteArrayContent("new-audio"u8.ToArray()) };
         Assert.True(await Workflow.RedownloadAsync(task));
 
         Assert.Equal(DownloadTaskStatus.Completed, task.Status);
-        Assert.True(File.Exists(task.SavePath));
-        Assert.True(File.Exists(task.LyricPath));
+        Assert.Equal(oldAudioPath, task.SavePath);
+        Assert.Equal(oldLyricPath, task.LyricPath);
+        Assert.Equal("new-audio", File.ReadAllText(task.SavePath));
+        Assert.Single(Directory.EnumerateFiles(Target, "*.mp3"));
         Assert.DoesNotContain(Directory.EnumerateFiles(Target, "*", SearchOption.AllDirectories), path => path.EndsWith(".download", StringComparison.OrdinalIgnoreCase));
     }
     [Fact]

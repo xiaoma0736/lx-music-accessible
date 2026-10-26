@@ -246,13 +246,37 @@ public class PlaylistImportService : IPlaylistImportService
         var results = new List<PlaylistImportResult>(remotes.Count);
         foreach (var remote in remotes)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var result = await ImportPlaylistAsync(
-                platformId,
-                remote,
-                announce,
-                cancellationToken);
-            results.Add(result);
+            if (cancellationToken.IsCancellationRequested) break;
+            try
+            {
+                var result = await ImportPlaylistAsync(
+                    platformId,
+                    remote,
+                    announce,
+                    cancellationToken);
+                results.Add(result);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // The caller asked to stop: return what already committed instead of discarding it.
+                break;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    "Playlist import failed for {Platform}/{RemoteId}: {ErrorType}",
+                    platformId,
+                    remote?.RemoteId,
+                    exception.GetType().Name);
+                results.Add(new PlaylistImportResult
+                {
+                    PlaylistName = remote?.Name ?? string.Empty,
+                    Succeeded = false,
+                    ErrorMessage = exception is InvalidOperationException
+                        ? exception.Message
+                        : "导入失败：" + exception.GetType().Name
+                });
+            }
         }
         return results;
     }

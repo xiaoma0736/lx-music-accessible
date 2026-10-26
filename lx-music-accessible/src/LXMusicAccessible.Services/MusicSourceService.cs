@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using LXMusicAccessible.Models;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Data;
@@ -56,6 +56,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
 
     // ============ 搜索会话（全局去重 + 持续累积“加载更多”） ============
     private readonly Dictionary<string, SearchSession> _searchSessions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _searchSessionsGate = new();
     private long _searchSessionSeq;
     private const int MaxSearchSessions = 3;      // 最多保留的会话数（超出淘汰最旧）
     private const int MaxSearchFetchRounds = 8;   // 单次调用最多抓取轮数（防极端重复）
@@ -282,6 +283,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         source.Type = SourceType.Network;
         source.TrustState = preservedTrustState;
         source.IsEnabled = preservedEnabled;
+        if (!preservedEnabled) source.IsDefault = false;
         source.LastUpdateDate = DateTime.Now;
         if (existing is null) _sources.Add(source);
 
@@ -384,36 +386,40 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         catch (Exception ex) { _logger.LogError(ex, "音源 [{SourceId}] 搜索失败", sourceId); return PagedResult<MusicInfo>.Empty(page, pageSize); }
     }
 
-    /// <summary>跨源去重键：专辑 + 歌手 + 时长（规范化后）</summary>
+    /// <summary>跨源去重键：标题 + 专辑 + 歌手 + 时长（规范化后，忽略大小写）</summary>
     private static string BuildSearchDedupKey(MusicInfo m)
     {
+        var title = string.IsNullOrWhiteSpace(m.Title) ? "" : m.Title.Trim();
         var album = string.IsNullOrWhiteSpace(m.Album) ? "" : m.Album.Trim();
         var artist = string.IsNullOrWhiteSpace(m.Artist) ? "" : m.Artist.Trim();
         var duration = m.Duration ?? "";
-        return $"{album}||{artist}||{duration}";
+        return $"{title}||{album}||{artist}||{duration}";
     }
     /// <summary>获取（或创建）搜索会话：键变化时新建，超出上限淘汰最旧</summary>
     private SearchSession GetOrCreateSearchSession(string query, string searchType, string sourceId)
     {
         var key = BuildSearchSessionKey(query, searchType, sourceId);
-        if (_searchSessions.TryGetValue(key, out var existing))
-            return existing;
-
-        var session = new SearchSession { Key = key, Sequence = ++_searchSessionSeq };
-        _searchSessions[key] = session;
-
-        // 超出上限：淘汰除当前外序列号最小的会话
-        if (_searchSessions.Count > MaxSearchSessions)
+        lock (_searchSessionsGate)
         {
-            var oldestKey = _searchSessions
-                .Where(kv => !string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(kv => kv.Value.Sequence)
-                .Select(kv => kv.Key)
-                .FirstOrDefault();
-            if (oldestKey != null)
-                _searchSessions.Remove(oldestKey);
+            if (_searchSessions.TryGetValue(key, out var existing))
+                return existing;
+
+            var session = new SearchSession { Key = key, Sequence = ++_searchSessionSeq };
+            _searchSessions[key] = session;
+
+            // 超出上限：淘汰除当前外序列号最小的会话
+            if (_searchSessions.Count > MaxSearchSessions)
+            {
+                var oldestKey = _searchSessions
+                    .Where(kv => !string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(kv => kv.Value.Sequence)
+                    .Select(kv => kv.Key)
+                    .FirstOrDefault();
+                if (oldestKey != null)
+                    _searchSessions.Remove(oldestKey);
+            }
+            return session;
         }
-        return session;
     }
 
     private static string BuildSearchSessionKey(string query, string searchType, string sourceId)
@@ -849,6 +855,9 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         if (string.IsNullOrWhiteSpace(url)) return false;
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != "http" && uri.Scheme != "https"))
             return false;
+        // A third-party source can return any URL. Reject loopback/private/metadata targets before
+        // the plain probe HttpClient gets a chance to issue the Range request.
+        if (!await ScriptNetworkClient.IsAllowedMediaUrlAsync(uri, cancellationToken)) return false;
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -1552,7 +1561,10 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         return true;
     }
 
-    private void ClearCache() { _searchSessions.Clear(); }
+    private void ClearCache()
+    {
+        lock (_searchSessionsGate) _searchSessions.Clear();
+    }
     public async Task<bool> UpdateSourceAsync(MusicSource s)
     {
         var previousUpdateDate = s.LastUpdateDate;
@@ -1619,6 +1631,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         source.Type = SourceType.Network;
         source.TrustState = preservedTrust ? source.TrustState : ScriptTrustState.Untrusted;
         source.IsEnabled = preservedTrust && source.IsEnabled;
+        if (!source.IsEnabled) source.IsDefault = false;
         source.LastUpdateDate = DateTime.Now;
 
         try

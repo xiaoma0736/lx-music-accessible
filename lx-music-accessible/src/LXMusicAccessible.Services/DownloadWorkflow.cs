@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Net;
@@ -818,7 +818,9 @@ catch (Exception exception)
                         announce,
                         activityId,
                         operation,
-                        context.CancellationToken);
+                        context.CancellationToken,
+                        replaceAudioPath,
+                        replaceLyricPath);
                 }
                 catch (OperationCanceledException) when (
                     context.CancellationToken.IsCancellationRequested
@@ -1563,47 +1565,76 @@ catch (Exception exception)
     private sealed class DownloadOperation : IDisposable
     {
         private readonly CancellationTokenSource _cancellation = new();
-        private readonly TaskCompletionSource<object?> _resume = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private volatile bool _paused;
+        private readonly object _pauseGate = new();
+        private TaskCompletionSource<object?>? _resume;
+        private bool _paused;
         private bool _disposed;
 
         public CancellationToken Token => _cancellation.Token;
 
         public void Cancel()
         {
-            if (_disposed) return;
-            _paused = false;
-            _resume.TrySetResult(null);
+            TaskCompletionSource<object?>? resume;
+            lock (_pauseGate)
+            {
+                if (_disposed) return;
+                _paused = false;
+                resume = _resume;
+                _resume = null;
+            }
+            resume?.TrySetResult(null);
             _cancellation.Cancel();
         }
 
         public bool Pause()
         {
-            if (_disposed || _paused) return false;
-            _paused = true;
-            return true;
+            lock (_pauseGate)
+            {
+                if (_disposed || _paused) return false;
+                _paused = true;
+                _resume = new TaskCompletionSource<object?>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                return true;
+            }
         }
 
         public bool Resume()
         {
-            if (_disposed || !_paused) return false;
-            _paused = false;
-            _resume.TrySetResult(null);
+            TaskCompletionSource<object?>? resume;
+            lock (_pauseGate)
+            {
+                if (_disposed || !_paused) return false;
+                _paused = false;
+                resume = _resume;
+                _resume = null;
+            }
+            resume?.TrySetResult(null);
             return true;
         }
 
         public async Task WaitIfPausedAsync(CancellationToken cancellationToken)
         {
-            if (!_paused) return;
-            using var registration = cancellationToken.Register(() => _resume.TrySetCanceled(cancellationToken));
-            await _resume.Task;
+            Task? wait;
+            lock (_pauseGate)
+            {
+                if (!_paused || _disposed) return;
+                wait = _resume!.Task;
+            }
+            await wait.WaitAsync(cancellationToken);
         }
 
         public void Dispose()
         {
-            if (_disposed) return;
-            _disposed = true;
-            _resume.TrySetResult(null);
+            TaskCompletionSource<object?>? resume;
+            lock (_pauseGate)
+            {
+                if (_disposed) return;
+                _disposed = true;
+                _paused = false;
+                resume = _resume;
+                _resume = null;
+            }
+            resume?.TrySetResult(null);
             _cancellation.Dispose();
         }
     }
@@ -1614,13 +1645,33 @@ catch (Exception exception)
     {
         if (_disposed) return;
         _disposed = true;
-        var slots = _tasks.Select(DownloadSlot).Distinct(StringComparer.Ordinal).ToArray();
+        var slots = _tasks.Select(DownloadSlot)
+            .Concat(new[] { "download.list" })
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
         foreach (var slot in slots) _backgroundWork.Cancel(slot);
-        foreach (var slot in slots) await _backgroundWork.WaitAsync(slot);
+        var timedOut = false;
+        using (var waitTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            foreach (var slot in slots)
+            {
+                try
+                {
+                    await _backgroundWork.WaitAsync(slot, waitTimeout.Token);
+                }
+                catch (OperationCanceledException) when (waitTimeout.IsCancellationRequested)
+                {
+                    timedOut = true;
+                    _logger.LogWarning("Download disposal timed out waiting for {Slot}.", slot);
+                    break;
+                }
+            }
+        }
+
         string[] temporaryFiles;
         lock (_gate) temporaryFiles = _externalTemporaryFiles.ToArray();
         foreach (var file in temporaryFiles) DeleteExternalTemporaryFile(file);
-        _downloadGate.Dispose();
+        if (!timedOut) _downloadGate.Dispose();
         GC.SuppressFinalize(this);
     }
 

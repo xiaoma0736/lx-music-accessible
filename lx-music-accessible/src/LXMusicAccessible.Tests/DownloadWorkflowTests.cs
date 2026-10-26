@@ -549,7 +549,7 @@ public sealed class DownloadWorkflowTests
         public void RegisterLyric(string id) => _lyrics.Add(id);
 
         public Task<IReadOnlyList<string>> GetQualitiesAsync(
-            string source,
+            MusicInfo music,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();

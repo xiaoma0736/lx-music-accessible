@@ -21,8 +21,11 @@ public static class SqliteDatabaseBackup
             var source = new SqliteConnectionStringBuilder
             {
                 DataSource = sourceDatabase,
-                Mode = SqliteOpenMode.ReadOnly,
-                Pooling = false
+                // wal_checkpoint writes the WAL back into the main file; a ReadOnly connection makes
+                // that fail when the live app has the database open in WAL mode.
+                Mode = SqliteOpenMode.ReadWrite,
+                Pooling = false,
+                DefaultTimeout = 10
             }.ToString();
             var destination = new SqliteConnectionStringBuilder
             {

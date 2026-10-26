@@ -61,9 +61,9 @@ public class KugouMusicService : IMusicApi
                     Album = song.AlbumName ?? "",
                     Duration = song.GetDurationString(),
                     Source = "kg",
-                    CoverUrl = int.TryParse(song.AlbumId, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var albumId)
-                        ? $"https://imgcache.qq.com/music/photo/album_300/{albumId % 100}/{albumId}.jpg"
-                        : "",
+                    // Kugou album ids are not valid on the QQ CDN; an empty cover is better than a
+                    // guaranteed 404 and avoids showing another platform's image slot.
+                    CoverUrl = "",
                     Quality = 128
                 }).ToList();
 
@@ -467,9 +467,7 @@ public class KugouMusicService : IMusicApi
                             Album = "",
                             Duration = ParseKgDuration(duration),
                             Source = "kg",
-                            CoverUrl = !string.IsNullOrEmpty(albumId) && int.TryParse(albumId, out var ai)
-                                ? $"https://imgcache.qq.com/music/photo/album_300/{ai % 100}/{ai}.jpg"
-                                : "",
+                            CoverUrl = "",
                             Quality = 128
                         });
                         if (!string.IsNullOrEmpty(albumId)) albumIdByMusicId[hash] = albumId;
@@ -727,9 +725,7 @@ public class KugouMusicService : IMusicApi
                             Album = "",
                             Duration = ParseKgDuration(duration),
                             Source = "kg",
-                            CoverUrl = !string.IsNullOrEmpty(albumId) && int.TryParse(albumId, out var ai)
-                                ? $"https://imgcache.qq.com/music/photo/album_300/{ai % 100}/{ai}.jpg"
-                                : "",
+                            CoverUrl = "",
                             Quality = 128
                         });
                         if (!string.IsNullOrEmpty(albumId)) albumIdByMusicId[hash] = albumId;

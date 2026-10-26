@@ -1,4 +1,4 @@
-﻿# LX Music 无障碍版 3.0.0 发布验证记录
+# LX Music 无障碍版 3.0.0 发布验证记录
 
 **状态：3.0.0 自动化发布候选（Release Candidate）已冻结；公开发布前，真实键盘、读屏和升级人工验收仍待执行。** 本文件是 3.0.0 的正式发布验证和人工验收记录。Issue #58–#63 均已在 GitHub 上关闭，状态为 `COMPLETED`；父规范 #57 保持打开，等待根工作流收尾。
 
@@ -6,7 +6,7 @@
 
 - 产品版本：3.0.0；应用：.NET Framework 4.8 x64 原生 WinForms；发布：Windows x64。
 - #58 业务层迁移、#59 WinForms 全量宿主、#60 LX 音源兼容、#61 五平台官方歌单、#62 WinForms 无障碍与键盘、#63 数据/安装器/发布已关闭。
-- 自动化测试已覆盖上述实现区域：`Net48MigrationTests`、`WinFormsIssue59Tests`、`WinFormsAccessibilityAuditTests`、`LxScriptRuntimeCompatibilityTests`、`OfficialPlaylistProviderTests`、`MusicBrowsePagingTests`、`WinFormsPlaylistPagingTests`、`LegacyDataCompatibilityTests`、`DotNetFrameworkRequirementTests` 和 `ReleasePackagingTests`。
+- 自动化测试已覆盖上述实现区域：`Net48MigrationTests`、`WinFormsIssue59Tests`、`WinFormsAccessibilityAuditTests`、`LxScriptRuntimeCompatibilityTests`、`OfficialPlaylistProviderTests`、`MusicBrowsePagingTests`、`WinFormsPlaylistPagingTests`、`LegacyDataCompatibilityTests`、`DotNetFrameworkRequirementTests`、`ReleasePackagingTests` 和本轮的 `FinalReleaseAuditTests`。
 - 3.0 不提供应用 self-contained .NET 8 产物；安装器和应用均为 .NET Framework 4.8 x64 框架依赖程序；安装器启动时检测目标机运行时。
 
 ## 运行时、升级与安装器行为
@@ -16,7 +16,7 @@
 - 诊断写入 `%LocalAppData%\LXMusicAccessible\setup\net48-diagnostics.txt`，记录时间、`installed`、required release、当前 release 和诊断摘要。
 - 网页登录需要 Microsoft Edge WebView2 Runtime。BASS/APE/FLAC/Opus、SQLite、ClearScript V8、Prism、Tolk、保益桥接和 WebView2 Loader 的 x64 原生库随应用分发；ClearScript V8 不可用时回退 Jint。
 - 数据默认路径继续为 `%LocalAppData%\lxmusic`；目录指针 schema 为 1，默认目录所有权记录继续使用 `.lxmusic-default-owner.json`。覆盖安装保留 SQLite（schema `user_version=3`）、设置、歌单、登录凭据、快捷键和可信音源。
-- 可执行文件名为 `落雪音乐无障碍版V3.0.exe`；安装器会检测并关闭旧版 `落雪音乐无障碍版V2.0.exe`，升级后移除旧可执行文件。保留卸载会保留未知文件和用户数据；完全卸载只移除所有权清单允许的安装内容。
+- 可执行文件名为 `落雪音乐无障碍版V3.0.exe`；安装器会检测并关闭旧版 `落雪音乐无障碍版V2.0.exe`，升级后移除旧可执行文件。发行版由 Inno Setup 自身的卸载日志管理安装文件：普通卸载保留未知文件和 `%LocalAppData%\lxmusic` 用户数据，静默完全卸载移除安装目录中的已安装文件，但不会代替用户删除数据目录。应用还包含受所有权清单保护的 `/uninstall` 便携清理路径，但 Inno 安装器不生成该清单，因此 Setup 卸载不走这条路径。
 
 ## LX 音源与官方平台
 
@@ -27,13 +27,13 @@
 
 ## 3.0.0 产物
 
-SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framework-dependent-application-payload`，完整记录 86 个框架依赖应用载荷文件及以下两个发布产物；构建脚本已独立复核全部哈希。ZIP 条目时间固定为 `2000-01-01T00:00:00Z`，manifest 时间取应用项目最新提交时间；应用 `SourceRevisionId` 固定为应用项目提交，PDB 不随便携载荷分发；连续两次 clean build 已确认 ZIP、安装器和 manifest 哈希一致。
+SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framework-dependent-application-payload`，完整记录 86 个框架依赖应用载荷文件及以下两个发布产物；构建脚本已独立复核全部哈希。ZIP 条目时间固定为 `2000-01-01T00:00:00Z`，manifest 时间取应用项目最新提交时间；应用 `SourceRevisionId` 和 `SOURCE_DATE_EPOCH` 固定，CI 路径规范化，PDB 不随便携载荷分发；连续两次 clean build 已确认 ZIP、安装器和 manifest 哈希一致。
 
 | 产物 | 字节 | SHA-256 |
 | --- | ---: | --- |
-| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 21,951,643 | `6b5c5222bf232a24a5c25c29db6a416f21a4588ae6bbb3b45214d47b6934318f` |
-| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 16,892,835 | `7fdddc4fb78a1527e8da4e24f49763bc706719cc95ea28fcbd9ac075a246ad78` |
-| `release-manifest.json`（清单，不入哈希清单） | 23,319 | `69090273fd369401cdb87dd68ed59e2d0cfb083836c274ef882e1c8e0eea3fa7` |
+| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 21,951,621 | `e4888a377ae2e509d22ab56d235f6e065d6b8b35d4faf4735245a236a2e092e0` |
+| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 16,892,613 | `d061ad9b2e7a183096f088a18f34f3e1297a281f05ab2b68335d7b7ad79a367` |
+| `release-manifest.json`（清单，不入哈希清单） | 23,319 | `94b2d2705ed4638f6fb1ed0652705c9f9065660ff94fe6ac508460af57ce39` |
 
 清单运行时元数据：`version=3.0.0`、`runtime=win-x64`、`framework=net48`、`sqliteVersion=3.53.3`；冻结时间 `2026-09-28T23:50:24.0000000+00:00`（应用项目最新提交时间）。
 
@@ -45,11 +45,11 @@ SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framew
   - Restore：通过。
   - 依赖审计：High/Critical advisories 为 0。
   - Release build：通过；warnings treated as errors，未出现 warning/error。
-  - 离线测试：**executed 772，passed 772，failed 0，skipped 0**。
-  - 文本检查与 EOF newline/空行检查：通过，258 个 tracked text files；`git diff --check` 通过。
-  - 主机/异常静态检查：通过，192 个 C# source files。
-  - 发布重建/产物/SQLite/native/hash 检查：通过；应用 `SourceRevisionId` 固定为应用项目提交，PDB 不随便携载荷分发；连续两次 clean build 的 ZIP、安装器和 manifest 哈希一致。
-- 安装器 smoke 全部通过：first install 成功；upgrade 成功且 ownership ID 不变；preserving uninstall `accepted=True; failures=0; preserved=True`；complete uninstall `accepted=True; failures=0; preserved=False`；repeat uninstall `accepted=True; failures=0; preserved=False`。
+  - 离线测试：**executed 783，passed 783，failed 0，skipped 0**。
+  - 文本检查与 EOF newline/空行检查：通过，259 个 tracked text files；`git diff --check` 通过。
+  - 主机/异常静态检查：通过，193 个 C# source files。
+  - 发布重建/产物/SQLite/native/hash 检查：通过；应用 `SourceRevisionId` 和 `SOURCE_DATE_EPOCH` 固定，CI 路径规范化，PDB 不随便携载荷分发；连续两次 clean build 的 ZIP、安装器和 manifest 哈希一致。
+- 安装器 smoke 通过：first install 成功；upgrade 成功；preserving uninstall 后未知安装文件、父目录哨兵和共享用户数据均保留；另一次 complete uninstall 移除安装目录。发行版 smoke 不执行重复卸载、不覆盖应用 `/uninstall` 便携清理路径，也不删除 `%LocalAppData%\lxmusic`。
 - 验证中仅有 Git 的 CRLF working-copy 提示，非测试/构建错误；UTF-8 检查通过。没有其他警告或错误。
 
 ## 键盘与读屏自动化结论与限制

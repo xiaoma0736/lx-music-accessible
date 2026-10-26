@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using ManagedBass;
 using Microsoft.Extensions.Logging;
@@ -348,10 +348,10 @@ public class AudioPlayer : IAudioPlayer
     /// <summary>切换输出设备：播放中热切换（用 BASS_ChannelSetDevice 把现有流搬到目标设备，保留缓冲与进度，不重连/重下；默认设备用其真实索引 1），未播放时仅记录索引</summary>
     public bool SwitchOutputDevice(int index)
     {
-        var devices = GetOutputDevices();
-        var maxConcrete = devices.Count - 2; // 去掉首项"系统默认"后的最大具体设备索引
         if (index < -1) index = -1;
-        if (index > maxConcrete) index = maxConcrete;
+        var devices = GetOutputDevices();
+        if (index != -1 && !devices.Any(device => device.Index == index))
+            return false;
         if (index == _outputDeviceIndex) return true;
 
         // 未播放/未加载：仅记录索引，下次加载生效
@@ -362,6 +362,7 @@ public class AudioPlayer : IAudioPlayer
             return true;
         }
 
+        var previousIndex = _outputDeviceIndex;
         try
         {
             var targetBassIndex = BassIndexForApp(index);
@@ -394,10 +395,20 @@ public class AudioPlayer : IAudioPlayer
         }
         catch (Exception ex)
         {
-            ReleaseStream();
-            _position = TimeSpan.Zero;
-            State = AudioPlayerState.Stopped;
             Debug.WriteLine($"切换输出设备失败: {ex.Message}");
+            // Do not leave the failed device selected: otherwise every later LoadAsync tries it
+            // again and the whole player stays unusable until the user finds the device menu.
+            _outputDeviceIndex = previousIndex == -1 || devices.Any(device => device.Index == previousIndex)
+                ? previousIndex
+                : -1;
+            _initedBassDevice = int.MinValue;
+            try { EnsureBassReady(); }
+            catch (Exception restoreException)
+            {
+                _initedBassDevice = int.MinValue;
+                LogNativeFallback("device-restore", restoreException);
+            }
+            CleanupFailedDeviceSwitch();
             return false;
         }
     }
@@ -410,6 +421,9 @@ public class AudioPlayer : IAudioPlayer
         {
             cancellationToken.ThrowIfCancellationRequested();
             ReleaseStream();
+            // A previous fallback stream may have downloaded to a temp file; a new load has already
+            // released that stream, so the old temp copy must not survive another session.
+            DeleteTempFile();
             _manualStop = false;
             _position = TimeSpan.Zero;
 
@@ -603,17 +617,9 @@ public class AudioPlayer : IAudioPlayer
             try
             {
                 if (_stream == 0 || _disposed != 0) return;
-                var active = Bass.ChannelIsActive(_stream);
-                if (State == AudioPlayerState.Playing && active == PlaybackState.Stalled)
-                {
-                    // BASS enters Stalled while buffering; Loading keeps callers from treating the
-                    // stream as actively playing. Resume is restored below.
-                    State = AudioPlayerState.Loading;
-                }
-                else if (State == AudioPlayerState.Loading && active == PlaybackState.Playing)
-                {
-                    State = AudioPlayerState.Playing;
-                }
+                // The production timer is the single owner of stall observation: it flips Playing to
+                // Loading, resumes on recovery, and releases a stream that stays stalled past the bound.
+                ObservePlaybackState(Bass.ChannelIsActive(_stream), DateTimeOffset.UtcNow);
             }
             catch (Exception exception)
             {
@@ -706,6 +712,17 @@ public class AudioPlayer : IAudioPlayer
     private static bool IsHttpUrl(string url) =>
         url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
         url.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Releases the native stream and any fallback temp file before the process exits.</summary>
+    public void Unload()
+    {
+        StopPlaybackStateMonitor();
+        ReleaseStream();
+        DeleteTempFile();
+        _loadedSource = null;
+        _position = TimeSpan.Zero;
+        State = AudioPlayerState.Stopped;
+    }
 
     public void Dispose()
     {

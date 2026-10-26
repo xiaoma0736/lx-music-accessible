@@ -149,6 +149,16 @@ public static class AppDataOwnership
 
         var failures = new List<AppDataCleanupFailure>();
         var files = KnownRootFiles.Select(name => Path.Combine(fullDirectory, name)).ToList();
+        try
+        {
+            // Migration backups are application-owned copies of the user's database, not unknown
+            // user documents; deleting all data must not leave a second copy of credentials behind.
+            files.AddRange(Directory.EnumerateFiles(fullDirectory, "lxmusic.db.pre-v*.bak", SearchOption.TopDirectoryOnly));
+        }
+        catch (Exception ex) when (IsFileSystemOrFormatException(ex))
+        {
+            AddFailure(failures, logFailure, "enumerate", "migration-backups", ex);
+        }
         if (Directory.Exists(logsDirectory))
         {
             try
@@ -356,6 +366,9 @@ public static class AppDataOwnership
     {
         var name = Path.GetFileName(path);
         return string.Equals(name, "login-diagnostic.txt", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, "app.log", StringComparison.OrdinalIgnoreCase)
+            || (name.StartsWith("app-", StringComparison.OrdinalIgnoreCase)
+                && name.EndsWith(".log", StringComparison.OrdinalIgnoreCase))
             || (name.StartsWith("lxmusic-", StringComparison.OrdinalIgnoreCase)
                 && name.EndsWith(".txt", StringComparison.OrdinalIgnoreCase));
     }

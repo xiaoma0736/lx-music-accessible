@@ -17,8 +17,11 @@ internal static class AccessibleSpeechPolicy
         "album",
         "application-shutdown",
         "audio-device",
+        "batch-selection-empty",
         "desktop-lifecycle",
         "download-manager",
+        "download-manager-delete",
+        "download-manager-focused",
         "external-playback",
         "favorite",
         "hotkey-recording",
@@ -46,6 +49,7 @@ internal static class AccessibleSpeechPolicy
         "source-list",
         "source-test",
         "source-update",
+        "source-update-alert",
         "sponsor",
         "web-login",
         "volume"
@@ -54,11 +58,13 @@ internal static class AccessibleSpeechPolicy
     /// <summary>Activities that carry a dynamic identifier, GUID or revision suffix.</summary>
     private static readonly string[] SpokenActivityPrefixes =
     {
+        "album-download:",
         "download:",
         "download-external:",
         "download-list:",
         "manual-source-playback:",
         "manual-source-query:",
+        "play-quality:",
         "playback-track:"
     };
 
@@ -85,10 +91,16 @@ internal static class AccessibleSpeechPolicy
     public static bool IsScopeAllowed(AccessibleAnnouncement announcement, AccessibilitySettings settings)
     {
         if (announcement.Kind == AnnouncementKind.Error) return true;
-        return announcement.ActivityId switch
+        var activity = announcement.ActivityId ?? string.Empty;
+        if (activity == "playback-song"
+            || activity.StartsWith("playback-track:", StringComparison.Ordinal))
+        {
+            return settings.AnnounceTrackChange;
+        }
+
+        return activity switch
         {
             "playback-state" => settings.AnnouncePlaybackState,
-            "playback-song" => settings.AnnounceTrackChange,
             "volume" => settings.AnnounceVolume,
             "seek" => settings.AnnounceSeek,
             "desktop-lifecycle" => settings.AnnounceWindowVisibility,

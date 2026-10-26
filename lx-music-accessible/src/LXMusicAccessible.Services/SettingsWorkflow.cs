@@ -1,6 +1,7 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Threading;
 using LXMusicAccessible.Data;
+using Microsoft.Data.Sqlite;
 using LXMusicAccessible.Models;
 using Microsoft.Extensions.Logging;
 
@@ -216,13 +217,35 @@ public sealed class SettingsWorkflow : IDisposable
             or UnauthorizedAccessException
             or ArgumentException
             or InvalidOperationException
-            or NotSupportedException)
+            or NotSupportedException
+            or SqliteException)
         {
             if (createdTarget is not null)
             {
+                cleanupSucceeded = TryCleanupPartialCopy(createdTarget, copiedFiles, cleanupFailures);
+                if (cleanupSucceeded)
+                {
+                    try
+                    {
+                        var marker = Path.Combine(createdTarget, AppDataOwnership.MarkerFileName);
+                        if (File.Exists(marker)) File.Delete(marker);
+                        if (Directory.Exists(createdTarget)
+                            && !Directory.EnumerateFileSystemEntries(createdTarget).Any())
+                        {
+                            Directory.Delete(createdTarget, recursive: false);
+                        }
+                    }
+                    catch (Exception cleanupException) when (cleanupException is IOException or UnauthorizedAccessException)
+                    {
+                        cleanupSucceeded = false;
+                        cleanupFailures.Add("ownership-marker: " + cleanupException.GetType().Name);
+                    }
+                }
             }
             _logger.LogWarning("Data directory change failed: {ErrorType}", exception.GetType().Name);
-            var message = cleanupSucceeded ? "设置数据目录失败" : "设置数据目录失败；请关闭占用程序后手动删除目标目录再重试";
+            var message = cleanupSucceeded
+                ? "设置数据目录失败，未写入任何更改"
+                : "设置数据目录失败；请关闭占用程序后手动删除目标目录再重试";
             return new(false, DataDirectory, message, cleanupSucceeded, cleanupFailures);
         }
     }
@@ -278,6 +301,7 @@ public sealed class SettingsWorkflow : IDisposable
         string.Equals(name, "lxmusic.db", StringComparison.OrdinalIgnoreCase);
     private static bool TryCleanupPartialCopy(string target, IReadOnlyCollection<string> copiedFiles, ICollection<string> failures)
     {
+        if (!Directory.Exists(target)) return true;
         var succeeded = true;
         foreach (var file in copiedFiles)
         {
