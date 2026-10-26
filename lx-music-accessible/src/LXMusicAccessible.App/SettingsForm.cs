@@ -135,6 +135,7 @@ public class SettingsForm : Form
     }
 
 
+    private bool _dataDirectoryChanging;
     private EventHandler<SettingsChangedEventArgs>? _settingsChanged;
     internal bool IsRecordingHotkey => _recording is not null;
 
@@ -305,13 +306,27 @@ public class SettingsForm : Form
         browse.SetBounds(580, 37, 80, 26);
         clear.SetBounds(12, 74, 100, 28);
         page.Controls.AddRange(new Control[] { caption, _dataDir, browse, clear });
-        browse.Click += (_, _) =>
+        browse.Click += async (_, _) =>
         {
             using var dialog = new FolderBrowserDialog { Description = "选择数据目录" };
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
-            var result = _settings.ChangeDataDirectory(dialog.SelectedPath);
-            _dataDir.Text = result.Path;
-            Announce(result.Message, "settings", result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
+            if (_dataDirectoryChanging) return;
+            _dataDirectoryChanging = true;
+            browse.Enabled = false;
+            try
+            {
+                var result = await _settings.ChangeDataDirectoryAsync(dialog.SelectedPath);
+                _dataDir.Text = result.Path;
+                var message = result.Succeeded || result.CleanupSucceeded
+                    ? result.Message
+                    : result.Message + " 未清理：" + string.Join("; ", result.CleanupFailures ?? []);
+                Announce(message, "settings", result.Succeeded ? AnnouncementKind.Success : AnnouncementKind.Error);
+            }
+            finally
+            {
+                _dataDirectoryChanging = false;
+                browse.Enabled = true;
+            }
         };
         clear.Click += (_, _) =>
         {

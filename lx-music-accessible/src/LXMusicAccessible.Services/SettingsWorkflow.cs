@@ -92,7 +92,7 @@ public sealed record HotkeyEditResult(
     public bool Applied => Status is HotkeyEditStatus.Applied or HotkeyEditStatus.Unchanged;
 }
 
-public sealed record DataDirectoryChangeResult(bool Succeeded, string Path, string Message);
+public sealed record DataDirectoryChangeResult(bool Succeeded, string Path, string Message, bool CleanupSucceeded = true, IReadOnlyList<string>? CleanupFailures = null);
 
 /// <summary>
 /// Deep settings module: defaults, immutable editing, validation, versioned persistence,
@@ -108,6 +108,7 @@ public sealed class SettingsWorkflow : IDisposable
 
     private readonly object _stateGate = new();
     private readonly SemaphoreSlim _saveGate = new(1, 1);
+    private readonly SemaphoreSlim _dataDirectoryGate = new(1, 1);
     private readonly ISettingsStore _store;
     private readonly HotkeyManagerService _hotkeys;
     private readonly ILogger<SettingsWorkflow> _logger;
@@ -168,6 +169,20 @@ public sealed class SettingsWorkflow : IDisposable
 
     public string DataDirectory => AppDataPaths.ResolveDataDir();
 
+    public async Task<DataDirectoryChangeResult> ChangeDataDirectoryAsync(string selectedParent, CancellationToken cancellationToken = default)
+    {
+        if (!await _dataDirectoryGate.WaitAsync(0, cancellationToken))
+            return new(false, DataDirectory, "Data directory change is already running.");
+        try
+        {
+            return await Task.Run(() => ChangeDataDirectoryInRoot(selectedParent, AppDataPaths.LocalAppDataRoot), cancellationToken);
+        }
+        finally
+        {
+            _dataDirectoryGate.Release();
+        }
+    }
+
     public DataDirectoryChangeResult ChangeDataDirectory(string selectedParent) =>
         ChangeDataDirectoryInRoot(selectedParent, AppDataPaths.LocalAppDataRoot);
 
@@ -176,6 +191,8 @@ public sealed class SettingsWorkflow : IDisposable
         string localApplicationDataDirectory)
     {
         string? createdTarget = null;
+        List<string> cleanupFailures = new();
+        bool cleanupSucceeded = true;
         var copiedFiles = new List<string>();
         try
         {
@@ -203,10 +220,10 @@ public sealed class SettingsWorkflow : IDisposable
         {
             if (createdTarget is not null)
             {
-                CleanupPartialCopy(createdTarget, copiedFiles);
             }
             _logger.LogWarning("Data directory change failed: {ErrorType}", exception.GetType().Name);
-            return new(false, DataDirectory, "设置数据目录失败");
+            var message = cleanupSucceeded ? "设置数据目录失败" : "设置数据目录失败；请关闭占用程序后手动删除目标目录再重试";
+            return new(false, DataDirectory, message, cleanupSucceeded, cleanupFailures);
         }
     }
 
@@ -254,23 +271,28 @@ public sealed class SettingsWorkflow : IDisposable
     }
 
     private static bool IsDatabaseFile(string name) =>
-        name.StartsWith("lxmusic.db", StringComparison.OrdinalIgnoreCase);
+        name.Equals("lxmusic.db", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("lxmusic.db-", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsMainDatabase(string name) =>
         string.Equals(name, "lxmusic.db", StringComparison.OrdinalIgnoreCase);
-    private static void CleanupPartialCopy(string target, IReadOnlyCollection<string> copiedFiles)
+    private static bool TryCleanupPartialCopy(string target, IReadOnlyCollection<string> copiedFiles, ICollection<string> failures)
     {
+        var succeeded = true;
         foreach (var file in copiedFiles)
         {
-            try { if (File.Exists(file)) File.Delete(file); }
+            try
+            {
+                if (File.Exists(file)) File.Delete(file);
+            }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                System.Diagnostics.Debug.WriteLine("Partial data directory cleanup skipped: " + exception.GetType().Name);
+                succeeded = false;
+                failures.Add(Path.GetFileName(file) + ": " + exception.GetType().Name);
             }
         }
 
-        foreach (var directory in Directory.EnumerateDirectories(target, "*", SearchOption.AllDirectories)
-            .OrderByDescending(path => path.Length))
+        foreach (var directory in Directory.EnumerateDirectories(target, "*", SearchOption.AllDirectories).OrderByDescending(path => path.Length))
         {
             try
             {
@@ -279,10 +301,14 @@ public sealed class SettingsWorkflow : IDisposable
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                System.Diagnostics.Debug.WriteLine("Empty partial directory cleanup skipped: " + exception.GetType().Name);
+                succeeded = false;
+                failures.Add(Path.GetFileName(directory) + ": " + exception.GetType().Name);
             }
         }
+
+        return succeeded;
     }
+
 
     public async Task<SettingsEditState> LoadAsync(
         IntPtr windowHandle,
@@ -391,6 +417,7 @@ public sealed class SettingsWorkflow : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         UnregisterAllGlobal();
         _saveGate.Dispose();
+        _dataDirectoryGate.Dispose();
         GC.SuppressFinalize(this);
     }
 
