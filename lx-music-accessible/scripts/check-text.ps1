@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $textExtensions = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 foreach ($extension in @(
-    ".cs", ".csproj", ".js", ".json", ".manifest", ".md", ".props", ".ps1",
+    ".cs", ".csproj", ".iss", ".js", ".json", ".manifest", ".md", ".props", ".ps1",
     ".sln", ".targets", ".txt", ".xaml", ".xml", ".yaml", ".yml"
 )) {
     [void]$textExtensions.Add($extension)
@@ -58,7 +58,10 @@ try {
             }
         }
 
-        if ($text.EndsWith([Environment]::NewLine + [Environment]::NewLine) -or $text.EndsWith([char]10 + [char]10)) {
+        if ($text.Length -eq 0 -or -not $text.EndsWith([char]10)) {
+            $failures.Add("${relativePath}: missing EOF newline")
+        }
+        elseif ($text.EndsWith([Environment]::NewLine + [Environment]::NewLine) -or $text.EndsWith([char]10 + [char]10)) {
             $failures.Add("${relativePath}: blank line at EOF")
         }
     }

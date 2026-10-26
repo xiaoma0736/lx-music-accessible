@@ -124,5 +124,3 @@ begin
       'Software\Microsoft\Windows\CurrentVersion\Uninstall\LxMusicAccessible');
   end;
 end;
-
-

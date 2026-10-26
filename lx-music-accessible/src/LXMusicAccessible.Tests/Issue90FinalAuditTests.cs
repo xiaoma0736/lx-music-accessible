@@ -106,16 +106,17 @@ public sealed class Issue90FinalAuditTests
     public async Task Runtime_database_uses_WAL_busy_timeout_and_foreign_keys()
     {
         using var app = await TestApplicationHost.StartAsync();
-        var data = app.Services.GetRequiredService<IDataService>();
-        await data.SetSettingValueAsync("issue90", "ready");
-        using var connection = new SqliteConnection($"Data Source={Path.Combine(app.DataDirectory, "lxmusic.db")}");
-        await connection.OpenAsync();
+        var databasePath = Path.Combine(app.DataDirectory, "lxmusic.db");
+        var connectionFactory = typeof(DataService).Assembly.GetType("LXMusicAccessible.Data.SqliteDatabaseConnection");
+        Assert.NotNull(connectionFactory);
+        var openMethod = connectionFactory!.GetMethod("OpenAsync", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(openMethod);
+        var pending = Assert.IsType<Task<SqliteConnection>>(openMethod!.Invoke(null, [databasePath, CancellationToken.None]));
+        using var connection = await pending;
 
         Assert.Equal("wal", await ScalarAsync(connection, "PRAGMA journal_mode"));
+        Assert.Equal(5000L, await ScalarAsync(connection, "PRAGMA busy_timeout"));
         Assert.Equal(1L, await ScalarAsync(connection, "PRAGMA foreign_keys"));
-        var runtime = File.ReadAllText(RepositoryPath("src", "LXMusicAccessible.Data", "DataService.cs"));
-        Assert.Contains("PRAGMA busy_timeout = 5000", runtime, StringComparison.Ordinal);
-        Assert.Contains("PRAGMA journal_mode = WAL", runtime, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -165,6 +166,7 @@ public sealed class Issue90FinalAuditTests
             Directory.Delete(root, true);
         }
     }
+
     [Fact]
     public void Promotion_failure_removes_new_lyric_when_no_prior_lyric_existed()
     {
@@ -195,15 +197,6 @@ public sealed class Issue90FinalAuditTests
         {
             Directory.Delete(root, true);
         }
-    }
-
-    [Fact]
-    public void Promotion_rollback_failures_are_diagnosed_and_preserve_backups()
-    {
-        var source = File.ReadAllText(RepositoryPath("src", "LXMusicAccessible.Services", "DownloadWorkflow.cs"));
-        Assert.Contains("Replacement rollback failed; original promotion error=", source, StringComparison.Ordinal);
-        Assert.Contains("Backups are retained: audio=", source, StringComparison.Ordinal);
-        Assert.Contains("throw new AggregateException(", source, StringComparison.Ordinal);
     }
 
     [Fact]

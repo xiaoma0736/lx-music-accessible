@@ -1296,4 +1296,3 @@ public sealed class WinFormsAccessibilityAuditTests
         public string? SwitchOutputDevice(int index) => null;
     }
 }
-

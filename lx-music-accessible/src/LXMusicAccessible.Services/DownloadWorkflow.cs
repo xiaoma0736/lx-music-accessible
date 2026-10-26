@@ -889,7 +889,8 @@ catch (Exception exception)
                             AnnouncementKind.Progress,
                             activityId,
                             AnnouncementSpeech.None));
-                    } : null,
+                    }
+                : null,
                     operation,
                     cancellationToken);
                 audioTemporary = download.Path;
@@ -1392,7 +1393,9 @@ catch (Exception exception)
                 if (lyricBackup is not null && File.Exists(lyricBackup)) File.Delete(lyricBackup);
             }
         }
-    }    private static string CommitUnique(string temporary, string directory, string name, string extension)
+    }
+
+    private static string CommitUnique(string temporary, string directory, string name, string extension)
     {
         directory = EnsureSafeDirectory(directory);
         for (var suffix = 0; suffix < 10_000; suffix++)
@@ -1633,7 +1636,7 @@ catch (Exception exception)
     private sealed record AudioFileInfo(string Label, string Extension, string? QualityToken);
 
     private sealed class DownloadSafetyException(string message) : IOException(message);
-private sealed class QualityUnavailableException(string message) : IOException(message);
+    private sealed class QualityUnavailableException(string message) : IOException(message);
 
     private void DeleteExternalTemporaryFile(string path)
     {

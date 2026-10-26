@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -106,6 +108,60 @@ public sealed class ReleasePackagingTests
         Assert.Contains("$generatedAtUtcRaw = & git log -1 --format=%cI -- $appProject", script, StringComparison.Ordinal);
         Assert.DoesNotContain("generatedAtUtc = [DateTime]::UtcNow.ToString", script, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Tracked_text_files_end_with_exactly_one_newline()
+    {
+        var repository = RepositoryDirectory();
+        var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".cs", ".csproj", ".iss", ".js", ".json", ".manifest", ".md", ".props", ".ps1",
+            ".sln", ".targets", ".txt", ".xaml", ".xml", ".yaml", ".yml"
+        };
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".editorconfig", ".gitattributes", ".gitignore"
+        };
+        var start = new ProcessStartInfo
+        {
+            FileName = "git",
+            Arguments = "-c core.quotepath=false ls-files",
+            WorkingDirectory = repository,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var errors = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0) throw new InvalidOperationException(errors);
+
+        var problems = new List<string>();
+        foreach (var relativePath in output.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var extension = Path.GetExtension(relativePath);
+            var fileName = Path.GetFileName(relativePath);
+            if (!extensions.Contains(extension) && !names.Contains(fileName)) continue;
+            var fullPath = Path.Combine(repository, relativePath);
+            if (!File.Exists(fullPath)) continue;
+            var bytes = File.ReadAllBytes(fullPath);
+            if (bytes.Length == 0 || bytes[^1] != (byte)'\n')
+            {
+                problems.Add($"{relativePath}: missing EOF newline");
+            }
+            else if (
+                (bytes.Length >= 2 && bytes[^2] == (byte)'\n') ||
+                (bytes.Length >= 4 && bytes[^4] == (byte)'\r' && bytes[^3] == (byte)'\n' && bytes[^2] == (byte)'\r' && bytes[^1] == (byte)'\n'))
+            {
+                problems.Add($"{relativePath}: blank line at EOF");
+            }
+        }
+
+        Assert.True(problems.Count == 0, string.Join(Environment.NewLine, problems));
+    }
+
     private static string SourceDirectory()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

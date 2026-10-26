@@ -144,6 +144,3 @@ public sealed class SettingsDataDirectorySafetyTests : IDisposable
         public int LastRegisterError => 0;
     }
 }
-
-
-

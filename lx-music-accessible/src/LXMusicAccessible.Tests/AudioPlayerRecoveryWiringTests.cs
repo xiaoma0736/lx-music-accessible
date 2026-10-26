@@ -94,4 +94,3 @@ public sealed class AudioPlayerRecoveryWiringTests : IDisposable
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
     }
 }
-
