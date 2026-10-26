@@ -11,7 +11,7 @@
 
 ## 运行时、升级与安装器行为
 
-- 必须使用 64 位 Windows。应用需要 Microsoft .NET Framework 4.8 或更新版本；安装器读取 64 位 native 视图注册表 `Release` 值，要求不低于 `528040`。
+- 必须使用 64 位 Windows。应用需要 Microsoft .NET Framework 4.8 或更新版本；安装器进入 64 位 install mode，`Reg*` 代码读取 64 位 native 视图注册表 `Release` 值，要求不低于 `528040`。
 - ZIP 不包含应用 .NET 运行时。安装器检测失败时显示“Microsoft .NET Framework 4.8 required”、官方下载地址和诊断路径；非交互 smoke 模式返回 exit code 2。
 - 诊断写入 `%LocalAppData%\LXMusicAccessible\setup\net48-diagnostics.txt`，记录时间、`installed`、required release、当前 release 和诊断摘要。
 - 网页登录需要 Microsoft Edge WebView2 Runtime。BASS/APE/FLAC/Opus、SQLite、ClearScript V8、Prism、Tolk、保益桥接和 WebView2 Loader 的 x64 原生库随应用分发；ClearScript V8 不可用时回退 Jint。
@@ -31,23 +31,23 @@ SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framew
 
 | 产物 | 字节 | SHA-256 |
 | --- | ---: | --- |
-| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 22,109,300 | `2ccff329011470c7ca91ce241867ab270985561b0831effc9976ff520d497f27` |
-| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 16,890,142 | `6e2110c03723127ad1535e893fb789ca83d228b46aa034b1f0399aa04d4b14fd` |
-| `release-manifest.json`（清单，不入哈希清单） | 24,869 | `41c119521e007cd2a3949047fa9e54f1ebd93adc637959e7c594e135d97059d3` |
+| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 22,112,818 | `de14d2884a0d4918523f7dea8c2254c5b439ff42be2b625b375bec776fe0ce79` |
+| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 16,893,056 | `965a54c2803aa12b491404ef3bf1b2058eda68de41be86ab1e3d44e9c58e3b8b` |
+| `release-manifest.json`（清单，不入哈希清单） | 24,869 | `2796e6c56cd21e66c182307b2f4ca898283ac87a6b820a8e50f36a8fbe0e4bcc` |
 
 清单运行时元数据：`version=3.0.0`、`runtime=win-x64`、`framework=net48`、`sqliteVersion=3.53.3`；冻结时间 `2026-09-28T23:50:24.0000000+00:00`（应用项目最新提交时间）。
 
 ## 自动化回归与最终质量门
 
 - 功能回归覆盖搜索、播放/停止/上一首/下一首/seek/音量、下载、本地和在线歌单、五平台官方歌单、排行榜、设置、音源、登录/导入、歌词、局部/全局热键和托盘生命周期。对应测试包括 `MainWindowShellTests`、`Issue49PlaybackSourceSafetyTests`、`DownloadWorkflowTests`、`PlaylistSnapshotTests`、`OfficialPlaylistProviderTests`、`SettingsWorkflowTests`、`ScriptSourceLifecycleTests`、`PlaylistLoginHostTests`、`LyricsWorkflowTests`、`Issue49HotkeyTests` 和 `DesktopLifecycleWorkflowTests`。
-- `powershell -NoProfile -ExecutionPolicy Bypass -File build_release.ps1`：exit 0。10 个应用原生映像和安装器 EXE 均验证为 x64；SQLite 加载版本 3.53.3，基线 3.50.2；产物内容、版本和 SHA-256 校验通过。
-- `powershell -ExecutionPolicy Bypass -File verify.ps1`：exit 0。
+- `powershell -NoProfile -ExecutionPolicy Bypass -File build_release.ps1` 连续执行两次：均为 exit 0。10 个应用原生映像和安装器 EXE 均验证为 x64；SQLite 加载版本 3.53.3，基线 3.50.2；产物内容、版本和 SHA-256 校验通过。
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\verify.ps1`：exit 0。
   - Restore：通过。
   - 依赖审计：High/Critical advisories 为 0。
   - Release build：通过；warnings treated as errors，未出现 warning/error。
-  - 离线测试：**executed 763，passed 763，failed 0，skipped 0**。
-  - 文本检查与 EOF 空行检查：通过，254 个 tracked text files；`git diff --check` 通过。
-  - 主机/异常静态检查：通过，189 个 C# source files。
+  - 离线测试：**executed 772，passed 772，failed 0，skipped 0**。
+  - 文本检查与 EOF newline/空行检查：通过，258 个 tracked text files；`git diff --check` 通过。
+  - 主机/异常静态检查：通过，192 个 C# source files。
   - 发布重建/产物/SQLite/native/hash 检查：通过；连续两次 clean build 的 ZIP、安装器和 manifest 哈希一致。
 - 安装器 smoke 全部通过：first install 成功；upgrade 成功且 ownership ID 不变；preserving uninstall `accepted=True; failures=0; preserved=True`；complete uninstall `accepted=True; failures=0; preserved=False`；repeat uninstall `accepted=True; failures=0; preserved=False`。
 - 验证中仅有 Git 的 CRLF working-copy 提示，非测试/构建错误；UTF-8 检查通过。没有其他警告或错误。
@@ -106,7 +106,7 @@ SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framew
 
 | 角色 | 名称 | 日期 | 结论 |
 | --- | --- | --- | --- |
-| 自动化发布验证 | Codex ticket owner | 2026-10-25 | 通过；产物冻结为 3.0.0 Release Candidate |
+| 自动化发布验证 | Codex ticket owner | 2026-10-26 | 通过；产物冻结为 3.0.0 Release Candidate |
 | 真实键盘验收 | 待指定 | 待定 | 未通过/未运行 |
 | Narrator 验收 | 待指定 | 待定 | 未通过/未运行 |
 | NVDA 验收 | 待指定 | 待定 | 未通过/未运行 |
