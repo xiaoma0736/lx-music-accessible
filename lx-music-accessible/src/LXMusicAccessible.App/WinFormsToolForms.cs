@@ -514,6 +514,15 @@ public class DownloadManagerForm : Form
         _resume.Enabled = selected.Any(task => task.Status == DownloadTaskStatus.Paused);
         _retry.Enabled = retryable;
         _clearCompleted.Enabled = _downloads.Tasks.Any(task => task.Status == DownloadTaskStatus.Completed);
+        if (_downloadCommandBusy)
+        {
+            _cancel.Enabled = false;
+            _pause.Enabled = false;
+            _resume.Enabled = false;
+            _retry.Enabled = false;
+            _delete.Enabled = false;
+            _clearCompleted.Enabled = false;
+        }
 
         // A progress update can disable the button the user is standing on, and a disabled control cannot
         // hold focus: WinForms hands it to the form, which leaves a screen reader with nothing to read.
@@ -523,21 +532,47 @@ public class DownloadManagerForm : Form
 
     private void Cancel()
     {
-        foreach (var task in Selected()) _downloads.Cancel(task);
-        Announce("已请求取消所选任务", "download-manager");
-        Reload();
+        var tasks = Selected();
+        if (tasks.Count == 0 || !BeginDownloadCommand())
+        {
+            if (tasks.Count > 0) Announce("上一个下载命令仍在执行", "download-manager", AnnouncementKind.Error);
+            return;
+        }
+        try
+        {
+            foreach (var task in tasks) _downloads.Cancel(task);
+            Reload();
+            Announce($"已请求取消 {tasks.Count} 个所选任务", "download-manager");
+        }
+        finally
+        {
+            _downloadCommandBusy = false;
+        }
     }
 
     private void ChangeState(DownloadWorkflowCommand command)
     {
-        foreach (var task in Selected())
+        var tasks = Selected();
+        if (tasks.Count == 0 || !BeginDownloadCommand())
         {
-            if (command == DownloadWorkflowCommand.Pause) _downloads.Pause(task);
-            else if (command == DownloadWorkflowCommand.Resume) _downloads.Resume(task);
+            if (tasks.Count > 0) Announce("上一个下载命令仍在执行", "download-manager", AnnouncementKind.Error);
+            return;
         }
-
-        Announce(command == DownloadWorkflowCommand.Pause ? "已请求暂停所选任务" : "已请求继续所选任务", "download-manager");
-        Reload();
+        try
+        {
+            foreach (var task in tasks)
+            {
+                if (command == DownloadWorkflowCommand.Pause) _downloads.Pause(task);
+                else if (command == DownloadWorkflowCommand.Resume) _downloads.Resume(task);
+            }
+            Reload();
+            var verb = command == DownloadWorkflowCommand.Pause ? "暂停" : "继续";
+            Announce($"已请求{verb} {tasks.Count} 个所选任务", "download-manager");
+        }
+        finally
+        {
+            _downloadCommandBusy = false;
+        }
     }
 
     private async Task Delete()
@@ -615,10 +650,21 @@ public class DownloadManagerForm : Form
         });
         var stopItem = new MenuItem("停止下载", (_, _) =>
         {
-            if (_menuTarget is null) return;
-            _downloads.Cancel(_menuTarget);
-            Announce("已请求停止下载：" + _menuTarget.DisplayName, "download-manager-focused");
-            Reload();
+            if (_menuTarget is null || !BeginDownloadCommand())
+            {
+                if (_menuTarget is not null) Announce("上一个下载命令仍在执行", "download-manager", AnnouncementKind.Error);
+                return;
+            }
+            try
+            {
+                _downloads.Cancel(_menuTarget);
+                Announce("已请求停止下载：" + _menuTarget.DisplayName, "download-manager-focused");
+                Reload();
+            }
+            finally
+            {
+                _downloadCommandBusy = false;
+            }
         });
         var removeItem = new MenuItem("移除下载", async (_, _) => await RemoveFocusedAsync());
         menu.MenuItems.Add(redownloadItem);
@@ -746,9 +792,21 @@ private static bool MatchesCategory(DownloadTask task, string category) => categ
 
     private void ClearCompleted()
     {
-        _downloads.ClearCompleted();
-        Announce("已清除已完成下载", "download-manager", AnnouncementKind.Success);
-        Reload();
+        if (!BeginDownloadCommand())
+        {
+            Announce("上一个下载命令仍在执行", "download-manager", AnnouncementKind.Error);
+            return;
+        }
+        try
+        {
+            _downloads.ClearCompleted();
+            Reload();
+            Announce("已清除已完成下载", "download-manager", AnnouncementKind.Success);
+        }
+        finally
+        {
+            _downloadCommandBusy = false;
+        }
     }
 
     private void Announce(string message, string activity, AnnouncementKind kind = AnnouncementKind.Status) =>

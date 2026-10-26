@@ -40,6 +40,37 @@ public sealed class DownloadCommandStateTests
     }
 
     [Fact]
+    public void Busy_retry_blocks_cancel_pause_resume_and_clear_commands()
+    {
+        var announcer = new RecordingAnnouncer();
+        WinFormsTestRunner.RunStaAsync(async () =>
+        {
+            var workflow = new BlockingRetryWorkflow();
+            using var form = new DownloadManagerForm(announcer, workflow);
+            form.Show();
+            Application.DoEvents();
+            var tasks = Assert.IsType<ListView>(form.Controls.Find("DownloadTasks", true).Single());
+            foreach (ListViewItem item in tasks.Items) item.Selected = true;
+            Application.DoEvents();
+            Assert.IsType<Button>(form.Controls.Find("重试", true).Single()).PerformClick();
+            await WaitAsync(() => workflow.RetryCalls == 1);
+
+            InvokeCommand(form, "Cancel");
+            InvokeCommand(form, "ChangeState", DownloadWorkflowCommand.Pause);
+            InvokeCommand(form, "ChangeState", DownloadWorkflowCommand.Resume);
+            InvokeCommand(form, "ClearCompleted");
+            await WaitAsync(() => announcer.Announcements.Count(item => item.Text.Contains("上一个下载命令仍在执行", StringComparison.Ordinal)) == 4);
+
+            workflow.Release();
+            await WaitAsync(announcer, message => message.Contains("接受 2", StringComparison.Ordinal));
+            Assert.Equal(0, workflow.CancelCalls);
+            Assert.Equal(0, workflow.PauseCalls);
+            Assert.Equal(0, workflow.ResumeCalls);
+            Assert.Equal(2, workflow.Tasks.Count);
+        });
+    }
+
+    [Fact]
     public void Focused_restart_command_announces_reentrancy()
     {
         var source = File.ReadAllText(Path.Combine(FindSourceDirectory(), "LXMusicAccessible.App", "WinFormsToolForms.cs"));
@@ -52,6 +83,10 @@ public sealed class DownloadCommandStateTests
         while (directory is not null && directory.Name != "src") directory = directory.Parent;
         return directory!.FullName;
     }
+
+    private static void InvokeCommand(Form form, string name, params object?[] args) =>
+        typeof(DownloadManagerForm).GetMethod(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .Invoke(form, args);
 
     private static async Task WaitAsync(Func<bool> condition)
     {
@@ -70,6 +105,9 @@ public sealed class DownloadCommandStateTests
     {
         private readonly ObservableCollection<DownloadTask> _tasks = new();
         private readonly TaskCompletionSource<bool> _retry = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int CancelCalls { get; private set; }
+        public int PauseCalls { get; private set; }
+        public int ResumeCalls { get; private set; }
         public int RetryCalls { get; private set; }
         public ReadOnlyObservableCollection<DownloadTask> Tasks { get; }
         public BlockingRetryWorkflow()
@@ -88,9 +126,9 @@ public sealed class DownloadCommandStateTests
             return await _retry.Task;
         }
         public Task<bool> RedownloadAsync(DownloadTask task, string? targetDirectory = null, CancellationToken cancellationToken = default) => Task.FromResult(false);
-        public void Cancel(DownloadTask task) { }
-        public void Pause(DownloadTask task) { }
-        public void Resume(DownloadTask task) { }
+        public void Cancel(DownloadTask task) => CancelCalls++;
+        public void Pause(DownloadTask task) => PauseCalls++;
+        public void Resume(DownloadTask task) => ResumeCalls++;
         public bool Delete(DownloadTask task, bool deleteSourceFile) => true;
         public Task<bool> DeleteAsync(DownloadTask task, bool deleteSourceFile) => Task.FromResult(true);
         public void ClearCompleted() { }
