@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -324,6 +324,7 @@ public sealed class SourceModuleAuditTests
         public Task<bool> RemoveSourceAsync(MusicSource source, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public Task<bool> UpdateSourceAsync(MusicSource source) => Task.FromResult(true);
         public Task<bool> RefreshSourceAsync(MusicSource source, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<MusicSourceService.MusicSourceRefreshResult> RefreshSourceDetailedAsync(MusicSource source, CancellationToken cancellationToken = default) => Task.FromResult(new MusicSourceService.MusicSourceRefreshResult(true, false, source.TrustState, source.IsEnabled));
         public Task<bool> TestSourceAsync(MusicSource source) => Task.FromResult(true);
         public void SetDefaultSource(string id) { }
         public Task<bool> SetDefaultSourceAsync(string id, CancellationToken cancellationToken = default) => Task.FromResult(true);

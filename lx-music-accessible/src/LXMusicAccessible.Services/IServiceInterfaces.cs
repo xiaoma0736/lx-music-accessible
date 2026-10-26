@@ -1,4 +1,4 @@
-using LXMusicAccessible.Models;
+﻿using LXMusicAccessible.Models;
 using LXMusicAccessible.Core.MusicApi;
 using LXMusicAccessible.Audio;
 
@@ -432,6 +432,7 @@ public interface IMusicSourceService
 
     /// <summary>从远程 URL 获取最新脚本并更新音源接口</summary>
     Task<bool> RefreshSourceAsync(MusicSource source, CancellationToken cancellationToken = default);
+    Task<MusicSourceService.MusicSourceRefreshResult> RefreshSourceDetailedAsync(MusicSource source, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 获取所有音源

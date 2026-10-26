@@ -255,9 +255,14 @@ public class SourceManagerForm : Form
     {
         var source = Selected();
         if (source is null) return;
-        var ok = await InSourceCommand(() => _sources.RefreshSourceAsync(source));
+        var result = await InSourceCommand(() => _sources.RefreshSourceDetailedAsync(source));
         RefreshSources();
-        Announce(ok ? $"音源更新成功：{source.Name}" : $"音源更新失败：{source.Name}", "source-update", ok ? AnnouncementKind.Success : AnnouncementKind.Error);
+        if (!result.Succeeded)
+            Announce($"音源更新失败：{source.Name}", "source-update", AnnouncementKind.Error);
+        else if (result.Changed && result.TrustState == ScriptTrustState.Untrusted)
+            Announce($"音源已更新但未信任：{source.Name}；需要显式启用", "source-update", AnnouncementKind.Error);
+        else
+            Announce($"音源更新成功：{source.Name}", "source-update", AnnouncementKind.Success);
     }
 
     private async void Delete() => await DeleteAsync();

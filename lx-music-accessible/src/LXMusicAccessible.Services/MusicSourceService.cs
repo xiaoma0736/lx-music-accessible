@@ -245,9 +245,7 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             subscription.Url,
             sourceId,
             cancellationToken);
-        if (candidate?.RawScript is null
-            || (candidate.Kind is not LxSourceType.JsonManifest
-                && !await _scriptEngine.TestLoadAsync(candidate, cancellationToken)))
+        if (candidate?.RawScript is null)
         {
             _logger.LogWarning(
                 "订阅音源无有效更新，保留现有版本: SourceId={SourceId}",
@@ -255,6 +253,8 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
             return;
         }
 
+        // Stage and hash only: changed subscription content is not executed or registered until the
+        // user explicitly enables the Untrusted source.
         var digest = ScriptMusicSource.ComputeSha256(candidate.RawScript);
         var previousScript = existing is null ? null : _scriptSource.GetScript(existing.Id);
         var previous = existing is null ? null : SourceSnapshot.Capture(existing);
@@ -285,13 +285,6 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         source.LastUpdateDate = DateTime.Now;
         if (existing is null) _sources.Add(source);
 
-        if (!_scriptSource.RegisterVerified(candidate, digest))
-        {
-            if (existing is null) _sources.Remove(source);
-            else previous!.Restore(existing);
-            return;
-        }
-
         try
         {
             await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
@@ -300,25 +293,17 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         {
             if (existing is null) _sources.Remove(source);
             else previous!.Restore(existing);
-            if (previousScript?.RawScript is not null)
-            {
-                _scriptSource.RegisterVerified(
-                    previousScript,
-                    ScriptMusicSource.ComputeSha256(previousScript.RawScript));
-            }
-            else
-            {
-                _scriptSource.Remove(sourceId);
-            }
             throw;
         }
 
         ClearCache();
+        if (!isUnchanged) _scriptSource.Remove(sourceId);
         _logger.LogInformation(
-            "订阅音源已更新: SourceId={SourceId}, Name={Name}, Version={Version}",
+            "订阅音源已更新: SourceId={SourceId}, Name={Name}, Version={Version}, Trusted={Trusted}",
             subscription.Id,
             candidate.Name,
-            candidate.Version);
+            candidate.Version,
+            source.TrustState != ScriptTrustState.Untrusted);
     }
 
     // ================================================================
@@ -1588,7 +1573,17 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         return true;
     }
 
+    public sealed record MusicSourceRefreshResult(bool Succeeded, bool Changed, ScriptTrustState TrustState, bool IsEnabled);
+
     public async Task<bool> RefreshSourceAsync(
+        MusicSource source,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await RefreshSourceDetailedAsync(source, cancellationToken);
+        return result.Succeeded;
+    }
+
+    public async Task<MusicSourceRefreshResult> RefreshSourceDetailedAsync(
         MusicSource source,
         CancellationToken cancellationToken = default)
     {
@@ -1599,16 +1594,14 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
                 item.Id,
                 source.Id,
                 StringComparison.OrdinalIgnoreCase)))
-            return false;
+            return new(false, false, source.TrustState, source.IsEnabled);
 
         var candidate = await _scriptSource.StageFromUrlAsync(
             source.ScriptUrl,
             source.Id,
             cancellationToken);
-        if (candidate?.RawScript is null
-            || (candidate.Kind is not LxSourceType.JsonManifest
-                && !await _scriptEngine.TestLoadAsync(candidate, cancellationToken)))
-            return false;
+        if (candidate?.RawScript is null)
+            return new(false, false, source.TrustState, source.IsEnabled);
 
         var digest = ScriptMusicSource.ComputeSha256(candidate.RawScript);
         var isUnchanged = string.Equals(source.ContentSha256, digest, StringComparison.Ordinal)
@@ -1628,12 +1621,6 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         source.IsEnabled = preservedTrust && source.IsEnabled;
         source.LastUpdateDate = DateTime.Now;
 
-        if (!_scriptSource.RegisterVerified(candidate, digest))
-        {
-            previous.Restore(source);
-            return false;
-        }
-
         try
         {
             await _dataService.SaveMusicSourcesAsync(_sources, cancellationToken);
@@ -1641,22 +1628,12 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
         catch
         {
             previous.Restore(source);
-            if (previousScript?.RawScript is not null)
-            {
-                _scriptSource.RegisterVerified(
-                    previousScript,
-                    ScriptMusicSource.ComputeSha256(previousScript.RawScript));
-            }
-            else
-            {
-                _scriptSource.Remove(source.Id);
-            }
             throw;
         }
 
-        ClearCache();
+        if (!isUnchanged) _scriptSource.Remove(source.Id);
         RaiseSourcesChanged();
-        return true;
+        return new(true, !isUnchanged, source.TrustState, source.IsEnabled);
     }
 
     public async Task<MusicSource?> ImportFromUrlAsync(
@@ -2153,3 +2130,5 @@ public class MusicSourceService : IMusicSourceService, IMusicBrowseSource, IManu
 
 
 }
+
+

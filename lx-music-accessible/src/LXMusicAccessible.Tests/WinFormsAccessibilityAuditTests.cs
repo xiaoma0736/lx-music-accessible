@@ -165,6 +165,35 @@ public sealed class WinFormsAccessibilityAuditTests
     }
 
     [Fact]
+    public void Source_manager_reports_changed_refresh_as_untrusted_not_plain_success()
+    {
+        var announcer = new RecordingAnnouncer();
+        WinFormsTestRunner.Run(() =>
+        {
+            var service = new AuditSourceService
+            {
+                RefreshResult = new(true, true, ScriptTrustState.Untrusted, false)
+            };
+            service.Replace(new MusicSource { Id = "changed", Name = "Changed", Version = "2", Type = SourceType.Network, TrustState = ScriptTrustState.UserApproved, IsEnabled = true });
+            using var form = new SourceManagerForm(announcer, service, _ => false);
+            form.Show();
+            Application.DoEvents();
+            var list = Assert.IsType<ListBox>(Required(form, "音源"));
+            list.SelectedIndex = 0;
+
+            var update = typeof(SourceManagerForm).GetMethod("UpdateAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            Assert.NotNull(update);
+            ((Task)update!.Invoke(form, [])!).GetAwaiter().GetResult();
+
+            Assert.Contains(announcer.Announcements, item =>
+                item.ActivityId == "source-update" &&
+                item.Kind == AnnouncementKind.Error &&
+                item.Text.Contains("未信任", StringComparison.Ordinal) &&
+                item.Text.Contains("显式启用", StringComparison.Ordinal));
+        });
+    }
+
+    [Fact]
     public void Download_manager_keeps_empty_list_focus_and_selected_focus_across_dynamic_updates()
     {
         WinFormsTestRunner.Run(() =>
@@ -1152,6 +1181,8 @@ public sealed class WinFormsAccessibilityAuditTests
         public void RemoveSource(MusicSource source) { }
         public Task<bool> RemoveSourceAsync(MusicSource source, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public Task<bool> RefreshSourceAsync(MusicSource source, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public MusicSourceService.MusicSourceRefreshResult RefreshResult { get; set; } = new(true, false, ScriptTrustState.UserApproved, true);
+        public Task<MusicSourceService.MusicSourceRefreshResult> RefreshSourceDetailedAsync(MusicSource source, CancellationToken cancellationToken = default) => Task.FromResult(RefreshResult);
         public Task<bool> TestSourceAsync(MusicSource source) => Task.FromResult(true);
         public MusicSource? GetDefaultSource() => _sources.FirstOrDefault(source => source.IsDefault);
         public void SetDefaultSource(string id) { }
@@ -1265,3 +1296,4 @@ public sealed class WinFormsAccessibilityAuditTests
         public string? SwitchOutputDevice(int index) => null;
     }
 }
+

@@ -1,4 +1,4 @@
-using System.Net.Http;
+﻿using System.Net.Http;
 using System.Net;
 using System.IO;
 using LXMusicAccessible.Core.MusicApi;
@@ -120,8 +120,13 @@ public sealed class ScriptSourceLifecycleTests
         Assert.Equal("2.0.0", source.Version);
         Assert.Equal(UpdatedScript, source.ScriptContent);
         Assert.Equal(ScriptMusicSource.ComputeSha256(UpdatedScript), source.ContentSha256);
-        Assert.Equal(UpdatedScript, sources.GetScriptSource().GetScript("custom")?.RawScript);
-        Assert.Equal(UpdatedScript, (await data.GetMusicSourcesAsync()).Single(item => item.Id == "custom").ScriptContent);
+        Assert.Equal(ScriptTrustState.Untrusted, source.TrustState);
+        Assert.False(source.IsEnabled);
+        Assert.Null(sources.GetScriptSource().GetScript("custom"));
+        var persistedChanged = Assert.Single(await data.GetMusicSourcesAsync(), item => item.Id == "custom");
+        Assert.Equal(ScriptTrustState.Untrusted, persistedChanged.TrustState);
+        Assert.False(persistedChanged.IsEnabled);
+
     }
 
     [Fact]
@@ -152,6 +157,7 @@ public sealed class ScriptSourceLifecycleTests
         Assert.False(loaded.IsEnabled);
         var persisted = Assert.Single(await data.GetMusicSourcesAsync(), source => source.Id == "untrusted");
         Assert.Equal(ScriptTrustState.Untrusted, persisted.TrustState);
+        Assert.Equal(ScriptMusicSource.ComputeSha256(ValidScript), persisted.ContentSha256);
         Assert.False(persisted.IsEnabled);
     }
 
@@ -214,10 +220,15 @@ public sealed class ScriptSourceLifecycleTests
 
         var updated = await sources.RefreshSourceAsync(source);
 
-        Assert.False(updated);
-        Assert.Equal(ValidScript, source.ScriptContent);
-        Assert.Equal(ValidScript, sources.GetScriptSource().GetScript("custom")?.RawScript);
-        Assert.Equal(ValidScript, (await data.GetMusicSourcesAsync()).Single(item => item.Id == "custom").ScriptContent);
+        Assert.True(updated);
+        Assert.Equal("/* no request handler */", source.ScriptContent);
+        Assert.Equal(ScriptTrustState.Untrusted, source.TrustState);
+        Assert.False(source.IsEnabled);
+        Assert.Null(sources.GetScriptSource().GetScript("custom"));
+        var persistedStaged = Assert.Single(await data.GetMusicSourcesAsync(), item => item.Id == "custom");
+        Assert.Equal("/* no request handler */", persistedStaged.ScriptContent);
+        Assert.Equal(ScriptTrustState.Untrusted, persistedStaged.TrustState);
+        Assert.False(persistedStaged.IsEnabled);
     }
 
     [Fact]
@@ -320,11 +331,14 @@ public sealed class ScriptSourceLifecycleTests
         await sources.InitializeScriptSourcesAsync();
 
         var retained = Assert.Single(sources.GetAllSources(), source => source.Id == "hyw");
-        Assert.True(retained.IsEnabled);
-        Assert.Equal(ValidScript, retained.ScriptContent);
-        Assert.Equal(ValidScript, sources.GetScriptSource().GetScript("hyw")?.RawScript);
-        var persisted = Assert.Single(await data.GetMusicSourcesAsync(), source => source.Id == "hyw");
-        Assert.Equal(ValidScript, persisted.ScriptContent);
+        Assert.False(retained.IsEnabled);
+        Assert.Equal("/* no request handler */", retained.ScriptContent);
+        Assert.Equal(ScriptTrustState.Untrusted, retained.TrustState);
+        Assert.Null(sources.GetScriptSource().GetScript("hyw"));
+        var persistedStaged = Assert.Single(await data.GetMusicSourcesAsync(), source => source.Id == "hyw");
+        Assert.Equal("/* no request handler */", persistedStaged.ScriptContent);
+        Assert.Equal(ScriptTrustState.Untrusted, persistedStaged.TrustState);
+        Assert.False(persistedStaged.IsEnabled);
     }
 
     [Fact]
