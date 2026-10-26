@@ -1,4 +1,4 @@
-# LX Music 无障碍版 3.0.0 发布验证记录
+﻿# LX Music 无障碍版 3.0.0 发布验证记录
 
 **状态：3.0.0 自动化发布候选（Release Candidate）已冻结；公开发布前，真实键盘、读屏和升级人工验收仍待执行。** 本文件是 3.0.0 的正式发布验证和人工验收记录。Issue #58–#63 均已在 GitHub 上关闭，状态为 `COMPLETED`；父规范 #57 保持打开，等待根工作流收尾。
 
@@ -11,7 +11,7 @@
 
 ## 运行时、升级与安装器行为
 
-- 必须使用 64 位 Windows。应用需要 Microsoft .NET Framework 4.8 或更新版本；安装器读取 32 位视图注册表 `Release` 值，要求不低于 `528040`。
+- 必须使用 64 位 Windows。应用需要 Microsoft .NET Framework 4.8 或更新版本；安装器读取 64 位 native 视图注册表 `Release` 值，要求不低于 `528040`。
 - ZIP 不包含应用 .NET 运行时。安装器检测失败时显示“Microsoft .NET Framework 4.8 required”、官方下载地址和诊断路径；非交互 smoke 模式返回 exit code 2。
 - 诊断写入 `%LocalAppData%\LXMusicAccessible\setup\net48-diagnostics.txt`，记录时间、`installed`、required release、当前 release 和诊断摘要。
 - 网页登录需要 Microsoft Edge WebView2 Runtime。BASS/APE/FLAC/Opus、SQLite、ClearScript V8、Prism、Tolk、保益桥接和 WebView2 Loader 的 x64 原生库随应用分发；ClearScript V8 不可用时回退 Jint。

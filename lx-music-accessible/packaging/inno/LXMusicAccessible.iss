@@ -97,7 +97,7 @@ var
   Release: Cardinal;
   Installed: Boolean;
 begin
-  Installed := RegQueryDWordValue(HKLM,
+  Installed := RegQueryDWordValue64(HKLM,
     'Software\Microsoft\NET Framework Setup\NDP\v4\Full',
     'Release', Release);
   if not Installed then Release := 0;
@@ -124,4 +124,5 @@ begin
       'Software\Microsoft\Windows\CurrentVersion\Uninstall\LxMusicAccessible');
   end;
 end;
+
 

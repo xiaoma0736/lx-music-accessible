@@ -6,7 +6,7 @@
 ## 3.0.0 运行环境与发布
 
 - 产品版本为 3.0.0，仅支持 64 位 Windows。
-- 应用为框架依赖版本，必须已安装 Microsoft .NET Framework 4.8 或更新版本（安装器检查注册表 Release 值不低于 `528040`）。
+- 应用为框架依赖版本，必须已安装 Microsoft .NET Framework 4.8 或更新版本（安装器检查 64 位 native 视图注册表 Release 值不低于 `528040`）。
 - ZIP 不内置 .NET 运行时；安装器会检测运行时，缺失时给出官方下载地址，并把诊断写入 `%LocalAppData%\LXMusicAccessible\setup\net48-diagnostics.txt`。
 - 网页登录使用 Microsoft Edge WebView2 Runtime；歌词/状态语音播报可使用 SAPI5，检测到争渡、保益或 Prism 后端时优先使用。
 - 音频、SQLite、ClearScript V8、UIA/读屏桥接和 WebView2 加载器所需的 x64 原生库随应用分发；ClearScript V8 不可用时会回退到 Jint。
