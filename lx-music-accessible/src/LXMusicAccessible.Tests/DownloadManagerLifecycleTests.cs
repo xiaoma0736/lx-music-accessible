@@ -150,7 +150,7 @@ public sealed class DownloadManagerLifecycleTests
             var tasks = Assert.IsType<ListView>(form.Controls.Find("DownloadTasks", true).Single());
             tasks.Items[0].Selected = true;
             Application.DoEvents();
-            Assert.Single(tasks.SelectedIndices);
+            Assert.True(tasks.SelectedIndices.Count == 1, $"initial selection={tasks.SelectedIndices.Count}");
 
             var pauseButton = Assert.IsType<Button>(form.Controls.Find("暂停", true).Single());
             Assert.True(pauseButton.Enabled);
@@ -163,11 +163,14 @@ public sealed class DownloadManagerLifecycleTests
             resumeButton.PerformClick();
             Application.DoEvents();
             Assert.Equal(DownloadTaskStatus.Downloading, task.Status);
-            Assert.IsType<Button>(form.Controls.Find("删除", true).Single()).PerformClick();
+            var deleteButton = Assert.IsType<Button>(form.Controls.Find("删除", true).Single());
+            Assert.True(deleteButton.Enabled, $"delete enabled={deleteButton.Enabled} selected={tasks.SelectedIndices.Count} status={task.Status}");
+            deleteButton.PerformClick();
 
             Assert.Equal(1, workflow.PauseCalls);
             Assert.Equal(1, workflow.ResumeCalls);
-            Assert.Equal((task, true), Assert.Single(workflow.Deleted));
+            Assert.True(workflow.Deleted.Count == 1, $"deleted={workflow.Deleted.Count}");
+            Assert.Equal((task, true), workflow.Deleted.Single());
         });
     }
 }

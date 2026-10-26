@@ -512,6 +512,7 @@ public class DownloadManagerForm : Form
         _cancel.Enabled = downloading;
         _pause.Enabled = selected.Any(task => task.Status == DownloadTaskStatus.Downloading);
         _resume.Enabled = selected.Any(task => task.Status == DownloadTaskStatus.Paused);
+        _delete.Enabled = selected.Count > 0;
         _retry.Enabled = retryable;
         _clearCompleted.Enabled = _downloads.Tasks.Any(task => task.Status == DownloadTaskStatus.Completed);
         if (_downloadCommandBusy)
