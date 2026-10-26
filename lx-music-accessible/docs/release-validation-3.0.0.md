@@ -27,7 +27,7 @@
 
 ## 3.0.0 产物
 
-SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framework-dependent-application-payload`，完整记录 86 个框架依赖应用载荷文件及以下两个发布产物；构建脚本已独立复核全部哈希。ZIP 条目时间固定为 `2000-01-01T00:00:00Z`，manifest 时间取应用项目最新提交时间；应用 `SourceRevisionId` 和 `SOURCE_DATE_EPOCH` 固定，CI 路径规范化，PDB 不随便携载荷分发；连续两次 clean build 已确认 ZIP、安装器和 manifest 哈希一致。
+SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framework-dependent-application-payload`，完整记录 86 个框架依赖应用载荷文件及以下两个发布产物；构建脚本已独立复核全部哈希。ZIP 条目时间固定为 `2000-01-01T00:00:00Z`，manifest 时间与 `SourceRevisionId` 取最近一次触及任一发布输入的提交（应用、安装器和构建文件），文档提交不会改变产物身份；应用 `SOURCE_DATE_EPOCH` 固定，CI 路径规范化，PDB 不随便携载荷分发；连续两次 clean build 已确认 ZIP、安装器和 manifest 哈希一致。
 
 | 产物 | 字节 | SHA-256 |
 | --- | ---: | --- |

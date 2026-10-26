@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -222,12 +222,26 @@ if ((Get-Item -LiteralPath $releaseRoot).Attributes -band [System.IO.FileAttribu
 }
 
 # Clean output makes the release list exact and cannot leave stale x86/self-contained artifacts.
-# The manifest freeze time is deterministic from the application project commit; this keeps repeated
-# validation of one candidate byte-stable while avoiding wall-clock metadata in tracked evidence.
-$generatedAtUtcRaw = & git log -1 --format=%cI -- $appProject
+# The manifest freeze time and revision are deterministic from the latest commit touching any
+# released product input (not just the app .csproj, which used to leave the recorded revision stale).
+# Documentation commits made after the build therefore do not change the artifact identity.
+$releaseInputPaths = @(
+    $appProject,
+    $installerScript,
+    (Join-Path $root "build_release.ps1"),
+    (Join-Path $root "Directory.Build.props"),
+    (Join-Path $root "Directory.Build.targets"),
+    (Join-Path $src "LXMusicAccessible.App"),
+    (Join-Path $src "LXMusicAccessible.Audio"),
+    (Join-Path $src "LXMusicAccessible.Core"),
+    (Join-Path $src "LXMusicAccessible.Data"),
+    (Join-Path $src "LXMusicAccessible.Models"),
+    (Join-Path $src "LXMusicAccessible.Services")
+)
+$generatedAtUtcRaw = & git log -1 --format=%cI -- $releaseInputPaths
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($generatedAtUtcRaw)) { throw "Could not read deterministic application freeze timestamp." }
 $generatedAtUtc = [DateTimeOffset]::Parse($generatedAtUtcRaw, [System.Globalization.CultureInfo]::InvariantCulture).ToUniversalTime().ToString("O")
-$sourceRevisionId = & git log -1 --format=%H -- $appProject
+$sourceRevisionId = & git log -1 --format=%H -- $releaseInputPaths
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceRevisionId)) { throw "Could not read deterministic application source revision." }
 $env:SOURCE_DATE_EPOCH = [string][DateTimeOffset]::Parse($generatedAtUtcRaw, [System.Globalization.CultureInfo]::InvariantCulture).ToUnixTimeSeconds()
 if (Test-Path -LiteralPath $staging) {

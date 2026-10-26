@@ -105,7 +105,7 @@ public sealed class ReleasePackagingTests
     {
         var script = File.ReadAllText(Path.Combine(RepositoryDirectory(), "build_release.ps1"));
         Assert.Contains("$entry.LastWriteTime = [DateTimeOffset]::new(2000, 1, 1, 0, 0, 0, [TimeSpan]::Zero)", script, StringComparison.Ordinal);
-        Assert.Contains("$generatedAtUtcRaw = & git log -1 --format=%cI -- $appProject", script, StringComparison.Ordinal);
+        Assert.Contains("$generatedAtUtcRaw = & git log -1 --format=%cI -- $releaseInputPaths", script, StringComparison.Ordinal);
         Assert.DoesNotContain("generatedAtUtc = [DateTime]::UtcNow.ToString", script, StringComparison.Ordinal);
     }
 
