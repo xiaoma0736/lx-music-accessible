@@ -229,6 +229,7 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($generatedAtUtcRaw)) { 
 $generatedAtUtc = [DateTimeOffset]::Parse($generatedAtUtcRaw, [System.Globalization.CultureInfo]::InvariantCulture).ToUniversalTime().ToString("O")
 $sourceRevisionId = & git log -1 --format=%H -- $appProject
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceRevisionId)) { throw "Could not read deterministic application source revision." }
+$env:SOURCE_DATE_EPOCH = [string][DateTimeOffset]::Parse($generatedAtUtcRaw, [System.Globalization.CultureInfo]::InvariantCulture).ToUnixTimeSeconds()
 if (Test-Path -LiteralPath $staging) {
     if ((Get-Item -LiteralPath $staging).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
         throw "Release staging directory cannot be a reparse point: $staging"
@@ -306,6 +307,7 @@ Invoke-DotNet @(
     "--self-contained", "false",
     "-p:PublishSingleFile=false",
     "-p:SourceRevisionId=$sourceRevisionId",
+    "-p:ContinuousIntegrationBuild=true",
     "--output", $application
 ) "Application publish failed."
 
