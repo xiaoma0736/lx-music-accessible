@@ -227,6 +227,8 @@ if ((Get-Item -LiteralPath $releaseRoot).Attributes -band [System.IO.FileAttribu
 $generatedAtUtcRaw = & git log -1 --format=%cI -- $appProject
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($generatedAtUtcRaw)) { throw "Could not read deterministic application freeze timestamp." }
 $generatedAtUtc = [DateTimeOffset]::Parse($generatedAtUtcRaw, [System.Globalization.CultureInfo]::InvariantCulture).ToUniversalTime().ToString("O")
+$sourceRevisionId = & git log -1 --format=%H -- $appProject
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceRevisionId)) { throw "Could not read deterministic application source revision." }
 if (Test-Path -LiteralPath $staging) {
     if ((Get-Item -LiteralPath $staging).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
         throw "Release staging directory cannot be a reparse point: $staging"
@@ -303,6 +305,7 @@ Invoke-DotNet @(
     "--runtime", "win-x64",
     "--self-contained", "false",
     "-p:PublishSingleFile=false",
+    "-p:SourceRevisionId=$sourceRevisionId",
     "--output", $application
 ) "Application publish failed."
 
