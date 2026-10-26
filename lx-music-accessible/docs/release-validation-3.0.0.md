@@ -27,13 +27,13 @@
 
 ## 3.0.0 产物
 
-SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framework-dependent-application-payload`，完整记录 92 个框架依赖应用载荷文件及以下两个发布产物；构建脚本已独立复核全部哈希。ZIP 条目时间固定为 `2000-01-01T00:00:00Z`，manifest 时间取应用项目最新提交时间；应用 `SourceRevisionId` 固定为应用项目提交；连续两次 clean build 已确认 ZIP、安装器和 manifest 哈希一致。
+SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framework-dependent-application-payload`，完整记录 86 个框架依赖应用载荷文件及以下两个发布产物；构建脚本已独立复核全部哈希。ZIP 条目时间固定为 `2000-01-01T00:00:00Z`，manifest 时间取应用项目最新提交时间；应用 `SourceRevisionId` 固定为应用项目提交，PDB 不随便携载荷分发；连续两次 clean build 已确认 ZIP、安装器和 manifest 哈希一致。
 
 | 产物 | 字节 | SHA-256 |
 | --- | ---: | --- |
-| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 22,112,824 | `cf7d1726221e12957d446b5d89337a0cf0a8014d497be50ee8c39773a76c5f29` |
-| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 16,892,415 | `0507e1e7ff0cb046ad74894642b5247b8e79625bd449f7a16a19dd8d12b5fdb8` |
-| `release-manifest.json`（清单，不入哈希清单） | 24,869 | `894ff46c4cdcba10ca2a3368cbcd2638325ff7b314ebb87e814b05bed07c3ed4` |
+| `LXMusicAccessible-3.0.0-win-x64-framework-dependent.zip` | 21,951,643 | `6b5c5222bf232a24a5c25c29db6a416f21a4588ae6bbb3b45214d47b6934318f` |
+| `LXMusicAccessible-Setup-3.0.0-win-x64.exe` | 16,892,835 | `7fdddc4fb78a1527e8da4e24f49763bc706719cc95ea28fcbd9ac075a246ad78` |
+| `release-manifest.json`（清单，不入哈希清单） | 23,319 | `69090273fd369401cdb87dd68ed59e2d0cfb083836c274ef882e1c8e0eea3fa7` |
 
 清单运行时元数据：`version=3.0.0`、`runtime=win-x64`、`framework=net48`、`sqliteVersion=3.53.3`；冻结时间 `2026-09-28T23:50:24.0000000+00:00`（应用项目最新提交时间）。
 
@@ -48,7 +48,7 @@ SHA-256 均为小写。`release-manifest.json` 的 `payloadScope=complete-framew
   - 离线测试：**executed 772，passed 772，failed 0，skipped 0**。
   - 文本检查与 EOF newline/空行检查：通过，258 个 tracked text files；`git diff --check` 通过。
   - 主机/异常静态检查：通过，192 个 C# source files。
-  - 发布重建/产物/SQLite/native/hash 检查：通过；应用 `SourceRevisionId` 固定为应用项目提交；连续两次 clean build 的 ZIP、安装器和 manifest 哈希一致。
+  - 发布重建/产物/SQLite/native/hash 检查：通过；应用 `SourceRevisionId` 固定为应用项目提交，PDB 不随便携载荷分发；连续两次 clean build 的 ZIP、安装器和 manifest 哈希一致。
 - 安装器 smoke 全部通过：first install 成功；upgrade 成功且 ownership ID 不变；preserving uninstall `accepted=True; failures=0; preserved=True`；complete uninstall `accepted=True; failures=0; preserved=False`；repeat uninstall `accepted=True; failures=0; preserved=False`。
 - 验证中仅有 Git 的 CRLF working-copy 提示，非测试/构建错误；UTF-8 检查通过。没有其他警告或错误。
 
