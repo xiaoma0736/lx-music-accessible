@@ -97,7 +97,8 @@ var
   Release: Cardinal;
   Installed: Boolean;
 begin
-  Installed := RegQueryDWordValue64(HKLM,
+  // 64-bit install mode makes Reg* support functions read the native 64-bit registry view.
+  Installed := RegQueryDWordValue(HKLM,
     'Software\Microsoft\NET Framework Setup\NDP\v4\Full',
     'Release', Release);
   if not Installed then Release := 0;
