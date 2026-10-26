@@ -16,6 +16,8 @@ Automated tests must not depend on public network access, the real user profile,
 
 `LXMusicAccessible.TestConsole` remains a manual diagnostic program. It accesses real services and native libraries, so it is not part of the automated quality gate.
 
+The test project still excludes 18 WPF-era or pre-net48 files that do not compile against the current WinForms/net48 interfaces (for example `DesktopLifecycleWorkflowTests`, `GlobalHotkeyMessageWindowTests`, `ScriptSecurityTests`, and `InstallDirectoryOwnershipTests`). They are not counted in the 783 executed tests. The gate requires at least 780 executed tests so a future accidental exclusion cannot silently reduce coverage; porting those suites remains follow-up work. New coverage for the final audit is in `FinalReleaseAuditTests`; the excluded files must not be presented as passing coverage.
+
 ## WinForms accessibility semantics
 
 WinForms controls use native `Text`, headers, label association, and list-item rendering as the accessible name whenever those properties already express the task. Controls with no usable native name source receive a concise task-oriented `AccessibleName`. Names remain role-free: use “搜索”, not “搜索按钮”; a tab named “搜索” must not repeat “标签页”. “播放列表” remains a valid business term and must not be rejected merely because it contains “列表”.
