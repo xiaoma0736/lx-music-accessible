@@ -310,6 +310,8 @@ Invoke-DotNet @(
 ) "Application publish failed."
 
 Assert-Payload $application $requiredPayload
+# Portable release payloads do not distribute PDBs; their source-index metadata is machine-specific.
+Get-ChildItem -LiteralPath $application -Filter "*.pdb" -File -Recurse | Remove-Item -Force
 Assert-SystemTextJsonRuntime $application
 Assert-NativeArchitecture $application $nativeFiles
 $sqliteVersion = Assert-SqliteVersion $application $minimumSqliteVersion
